@@ -3,37 +3,105 @@
 const prisma = require('../../config/prisma');
 
 
+// ─────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────
 
+/** Format sec/km → "m:ss/km" string */
+function formatPace(secPerKm) {
+  if (secPerKm == null) return null;
+  const mins = Math.floor(secPerKm / 60);
+  const secs = Math.round(secPerKm % 60).toString().padStart(2, '0');
+  return `${mins}:${secs}/km`;
+}
+
+/**
+ * Compute per-km splits from GPS coordinates + timestamps.
+ *
+ * Each coordinate must have: { lat, lng, timestamp } (Unix ms or ISO string)
+ *
+ * Returns: [{ km, timeSec, pace, paceFormatted }]
+ *   km            — split number (1 = first km, 2 = second km, …)
+ *   timeSec       — seconds taken for that km
+ *   pace          — sec/km for that split
+ *   paceFormatted — "m:ss/km"
+ */
+function computeKmSplits(coordinates) {
+  if (!coordinates || coordinates.length < 2) return [];
+
+  const toRad = (deg) => (deg * Math.PI) / 180;
+
+  // Haversine distance in km between two points
+  function haversine(a, b) {
+    const R = 6371;
+    const dLat = toRad(b.lat - a.lat);
+    const dLng = toRad(b.lng - a.lng);
+    const h =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
+    return R * 2 * Math.asin(Math.sqrt(h));
+  }
+
+  const splits = [];
+  let kmCount = 0;
+  let accDist = 0;
+  let kmStartTime = new Date(coordinates[0].timestamp).getTime();
+
+  for (let i = 1; i < coordinates.length; i++) {
+    const prev = coordinates[i - 1];
+    const curr = coordinates[i];
+    const segDist = haversine(prev, curr);
+    accDist += segDist;
+
+    // crossed a km boundary
+    while (accDist >= 1) {
+      kmCount++;
+      const kmEndTime = new Date(curr.timestamp).getTime();
+      const timeSec = Math.round((kmEndTime - kmStartTime) / 1000);
+      const pace = timeSec; // sec/km for this split
+
+      splits.push({
+        km:           kmCount,
+        timeSec,
+        pace,
+        paceFormatted: formatPace(pace),
+      });
+
+      kmStartTime = kmEndTime;
+      accDist -= 1;
+    }
+  }
+
+  return splits;
+}
+
+
+// ─────────────────────────────────────────────
+// Get My Activities
+// GET /api/activities/my
+// ─────────────────────────────────────────────
 exports.getMyActivities = async (req, res) => {
   try {
     const userId = req.user.id;
 
     const activities = await prisma.activity.findMany({
-      where: {
-        userId,
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
     });
 
-    return res.status(200).json({
-      success: true,
-      data: activities,
-    });
+    return res.status(200).json({ success: true, data: activities });
+
   } catch (error) {
     console.error(error);
-
-    return res.status(500).json({
-      success: false,
-      message: 'Failed to fetch activities',
-    });
+    return res.status(500).json({ success: false, message: 'Failed to fetch activities' });
   }
 };
 
 
-// src/modules/activity/activity.controller.js
-
+// ─────────────────────────────────────────────
+// Finish Activity
+// POST /api/activities/finish
+// ─────────────────────────────────────────────
 exports.finishActivity = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -42,72 +110,67 @@ exports.finishActivity = async (req, res) => {
       mode,
       distanceKm,
       durationSec,
+      stopTime,
+      elapsedTime,
+      movingTime,
       avgPace,
+      topPace,
+      avgSpeed,
+      topSpeed,
       calories,
       elevationGain,
       startedAt,
       endedAt,
       routeEncoded,
-
-      // array of GPS points
-      // [{ lat: 27.7, lng: 85.3 }]
-      coordinates
+      // [{ lat, lng, timestamp }]  — timestamp required for splits
+      coordinates,
     } = req.body;
 
     if (!coordinates || coordinates.length < 3) {
-      return res.status(400).json({
-        message: 'Not enough GPS points'
-      });
+      return res.status(400).json({ message: 'Not enough GPS points' });
     }
 
-    /*
-      CREATE LINESTRING
-      LINESTRING(lng lat, lng lat)
-    */
-    const lineString = coordinates
-      .map((p) => `${p.lng} ${p.lat}`)
-      .join(',');
+    // ── Compute per-km splits
+    const kmSplits = computeKmSplits(coordinates);
 
+    // ── Build LINESTRING
+    const lineString = coordinates.map((p) => `${p.lng} ${p.lat}`).join(',');
     const routeWKT = `LINESTRING(${lineString})`;
 
-    /*
-      SAVE ACTIVITY
-    */
+    // ── Save activity
     const activity = await prisma.activity.create({
       data: {
         userId,
         mode,
         distanceKm,
         durationSec,
+        stopTime,
+        elapsedTime,
+        movingTime,
         avgPace,
+        topPace,
+        avgSpeed,
+        topSpeed,
         calories,
         elevationGain,
-        startedAt: new Date(startedAt),
-        endedAt: new Date(endedAt),
-        routeEncoded
-      }
+        startedAt:  new Date(startedAt),
+        endedAt:    new Date(endedAt),
+        routeEncoded,
+        kmSplits,
+      },
     });
 
-    /*
-      CREATE BUFFERED TERRITORY — 20 meters around path
-    */
+    // ── Create buffered territory (20 m around path)
     await prisma.$queryRawUnsafe(`
       WITH new_route AS (
         SELECT ST_GeomFromText('${routeWKT}', 4326) AS route
       ),
       new_area AS (
-        SELECT
-          ST_Buffer(route::geography, 20)::geometry AS territory
+        SELECT ST_Buffer(route::geography, 20)::geometry AS territory
         FROM new_route
       )
       INSERT INTO territories (
-        id,
-        "userId",
-        "activityId",
-        boundary,
-        "areaKm2",
-        "capturedAt",
-        "updatedAt"
+        id, "userId", "activityId", boundary, "areaKm2", "capturedAt", "updatedAt"
       )
       SELECT
         gen_random_uuid(),
@@ -121,10 +184,7 @@ exports.finishActivity = async (req, res) => {
       RETURNING id;
     `);
 
-    /*
-      MERGE OVERLAPPING TERRITORIES FOR THIS USER
-      ST_Union result stored as generic geometry — handles both Polygon and MultiPolygon
-    */
+    // ── Merge overlapping territories for this user
     await prisma.$executeRawUnsafe(`
       UPDATE territories t
       SET
@@ -149,13 +209,10 @@ exports.finishActivity = async (req, res) => {
       WHERE t.id = merged.id;
     `);
 
-    /*
-      FIND ENEMY TERRITORIES
-    */
+    // ── Find enemy territories that overlap the new one
     const enemies = await prisma.$queryRawUnsafe(`
       WITH current_territory AS (
-        SELECT boundary
-        FROM territories
+        SELECT boundary FROM territories
         WHERE "activityId" = '${activity.id}'
         LIMIT 1
       )
@@ -163,24 +220,20 @@ exports.finishActivity = async (req, res) => {
       FROM territories
       WHERE
         "userId" != '${userId}'
-        AND ST_Intersects(
-          boundary,
-          (SELECT boundary FROM current_territory)
-        );
+        AND ST_Intersects(boundary, (SELECT boundary FROM current_territory));
     `);
 
     return res.status(201).json({
       message: 'Activity completed',
       activity,
-      enemyTerritories: enemies
+      enemyTerritories: enemies,
     });
 
   } catch (error) {
     console.error('FINISH_ACTIVITY ERROR:', error);
-
     return res.status(500).json({
       message: 'Server error',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
     });
   }
 };
@@ -195,26 +248,17 @@ exports.getActivityDetail = async (req, res) => {
     const { id } = req.params;
     const userId = req.user.id;
 
-    // ── Fetch activity
-    const activity = await prisma.activity.findUnique({
-      where: { id },
-    });
+    const activity = await prisma.activity.findUnique({ where: { id } });
 
     if (!activity) {
-      return res.status(404).json({
-        success: false,
-        message: 'Activity not found',
-      });
+      return res.status(404).json({ success: false, message: 'Activity not found' });
     }
 
     if (activity.userId !== userId) {
-      return res.status(403).json({
-        success: false,
-        message: 'Forbidden',
-      });
+      return res.status(403).json({ success: false, message: 'Forbidden' });
     }
 
-    // ── Fetch territory boundary as GeoJSON for map rendering
+    // ── Territory as GeoJSON for map overlay
     const territoryRows = await prisma.$queryRawUnsafe(`
       SELECT
         id,
@@ -228,53 +272,48 @@ exports.getActivityDetail = async (req, res) => {
 
     const territory = territoryRows[0] ?? null;
 
-    // ── Format pace as mm:ss string helper
-    const formatPace = (secPerKm) => {
-      if (secPerKm == null) return null;
-      const mins = Math.floor(secPerKm / 60);
-      const secs = Math.round(secPerKm % 60).toString().padStart(2, '0');
-      return `${mins}:${secs}/km`;
-    };
-
     return res.status(200).json({
       success: true,
       data: {
         // ── Identity
-        id:             activity.id,
-        mode:           activity.mode,
+        id:                   activity.id,
+        mode:                 activity.mode,
 
         // ── Timing
-        startedAt:      activity.startedAt,
-        endedAt:        activity.endedAt,
-        durationSec:    activity.durationSec,
-        elapsedTime:    activity.elapsedTime,
-        movingTime:     activity.movingTime,
-        stopTime:       activity.stopTime,
+        startedAt:            activity.startedAt,
+        endedAt:              activity.endedAt,
+        durationSec:          activity.durationSec,
+        elapsedTime:          activity.elapsedTime,
+        movingTime:           activity.movingTime,
+        stopTime:             activity.stopTime,
 
         // ── Distance
-        distanceKm:     activity.distanceKm,
+        distanceKm:           activity.distanceKm,
 
-        // ── Pace (sec/km + human-readable)
-        avgPace:        activity.avgPace,
-        avgPaceFormatted: formatPace(activity.avgPace),
-        topPace:        activity.topPace,
-        topPaceFormatted: formatPace(activity.topPace),
+        // ── Pace
+        avgPace:              activity.avgPace,
+        avgPaceFormatted:     formatPace(activity.avgPace),
+        topPace:              activity.topPace,
+        topPaceFormatted:     formatPace(activity.topPace),
 
         // ── Speed (km/h)
-        avgSpeed:       activity.avgSpeed,
-        topSpeed:       activity.topSpeed,
+        avgSpeed:             activity.avgSpeed,
+        topSpeed:             activity.topSpeed,
 
         // ── Effort
-        calories:       activity.calories,
-        elevationGain:  activity.elevationGain,
+        calories:             activity.calories,
+        elevationGain:        activity.elevationGain,
+
+        // ── Per-km splits [{ km, timeSec, pace, paceFormatted }]
+        kmSplits:             activity.kmSplits ?? [],
 
         // ── Map data
-        routeEncoded:   activity.routeEncoded,   // polyline for map path
+        routeEncoded:         activity.routeEncoded,
         territory: territory ? {
           id:         territory.id,
           areaKm2:    territory.areaKm2,
           capturedAt: territory.capturedAt,
-          geojson:    territory.boundary,        // GeoJSON polygon for map overlay
+          geojson:    territory.boundary,
         } : null,
       },
     });

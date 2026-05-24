@@ -113,6 +113,9 @@ model Activity {
   // frontend polyline
   routeEncoded      String?
 
+  // per-km splits: [{ km: 1, timeSec: 312, pace: 312, paceFormatted: "5:12/km" }, ...]
+  kmSplits          Json?
+
   // actual GIS route
   routeGeometry     Unsupported("geometry(LineString, 4326)")?
 
