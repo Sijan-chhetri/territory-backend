@@ -124,14 +124,19 @@ exports.finishActivity = async (req, res) => {
       routeEncoded,
       // [{ lat, lng, timestamp }]  — timestamp required for splits
       coordinates,
+      // optional: pre-computed splits from device
+      // [{ km, timeSec, pace, paceFormatted }]
+      kmSplits: clientKmSplits,
     } = req.body;
 
     if (!coordinates || coordinates.length < 3) {
       return res.status(400).json({ message: 'Not enough GPS points' });
     }
 
-    // ── Compute per-km splits
-    const kmSplits = computeKmSplits(coordinates);
+    // ── Use device splits if provided, otherwise compute server-side
+    const kmSplits = (clientKmSplits && clientKmSplits.length > 0)
+      ? clientKmSplits
+      : computeKmSplits(coordinates);
 
     // ── Build LINESTRING
     const lineString = coordinates.map((p) => `${p.lng} ${p.lat}`).join(',');
