@@ -80,23 +80,46 @@ function computeKmSplits(coordinates) {
 // Get My Activities
 // GET /api/activities/my
 // ─────────────────────────────────────────────
+// exports.getMyActivities = async (req, res) => {
+//   try {
+//     const userId = req.user.id;
+
+//     const activities = await prisma.activity.findMany({
+//       where: { userId },
+//       orderBy: { createdAt: 'desc' },
+//     });
+
+//     return res.status(200).json({ success: true, data: activities });
+
+//   } catch (error) {
+//     console.error(error);
+//     return res.status(500).json({ success: false, message: 'Failed to fetch activities' });
+//   }
+// };
+
 exports.getMyActivities = async (req, res) => {
   try {
     const userId = req.user.id;
 
     const activities = await prisma.activity.findMany({
       where: { userId },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { startedAt: 'desc' },
+      include: {
+        territories: true,
+      },
     });
 
-    return res.status(200).json({ success: true, data: activities });
-
+    return res.status(200).json({
+      message: 'Activities loaded',
+      activities,
+    });
   } catch (error) {
-    console.error(error);
-    return res.status(500).json({ success: false, message: 'Failed to fetch activities' });
+    console.error('GET_MY_ACTIVITIES ERROR:', error);
+    return res.status(500).json({
+      message: 'Server error',
+    });
   }
 };
-
 
 // ─────────────────────────────────────────────
 // Finish Activity
@@ -129,7 +152,7 @@ exports.finishActivity = async (req, res) => {
       kmSplits: clientKmSplits,
     } = req.body;
 
-    if (!coordinates || coordinates.length < 3) {
+    if (!coordinates || coordinates.length < 1) {
       return res.status(400).json({ message: 'Not enough GPS points' });
     }
 
@@ -253,78 +276,110 @@ exports.getActivityDetail = async (req, res) => {
     const { id } = req.params;
     const userId = req.user.id;
 
-    const activity = await prisma.activity.findUnique({ where: { id } });
+    const activity = await prisma.activity.findUnique({
+      where: { id },
+    });
 
     if (!activity) {
-      return res.status(404).json({ success: false, message: 'Activity not found' });
+      return res.status(404).json({
+        success: false,
+        message: 'Activity not found',
+      });
     }
 
     if (activity.userId !== userId) {
-      return res.status(403).json({ success: false, message: 'Forbidden' });
+      return res.status(403).json({
+        success: false,
+        message: 'Forbidden',
+      });
     }
 
-    // ── Territory as GeoJSON for map overlay
-    const territoryRows = await prisma.$queryRawUnsafe(`
+    // Get ALL territories from ALL users
+    const territoryRows = await prisma.$queryRaw`
       SELECT
-        id,
-        "areaKm2",
-        "capturedAt",
-        ST_AsGeoJSON(boundary)::json AS boundary
-      FROM territories
-      WHERE "activityId" = '${id}'
-      LIMIT 1;
-    `);
+        t.id,
+        t."userId",
+        t."activityId",
+        t.name,
+        t."areaKm2",
+        t."capturedAt",
+        t."createdAt",
+        t."updatedAt",
+        ST_AsGeoJSON(t.boundary)::json AS boundary,
+        ST_AsGeoJSON(t.center)::json AS center,
+        u.username,
+        u."fullName"
+      FROM territories t
+      JOIN users u ON u.id = t."userId"
+      ORDER BY t."capturedAt" DESC;
+    `;
 
-    const territory = territoryRows[0] ?? null;
+    const territories = territoryRows.map((territory) => ({
+      id: territory.id,
+      userId: territory.userId,
+      activityId: territory.activityId,
+      name: territory.name,
+
+      owner: {
+        username: territory.username,
+        fullName: territory.fullName,
+      },
+
+      areaKm2: territory.areaKm2,
+      capturedAt: territory.capturedAt,
+      createdAt: territory.createdAt,
+      updatedAt: territory.updatedAt,
+
+      geojson: territory.boundary,
+      center: territory.center,
+    }));
 
     return res.status(200).json({
       success: true,
       data: {
         // ── Identity
-        id:                   activity.id,
-        mode:                 activity.mode,
+        id: activity.id,
+        mode: activity.mode,
 
         // ── Timing
-        startedAt:            activity.startedAt,
-        endedAt:              activity.endedAt,
-        durationSec:          activity.durationSec,
-        elapsedTime:          activity.elapsedTime,
-        movingTime:           activity.movingTime,
-        stopTime:             activity.stopTime,
+        startedAt: activity.startedAt,
+        endedAt: activity.endedAt,
+        durationSec: activity.durationSec,
+        elapsedTime: activity.elapsedTime,
+        movingTime: activity.movingTime,
+        stopTime: activity.stopTime,
 
         // ── Distance
-        distanceKm:           activity.distanceKm,
+        distanceKm: activity.distanceKm,
 
         // ── Pace
-        avgPace:              activity.avgPace,
-        avgPaceFormatted:     formatPace(activity.avgPace),
-        topPace:              activity.topPace,
-        topPaceFormatted:     formatPace(activity.topPace),
+        avgPace: activity.avgPace,
+        avgPaceFormatted: formatPace(activity.avgPace),
+        topPace: activity.topPace,
+        topPaceFormatted: formatPace(activity.topPace),
 
-        // ── Speed (km/h)
-        avgSpeed:             activity.avgSpeed,
-        topSpeed:             activity.topSpeed,
+        // ── Speed
+        avgSpeed: activity.avgSpeed,
+        topSpeed: activity.topSpeed,
 
         // ── Effort
-        calories:             activity.calories,
-        elevationGain:        activity.elevationGain,
+        calories: activity.calories,
+        elevationGain: activity.elevationGain,
 
-        // ── Per-km splits [{ km, timeSec, pace, paceFormatted }]
-        kmSplits:             activity.kmSplits ?? [],
+        // ── Splits
+        kmSplits: activity.kmSplits ?? [],
 
         // ── Map data
-        routeEncoded:         activity.routeEncoded,
-        territory: territory ? {
-          id:         territory.id,
-          areaKm2:    territory.areaKm2,
-          capturedAt: territory.capturedAt,
-          geojson:    territory.boundary,
-        } : null,
+        routeEncoded: activity.routeEncoded,
+
+        // All territories from all users
+        territories,
       },
     });
 
   } catch (error) {
     console.error('GET_ACTIVITY_DETAIL ERROR:', error);
+
     return res.status(500).json({
       success: false,
       message: 'Something went wrong',
@@ -332,3 +387,4 @@ exports.getActivityDetail = async (req, res) => {
     });
   }
 };
+

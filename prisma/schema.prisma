@@ -209,3 +209,22 @@ model Territory {
 
   @@map("territories")
 }
+
+
+
+model TerritoryEvent {
+  id              String   @id @default(uuid())
+  territoryId     String?
+  userId          String
+  activityId      String?
+  opponentUserId  String?
+  type            String
+  affectedAreaKm2 Float
+  geometry        Unsupported("geometry(Geometry, 4326)")?
+  createdAt       DateTime @default(now())
+
+  @@index([userId])
+  @@index([opponentUserId])
+  @@index([activityId])
+  @@map("territory_events")
+}
