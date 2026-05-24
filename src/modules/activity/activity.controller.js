@@ -184,3 +184,107 @@ exports.finishActivity = async (req, res) => {
     });
   }
 };
+
+
+// ─────────────────────────────────────────────
+// Get Activity Detail (map + stats)
+// GET /api/activities/:id
+// ─────────────────────────────────────────────
+exports.getActivityDetail = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.id;
+
+    // ── Fetch activity
+    const activity = await prisma.activity.findUnique({
+      where: { id },
+    });
+
+    if (!activity) {
+      return res.status(404).json({
+        success: false,
+        message: 'Activity not found',
+      });
+    }
+
+    if (activity.userId !== userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'Forbidden',
+      });
+    }
+
+    // ── Fetch territory boundary as GeoJSON for map rendering
+    const territoryRows = await prisma.$queryRawUnsafe(`
+      SELECT
+        id,
+        "areaKm2",
+        "capturedAt",
+        ST_AsGeoJSON(boundary)::json AS boundary
+      FROM territories
+      WHERE "activityId" = '${id}'
+      LIMIT 1;
+    `);
+
+    const territory = territoryRows[0] ?? null;
+
+    // ── Format pace as mm:ss string helper
+    const formatPace = (secPerKm) => {
+      if (secPerKm == null) return null;
+      const mins = Math.floor(secPerKm / 60);
+      const secs = Math.round(secPerKm % 60).toString().padStart(2, '0');
+      return `${mins}:${secs}/km`;
+    };
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        // ── Identity
+        id:             activity.id,
+        mode:           activity.mode,
+
+        // ── Timing
+        startedAt:      activity.startedAt,
+        endedAt:        activity.endedAt,
+        durationSec:    activity.durationSec,
+        elapsedTime:    activity.elapsedTime,
+        movingTime:     activity.movingTime,
+        stopTime:       activity.stopTime,
+
+        // ── Distance
+        distanceKm:     activity.distanceKm,
+
+        // ── Pace (sec/km + human-readable)
+        avgPace:        activity.avgPace,
+        avgPaceFormatted: formatPace(activity.avgPace),
+        topPace:        activity.topPace,
+        topPaceFormatted: formatPace(activity.topPace),
+
+        // ── Speed (km/h)
+        avgSpeed:       activity.avgSpeed,
+        topSpeed:       activity.topSpeed,
+
+        // ── Effort
+        calories:       activity.calories,
+        elevationGain:  activity.elevationGain,
+
+        // ── Map data
+        routeEncoded:   activity.routeEncoded,   // polyline for map path
+        territory: territory ? {
+          id:         territory.id,
+          areaKm2:    territory.areaKm2,
+          capturedAt: territory.capturedAt,
+          geojson:    territory.boundary,        // GeoJSON polygon for map overlay
+        } : null,
+      },
+    });
+
+  } catch (error) {
+    console.error('GET_ACTIVITY_DETAIL ERROR:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Something went wrong',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+    });
+  }
+};
