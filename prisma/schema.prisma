@@ -1,0 +1,208 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+
+  extensions = [postgis]
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| ENUMS
+|--------------------------------------------------------------------------
+*/
+
+enum ActivityMode {
+  WALK
+  RUN
+  CYCLE
+  DRIVE
+}
+
+/*
+|--------------------------------------------------------------------------
+| USER
+|--------------------------------------------------------------------------
+*/
+
+model User {
+  id            String       @id @default(uuid())
+
+  email         String       @unique
+  username      String       @unique
+  password      String
+
+  fullName      String?      @map("full_name")
+
+  country       String?
+  city          String?
+
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+
+  /*
+  |--------------------------------------------------------------------------
+  | RELATIONS
+  |--------------------------------------------------------------------------
+  */
+
+  activities    Activity[]
+  territories   Territory[]
+
+  @@index([email])
+  @@index([username])
+
+  @@map("users")
+}
+
+/*
+|--------------------------------------------------------------------------
+| ACTIVITY
+|--------------------------------------------------------------------------
+*/
+
+model Activity {
+  id                String        @id @default(uuid())
+
+  /*
+  |--------------------------------------------------------------------------
+  | RELATIONS
+  |--------------------------------------------------------------------------
+  */
+
+  userId            String
+  user              User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /*
+  |--------------------------------------------------------------------------
+  | ACTIVITY DATA
+  |--------------------------------------------------------------------------
+  */
+
+  mode              ActivityMode
+
+  distanceKm        Float
+  durationSec       Int           // total elapsed seconds (start → end)
+
+  stopTime          Int?          // total seconds paused
+  elapsedTime       Int?          // alias for durationSec — wall-clock duration
+  movingTime        Int?          // durationSec - stopTime
+
+  avgPace           Float         // sec/km = movingTime / distanceKm
+  topPace           Float?        // best (fastest) sec/km recorded during activity
+  avgSpeed          Float?        // km/h = distanceKm / (movingTime / 3600)
+  topSpeed          Float?        // peak km/h recorded during activity
+  calories          Float
+
+  elevationGain     Float?
+
+  startedAt         DateTime
+  endedAt           DateTime
+
+  /*
+  |--------------------------------------------------------------------------
+  | ROUTE DATA
+  |--------------------------------------------------------------------------
+  */
+
+  // frontend polyline
+  routeEncoded      String?
+
+  // actual GIS route
+  routeGeometry     Unsupported("geometry(LineString, 4326)")?
+
+  /*
+  |--------------------------------------------------------------------------
+  | TIMESTAMPS
+  |--------------------------------------------------------------------------
+  */
+
+  createdAt         DateTime      @default(now())
+
+  /*
+  |--------------------------------------------------------------------------
+  | RELATIONS
+  |--------------------------------------------------------------------------
+  */
+
+  territories       Territory[]
+
+  /*
+  |--------------------------------------------------------------------------
+  | INDEXES
+  |--------------------------------------------------------------------------
+  */
+
+  @@index([userId])
+  @@map("activities")
+}
+
+/*
+|--------------------------------------------------------------------------
+| TERRITORY
+|--------------------------------------------------------------------------
+*/
+
+model Territory {
+  id                String      @id @default(uuid())
+
+  /*
+  |--------------------------------------------------------------------------
+  | RELATIONS
+  |--------------------------------------------------------------------------
+  */
+
+  userId            String
+  user              User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  activityId        String?
+  activity          Activity?   @relation(fields: [activityId], references: [id], onDelete: SetNull)
+
+  /*
+  |--------------------------------------------------------------------------
+  | TERRITORY DATA
+  |--------------------------------------------------------------------------
+  */
+
+  name              String?
+
+  // merged polygon territory
+  boundary          Unsupported("geometry(Geometry, 4326)")
+
+  // territory center point
+  center            Unsupported("geometry(Point, 4326)")?
+
+  areaKm2           Float
+
+  // activity timing
+
+
+  
+
+  /*
+  |--------------------------------------------------------------------------
+  | TIMESTAMPS
+  |--------------------------------------------------------------------------
+  */
+
+  capturedAt        DateTime    @default(now())
+
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  /*
+  |--------------------------------------------------------------------------
+  | INDEXES
+  |--------------------------------------------------------------------------
+  */
+
+  @@index([userId])
+  @@index([activityId])
+
+  @@map("territories")
+}
