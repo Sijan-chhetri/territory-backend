@@ -220,7 +220,7 @@ export const finishActivity = async (req, res) => {
       captureEvents: recentEvents,
       // ── Progression
       progression: {
-        xpEarned:      xpEarned + captureBonus,
+        xpEarned:      xpEarned ,
         leveledUp:     levelResult?.leveledUp ?? false,
         level:         levelResult?.level ?? progress?.level ?? 0,
         newBadges,
