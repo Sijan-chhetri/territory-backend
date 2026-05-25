@@ -1,25 +1,33 @@
-require("dotenv").config();
+import 'dotenv/config';
+import express from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+import morgan from 'morgan';
 
-const express = require("express");
-const cors = require("cors");
-const helmet = require("helmet");
-const morgan = require("morgan");
+import authRoutes        from './modules/auth/auth.routes.js';
+import activityRoutes    from './modules/activity/activity.routes.js';
+import territoryRoutes   from './modules/activity/territory.routes.js';
+import progressionRoutes from './modules/progression/progression.routes.js';
+import xpRoutes          from './modules/xp/xp.routes.js';
+import badgeRoutes       from './modules/badge/badge.routes.js';
+import levelRoutes       from './modules/level/level.routes.js';
 
 const app = express();
 
 app.use(cors());
 app.use(helmet());
-app.use(morgan("dev"));
+app.use(morgan('dev'));
 app.use(express.json());
 
-app.get("/", (req, res) => {
-  res.send("Territory Backend Running");
-});
+app.get('/', (_, res) => res.send('Territory Backend Running'));
 
-app.use('/api/auth', require('./modules/auth/auth.routes'));
-app.use('/api/activities', require('./modules/activity/activity.routes'));
-app.use('/api/territories', require('./modules/activity/territory.routes'));
-
+app.use('/api/auth',        authRoutes);
+app.use('/api/activities',  activityRoutes);
+app.use('/api/territories', territoryRoutes);
+app.use('/api/progression', progressionRoutes);
+app.use('/api/xp',          xpRoutes);
+app.use('/api/badges',      badgeRoutes);
+app.use('/api/levels',      levelRoutes);
 
 const PORT = process.env.PORT || 3000;
 

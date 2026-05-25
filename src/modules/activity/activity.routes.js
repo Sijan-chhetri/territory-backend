@@ -1,14 +1,11 @@
-// activity.routes.js
+import { Router } from 'express';
+import authMiddleware from '../../middlewares/auth.js';
+import { finishActivity, getMyActivities, getActivityDetail } from './activity.controller.js';
 
-const express = require('express');
-const router = express.Router();
+const router = Router();
 
-const activityController = require('./activity.controller');
-const authMiddleware = require('../../middlewares/auth');
+router.post('/finish', authMiddleware, finishActivity);
+router.get('/my', authMiddleware, getMyActivities);
+router.get('/:id', authMiddleware, getActivityDetail);
 
-router.post('/finish', authMiddleware, activityController.finishActivity);
-router.get('/my', authMiddleware, activityController.getMyActivities);
-router.get('/:id', authMiddleware, activityController.getActivityDetail);
-
-
-module.exports = router;
+export default router;

@@ -4,18 +4,17 @@ generator client {
 }
 
 datasource db {
-  provider   = "postgresql"
-  url        = env("DATABASE_URL")
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 
   extensions = [postgis]
 }
 
-
-/*
-|--------------------------------------------------------------------------
-| ENUMS
-|--------------------------------------------------------------------------
-*/
+/**
+ * |--------------------------------------------------------------------------
+ * | ENUMS
+ * |--------------------------------------------------------------------------
+ */
 
 enum ActivityMode {
   WALK
@@ -24,196 +23,194 @@ enum ActivityMode {
   DRIVE
 }
 
-/*
-|--------------------------------------------------------------------------
-| USER
-|--------------------------------------------------------------------------
-*/
+/**
+ * |--------------------------------------------------------------------------
+ * | USER
+ * |--------------------------------------------------------------------------
+ */
 
 model User {
-  id            String       @id @default(uuid())
+  id String @id @default(uuid())
 
-  email         String       @unique
-  username      String       @unique
-  password      String
+  email    String @unique
+  username String @unique
+  password String
 
-  fullName      String?      @map("full_name")
+  fullName String? @map("full_name")
 
-  country       String?
-  city          String?
+  country String?
+  city    String?
 
-  createdAt     DateTime     @default(now()) @map("created_at")
-  updatedAt     DateTime     @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  /*
-  |--------------------------------------------------------------------------
-  | RELATIONS
-  |--------------------------------------------------------------------------
-  */
+  /**
+   * |--------------------------------------------------------------------------
+   * | RELATIONS
+   * |--------------------------------------------------------------------------
+   */
 
-  activities    Activity[]
-  territories   Territory[]
+  activities  Activity[]
+  territories Territory[]
+
+  progress       UserProgress?
+  xpTransactions XPTransaction[]
+  badges         UserBadge[]
 
   @@index([email])
   @@index([username])
-
   @@map("users")
 }
 
-/*
-|--------------------------------------------------------------------------
-| ACTIVITY
-|--------------------------------------------------------------------------
-*/
+/**
+ * |--------------------------------------------------------------------------
+ * | ACTIVITY
+ * |--------------------------------------------------------------------------
+ */
 
 model Activity {
-  id                String        @id @default(uuid())
+  id String @id @default(uuid())
 
-  /*
-  |--------------------------------------------------------------------------
-  | RELATIONS
-  |--------------------------------------------------------------------------
-  */
+  /**
+   * |--------------------------------------------------------------------------
+   * | RELATIONS
+   * |--------------------------------------------------------------------------
+   */
 
-  userId            String
-  user              User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  /*
-  |--------------------------------------------------------------------------
-  | ACTIVITY DATA
-  |--------------------------------------------------------------------------
-  */
+  /**
+   * |--------------------------------------------------------------------------
+   * | ACTIVITY DATA
+   * |--------------------------------------------------------------------------
+   */
 
-  mode              ActivityMode
+  mode ActivityMode
 
-  distanceKm        Float
-  durationSec       Int           // total elapsed seconds (start → end)
+  distanceKm  Float
+  durationSec Int // total elapsed seconds (start → end)
 
-  stopTime          Int?          // total seconds paused
-  elapsedTime       Int?          // alias for durationSec — wall-clock duration
-  movingTime        Int?          // durationSec - stopTime
+  stopTime    Int? // total seconds paused
+  elapsedTime Int? // alias for durationSec — wall-clock duration
+  movingTime  Int? // durationSec - stopTime
 
-  avgPace           Float         // sec/km = movingTime / distanceKm
-  topPace           Float?        // best (fastest) sec/km recorded during activity
-  avgSpeed          Float?        // km/h = distanceKm / (movingTime / 3600)
-  topSpeed          Float?        // peak km/h recorded during activity
-  calories          Float
+  avgPace  Float // sec/km = movingTime / distanceKm
+  topPace  Float? // best (fastest) sec/km recorded during activity
+  avgSpeed Float? // km/h = distanceKm / (movingTime / 3600)
+  topSpeed Float? // peak km/h recorded during activity
+  calories Float
 
-  elevationGain     Float?
+  elevationGain Float?
 
-  startedAt         DateTime
-  endedAt           DateTime
+  startedAt DateTime
+  endedAt   DateTime
 
-  /*
-  |--------------------------------------------------------------------------
-  | ROUTE DATA
-  |--------------------------------------------------------------------------
-  */
+  /**
+   * |--------------------------------------------------------------------------
+   * | ROUTE DATA
+   * |--------------------------------------------------------------------------
+   */
 
   // frontend polyline
-  routeEncoded      String?
+  routeEncoded String?
 
   // per-km splits: [{ km: 1, timeSec: 312, pace: 312, paceFormatted: "5:12/km" }, ...]
-  kmSplits          Json?
+  kmSplits Json?
 
   // actual GIS route
-  routeGeometry     Unsupported("geometry(LineString, 4326)")?
+  routeGeometry Unsupported("geometry(LineString, 4326)")?
 
-  /*
-  |--------------------------------------------------------------------------
-  | TIMESTAMPS
-  |--------------------------------------------------------------------------
-  */
+  /**
+   * |--------------------------------------------------------------------------
+   * | TIMESTAMPS
+   * |--------------------------------------------------------------------------
+   */
 
-  createdAt         DateTime      @default(now())
+  createdAt DateTime @default(now())
 
-  /*
-  |--------------------------------------------------------------------------
-  | RELATIONS
-  |--------------------------------------------------------------------------
-  */
+  /**
+   * |--------------------------------------------------------------------------
+   * | RELATIONS
+   * |--------------------------------------------------------------------------
+   */
 
-  territories       Territory[]
+  territories Territory[]
 
-  /*
-  |--------------------------------------------------------------------------
-  | INDEXES
-  |--------------------------------------------------------------------------
-  */
+  /**
+   * |--------------------------------------------------------------------------
+   * | INDEXES
+   * |--------------------------------------------------------------------------
+   */
+  xptransactions XPTransaction[]
 
   @@index([userId])
   @@map("activities")
 }
 
-/*
-|--------------------------------------------------------------------------
-| TERRITORY
-|--------------------------------------------------------------------------
-*/
+/**
+ * |--------------------------------------------------------------------------
+ * | TERRITORY
+ * |--------------------------------------------------------------------------
+ */
 
 model Territory {
-  id                String      @id @default(uuid())
+  id String @id @default(uuid())
 
-  /*
-  |--------------------------------------------------------------------------
-  | RELATIONS
-  |--------------------------------------------------------------------------
-  */
+  /**
+   * |--------------------------------------------------------------------------
+   * | RELATIONS
+   * |--------------------------------------------------------------------------
+   */
 
-  userId            String
-  user              User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  activityId        String?
-  activity          Activity?   @relation(fields: [activityId], references: [id], onDelete: SetNull)
+  activityId String?
+  activity   Activity? @relation(fields: [activityId], references: [id], onDelete: SetNull)
 
-  /*
-  |--------------------------------------------------------------------------
-  | TERRITORY DATA
-  |--------------------------------------------------------------------------
-  */
+  /**
+   * |--------------------------------------------------------------------------
+   * | TERRITORY DATA
+   * |--------------------------------------------------------------------------
+   */
 
-  name              String?
+  name String?
 
   // merged polygon territory
-  boundary          Unsupported("geometry(Geometry, 4326)")
+  boundary Unsupported("geometry(Geometry, 4326)")
 
   // territory center point
-  center            Unsupported("geometry(Point, 4326)")?
+  center Unsupported("geometry(Point, 4326)")?
 
-  areaKm2           Float
+  areaKm2 Float
 
   // activity timing
 
+  /**
+   * |--------------------------------------------------------------------------
+   * | TIMESTAMPS
+   * |--------------------------------------------------------------------------
+   */
 
-  
+  capturedAt DateTime @default(now())
 
-  /*
-  |--------------------------------------------------------------------------
-  | TIMESTAMPS
-  |--------------------------------------------------------------------------
-  */
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  capturedAt        DateTime    @default(now())
-
-  createdAt         DateTime    @default(now())
-  updatedAt         DateTime    @updatedAt
-
-  /*
-  |--------------------------------------------------------------------------
-  | INDEXES
-  |--------------------------------------------------------------------------
-  */
+  /**
+   * |--------------------------------------------------------------------------
+   * | INDEXES
+   * |--------------------------------------------------------------------------
+   */
 
   @@index([userId])
   @@index([activityId])
-
   @@map("territories")
 }
 
-
-
 model TerritoryEvent {
-  id              String   @id @default(uuid())
+  id              String                                   @id @default(uuid())
   territoryId     String?
   userId          String
   activityId      String?
@@ -221,10 +218,151 @@ model TerritoryEvent {
   type            String
   affectedAreaKm2 Float
   geometry        Unsupported("geometry(Geometry, 4326)")?
-  createdAt       DateTime @default(now())
+  createdAt       DateTime                                 @default(now())
 
   @@index([userId])
   @@index([opponentUserId])
   @@index([activityId])
   @@map("territory_events")
+}
+
+model UserProgress {
+  id String @id @default(uuid())
+
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /**
+   * |--------------------------------------------------------------------------
+   * | LEVEL SYSTEM
+   * |--------------------------------------------------------------------------
+   */
+
+  level Int @default(0)
+
+  currentXp Int @default(0)
+
+  totalXp Int @default(0)
+
+  xpToNextLevel Int @default(50)
+
+  totalDistanceKm Float @default(0)
+
+  /**
+   * |--------------------------------------------------------------------------
+   * | STREAKS
+   * |--------------------------------------------------------------------------
+   */
+
+  currentStreak Int @default(0)
+  longestStreak Int @default(0)
+
+  /**
+   * |--------------------------------------------------------------------------
+   * | ACHIEVEMENTS
+   * |--------------------------------------------------------------------------
+   */
+
+  territoriesOwned Int @default(0)
+
+  territoriesCaptured Int @default(0)
+
+  activitiesCount Int @default(0)
+
+  /**
+   * |--------------------------------------------------------------------------
+   * | TIMESTAMPS
+   * |--------------------------------------------------------------------------
+   */
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([level])
+  @@map("user_progress")
+}
+
+model XPTransaction {
+  id String @id @default(uuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  activityId String?
+  activity   Activity? @relation(fields: [activityId], references: [id], onDelete: SetNull)
+
+  amount Int
+
+  type String
+  // examples:
+  // ACTIVITY
+  // TERRITORY_CAPTURE
+  // DAILY_STREAK
+  // BADGE_REWARD
+  // EVENT_REWARD
+
+  description String?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([type])
+  @@map("xp_transactions")
+}
+
+model Badge {
+  id String @id @default(uuid())
+
+  name String @unique
+
+  slug String @unique
+
+  description String
+
+  icon String?
+
+  xpReward Int @default(0)
+
+  rarity String?
+  // COMMON
+  // RARE
+  // EPIC
+  // LEGENDARY
+
+  /**
+   * |--------------------------------------------------------------------------
+   * | CONDITIONS
+   * |--------------------------------------------------------------------------
+   */
+
+  requirementType String
+  // DISTANCE
+  // ACTIVITIES
+  // TERRITORIES
+  // STREAK
+  // LEVEL
+
+  requirementValue Int
+
+  createdAt DateTime @default(now())
+
+  users UserBadge[]
+
+  @@map("badges")
+}
+
+model UserBadge {
+  id String @id @default(uuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  badgeId String
+  badge   Badge  @relation(fields: [badgeId], references: [id], onDelete: Cascade)
+
+  earnedAt DateTime @default(now())
+
+  @@unique([userId, badgeId])
+  @@index([userId])
+  @@map("user_badges")
 }

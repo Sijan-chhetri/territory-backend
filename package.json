@@ -10,7 +10,7 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
+  "type": "module",
   "dependencies": {
     "@mapbox/polyline": "^1.2.1",
     "@prisma/client": "^6.19.3",

@@ -1,39 +1,14 @@
-const express = require('express');
+import { Router } from 'express';
+import authMiddleware from '../../middlewares/auth.js';
+import { register, login, getMe, updateProfile, changeUsername } from './auth.controller.js';
 
-const router = express.Router();
+const router = Router();
 
-const authController = require('./auth.controller');
-const authMiddleware = require('../../middlewares/auth');
+router.post('/register', register);
+router.post('/login', login);
 
-// ─────────────────────────────────────────────
-// Public Routes
-// ─────────────────────────────────────────────
-router.post('/register', authController.register);
-router.post('/login', authController.login);
+router.get('/user/me', authMiddleware, getMe);
+router.put('/user/profile', authMiddleware, updateProfile);
+router.patch('/user/username', authMiddleware, changeUsername);
 
-// ─────────────────────────────────────────────
-// Protected Routes
-// ─────────────────────────────────────────────
-
-// Get current logged in user
-router.get(
-  '/user/me',
-  authMiddleware,
-  authController.getMe
-);
-
-// Update profile
-router.put(
-  '/user/profile',
-  authMiddleware,
-  authController.updateProfile
-);
-
-// Change username
-router.patch(
-  '/user/username',
-  authMiddleware,
-  authController.changeUsername
-);
-
-module.exports = router;
+export default router;

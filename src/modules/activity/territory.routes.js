@@ -1,11 +1,10 @@
-const express = require('express');
-const router = express.Router();
+import { Router } from 'express';
+import authMiddleware from '../../middlewares/auth.js';
+import { getAllTerritories, getTerritoryEvents } from './territory.controller.js';
 
-const territoryController = require('./territory.controller');
-const auth = require('../../middlewares/auth');
+const router = Router();
 
-router.get('/all', auth, territoryController.getAllTerritories);
+router.get('/all', authMiddleware, getAllTerritories);
+router.get('/events', authMiddleware, getTerritoryEvents);
 
-router.get('/events', auth, territoryController.getTerritoryEvents);
-
-module.exports = router;
+export default router;
