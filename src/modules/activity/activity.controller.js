@@ -160,8 +160,11 @@ export const finishActivity = async (req, res) => {
     // minimum 0.1 km, 10 XP per km
     // ─────────────────────────────────────────
     const MIN_DISTANCE_KM = 0.1;
-    const xpEarned = distanceKm >= MIN_DISTANCE_KM
-      ? Math.round(distanceKm * 10)
+    
+    const XP_PER_KM = 50;
+
+    const xpEarned = distanceKm > 0
+      ? Math.round(distanceKm * XP_PER_KM)
       : 0;
 
     if (xpEarned > 0) {
