@@ -153,6 +153,22 @@ exports.captureTerritory = async ({
 
 
 // ─────────────────────────────────────────────
+// Color palette — ranked by territory size
+// index 0 = biggest (blue), last = smallest (yellow)
+// All colors are semi-transparent RGBA
+// ─────────────────────────────────────────────
+const TERRITORY_COLORS = [
+  { fill: 'rgba(59,  130, 246, 0.25)', border: 'rgba(59,  130, 246, 0.6)' }, // blue
+  { fill: 'rgba(34,  197,  94, 0.25)', border: 'rgba(34,  197,  94, 0.6)' }, // green
+  { fill: 'rgba(239,  68,  68, 0.25)', border: 'rgba(239,  68,  68, 0.6)' }, // red
+  { fill: 'rgba(168,  85, 247, 0.25)', border: 'rgba(168,  85, 247, 0.6)' }, // purple
+  { fill: 'rgba(249, 115,  22, 0.25)', border: 'rgba(249, 115,  22, 0.6)' }, // orange
+  { fill: 'rgba(236,  72, 153, 0.25)', border: 'rgba(236,  72, 153, 0.6)' }, // pink
+  { fill: 'rgba(107, 114, 128, 0.25)', border: 'rgba(107, 114, 128, 0.6)' }, // gray
+  { fill: 'rgba(234, 179,   8, 0.25)', border: 'rgba(234, 179,   8, 0.6)' }, // yellow
+];
+
+// ─────────────────────────────────────────────
 // Get All Territories (map view)
 // GET /api/territories/all
 // ─────────────────────────────────────────────
@@ -177,6 +193,24 @@ exports.getAllTerritories = async (req, res) => {
       ORDER BY t."capturedAt" DESC;
     `;
 
+    // ── Aggregate total area per user, rank largest → smallest
+    const userAreaMap = {};
+    for (const t of territoryRows) {
+      userAreaMap[t.userId] = (userAreaMap[t.userId] || 0) + Number(t.areaKm2);
+    }
+
+    // Sort users by total area descending → assign color index
+    const rankedUsers = Object.entries(userAreaMap)
+      .sort((a, b) => b[1] - a[1])
+      .map(([userId], index) => ({
+        userId,
+        color: TERRITORY_COLORS[Math.min(index, TERRITORY_COLORS.length - 1)],
+      }));
+
+    const userColorMap = Object.fromEntries(
+      rankedUsers.map(({ userId, color }) => [userId, color])
+    );
+
     const territories = territoryRows.map((t) => ({
       id:         t.id,
       userId:     t.userId,
@@ -186,12 +220,14 @@ exports.getAllTerritories = async (req, res) => {
         username: t.username,
         fullName: t.fullName,
       },
-      areaKm2:    t.areaKm2,
+      areaKm2:    Number(t.areaKm2),
       capturedAt: t.capturedAt,
       createdAt:  t.createdAt,
       updatedAt:  t.updatedAt,
       geojson:    t.boundary,
       center:     t.center,
+      // ── Color for map rendering
+      color:      userColorMap[t.userId] ?? TERRITORY_COLORS[TERRITORY_COLORS.length - 1],
     }));
 
     return res.status(200).json({ success: true, territories });
@@ -201,7 +237,6 @@ exports.getAllTerritories = async (req, res) => {
     return res.status(500).json({ success: false, message: 'Something went wrong' });
   }
 };
-
 
 // ─────────────────────────────────────────────
 // Get Territory Events

@@ -43,6 +43,7 @@ function computeKmSplits(coordinates) {
       Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
     return R * 2 * Math.asin(Math.sqrt(h));
   }
+  
 
   const splits = [];
   let kmCount = 0;
