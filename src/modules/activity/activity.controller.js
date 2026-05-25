@@ -108,14 +108,65 @@ export const finishActivity = async (req, res) => {
     });
 
     // ── Create territory
+    // ── Create territory
     const territoryResult = await prisma.$queryRawUnsafe(`
-      WITH new_route AS (SELECT ST_GeomFromText('${routeWKT}', 4326) AS route),
-           new_area  AS (SELECT ST_Buffer(route::geography, 20)::geometry AS territory FROM new_route)
-      INSERT INTO territories (id, "userId", "activityId", boundary, "areaKm2", "capturedAt", "createdAt", "updatedAt")
-      SELECT gen_random_uuid(), '${userId}', '${activity.id}', territory,
-             ST_Area(territory::geography) / 1000000, NOW(), NOW(), NOW()
-      FROM new_area
-      RETURNING id;
+      WITH new_route AS (
+        SELECT ST_GeomFromText('${routeWKT}', 4326) AS route
+      ),
+
+      new_area AS (
+        SELECT ST_Buffer(route::geography, 20)::geometry AS territory
+        FROM new_route
+      ),
+
+      overlapping AS (
+        SELECT "landmassId"
+        FROM territories
+        WHERE "userId" = '${userId}'
+          AND ST_Intersects(
+            boundary,
+            (SELECT territory FROM new_area)
+          )
+        LIMIT 1
+      ),
+
+      inserted AS (
+        INSERT INTO territories (
+          id,
+          "userId",
+          "activityId",
+          "landmassId",
+          boundary,
+          "areaKm2",
+          "capturedAt",
+          "createdAt",
+          "updatedAt"
+        )
+        SELECT
+          gen_random_uuid(),
+          '${userId}',
+          '${activity.id}',
+
+          -- if overlaps existing territory use same landmassId
+          COALESCE(
+            (SELECT "landmassId" FROM overlapping),
+            gen_random_uuid()::text
+          ),
+
+          territory,
+
+          ST_Area(territory::geography) / 1000000,
+
+          NOW(),
+          NOW(),
+          NOW()
+
+        FROM new_area
+
+        RETURNING id
+      )
+
+      SELECT * FROM inserted;
     `);
 
     const territoryId = territoryResult[0].id;

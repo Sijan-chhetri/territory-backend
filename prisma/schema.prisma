@@ -157,57 +157,35 @@ model Activity {
 model Territory {
   id String @id @default(uuid())
 
-  /**
-   * |--------------------------------------------------------------------------
-   * | RELATIONS
-   * |--------------------------------------------------------------------------
-   */
-
   userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   activityId String?
-  activity   Activity? @relation(fields: [activityId], references: [id], onDelete: SetNull)
+  activity Activity? @relation(fields: [activityId], references: [id], onDelete: SetNull)
 
-  /**
-   * |--------------------------------------------------------------------------
-   * | TERRITORY DATA
-   * |--------------------------------------------------------------------------
-   */
+  // connected territory island
+  landmassId String?
 
   name String?
 
-  // merged polygon territory
   boundary Unsupported("geometry(Geometry, 4326)")
-
-  // territory center point
   center Unsupported("geometry(Point, 4326)")?
 
   areaKm2 Float
-
-  // activity timing
-
-  /**
-   * |--------------------------------------------------------------------------
-   * | TIMESTAMPS
-   * |--------------------------------------------------------------------------
-   */
 
   capturedAt DateTime @default(now())
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  /**
-   * |--------------------------------------------------------------------------
-   * | INDEXES
-   * |--------------------------------------------------------------------------
-   */
-
   @@index([userId])
   @@index([activityId])
+  @@index([landmassId])
+
   @@map("territories")
 }
+
+
 
 model TerritoryEvent {
   id              String                                   @id @default(uuid())
