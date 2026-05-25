@@ -172,7 +172,39 @@ export const finishActivity = async (req, res) => {
     const territoryId = territoryResult[0].id;
 
     // ── Capture enemy territories
-    await captureTerritory({ userId, activityId: activity.id, newTerritoryId: territoryId });
+    // ── Capture enemy territories
+      await captureTerritory({
+        userId,
+        activityId: activity.id,
+        newTerritoryId: territoryId,
+      });
+
+      // ── Remove captured area from enemy activity routes
+      await prisma.$executeRawUnsafe(`
+        UPDATE activities
+        SET
+          "routeGeometry" = ST_Difference(
+            "routeGeometry",
+            (
+              SELECT boundary
+              FROM territories
+              WHERE id = '${territoryId}'
+            )
+          )
+        WHERE id IN (
+          SELECT "activityId"
+          FROM territories
+          WHERE "userId" != '${userId}'
+            AND ST_Intersects(
+              boundary,
+              (
+                SELECT boundary
+                FROM territories
+                WHERE id = '${territoryId}'
+              )
+            )
+        );
+      `);
 
     // ── Merge own territories
     // await prisma.$executeRawUnsafe(`
