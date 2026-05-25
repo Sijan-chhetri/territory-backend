@@ -240,7 +240,7 @@ model UserProgress {
 
   level Int @default(0)
 
-  currentXp Int @default(0)
+  currentXp Decimal @default(0)
 
   totalXp Int @default(0)
 

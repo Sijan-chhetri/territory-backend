@@ -177,17 +177,7 @@ export const finishActivity = async (req, res) => {
       });
     }
 
-    // bonus XP for each territory captured
-    const captureBonus = recentEvents.length * 25;
-    if (captureBonus > 0) {
-      await addXP({
-        userId,
-        amount: captureBonus,
-        type: 'TERRITORY_CAPTURE',
-        description: `Captured ${recentEvents.length} territory`,
-        activityId: activity.id,
-      });
-    }
+  
 
     // ─────────────────────────────────────────
     // Update progress stats
