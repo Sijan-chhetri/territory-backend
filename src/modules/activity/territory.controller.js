@@ -83,6 +83,7 @@ const TERRITORY_COLORS = [
 // ─────────────────────────────────────────────
 export const getAllTerritories = async (req, res) => {
   try {
+    // ── Get Territories ───────────────────────────────────────
     const territoryRows = await prisma.$queryRaw`
       SELECT
         t.id,
@@ -93,49 +94,89 @@ export const getAllTerritories = async (req, res) => {
         t."capturedAt",
         t."createdAt",
         t."updatedAt",
+
         ST_AsGeoJSON(t.boundary)::json AS boundary,
-        ST_AsGeoJSON(t.center)::json   AS center,
+        ST_AsGeoJSON(t.center)::json AS center,
+
         u.username,
         u.full_name AS "fullName"
+
       FROM territories t
-      JOIN users u ON u.id = t."userId"
+
+      JOIN users u
+        ON u.id = t."userId"
+
       ORDER BY t."capturedAt" DESC;
     `;
 
+    // ── Calculate Total Area Per User ─────────────────────────
     const userAreaMap = {};
-    for (const t of territoryRows) {
-      userAreaMap[t.userId] = (userAreaMap[t.userId] || 0) + Number(t.areaKm2);
+
+    for (const territory of territoryRows) {
+      userAreaMap[territory.userId] =
+        (userAreaMap[territory.userId] || 0) +
+        Number(territory.areaKm2);
     }
 
+    // ── Assign Colors Based On Rank ───────────────────────────
     const userColorMap = Object.fromEntries(
       Object.entries(userAreaMap)
         .sort((a, b) => b[1] - a[1])
-        .map(([userId], index) => [userId, TERRITORY_COLORS[Math.min(index, TERRITORY_COLORS.length - 1)]])
+        .map(([userId], index) => [
+          userId,
+          TERRITORY_COLORS[
+            Math.min(index, TERRITORY_COLORS.length - 1)
+          ],
+        ])
     );
 
-    const territories = territoryRows.map((t) => ({
-      id:         t.id,
-      userId:     t.userId,
-      activityId: t.activityId,
-      name:       t.name,
-      owner:      { username: t.username, fullName: t.fullName },
-      areaKm2:    Number(t.areaKm2),
-      capturedAt: t.capturedAt,
-      createdAt:  t.createdAt,
-      updatedAt:  t.updatedAt,
-      geojson:    t.boundary,
-      center:     t.center,
-      color:      userColorMap[t.userId] ?? TERRITORY_COLORS[TERRITORY_COLORS.length - 1],
+    // ── Format Response ───────────────────────────────────────
+    const territories = territoryRows.map((territory) => ({
+      id: territory.id,
+
+      userId: territory.userId,
+
+      activityId: territory.activityId,
+
+      name: territory.name,
+
+      owner: {
+        username: territory.username,
+        fullName: territory.fullName,
+      },
+
+      areaKm2: Number(territory.areaKm2),
+
+      capturedAt: territory.capturedAt,
+      createdAt: territory.createdAt,
+      updatedAt: territory.updatedAt,
+
+      geojson: territory.boundary,
+
+      center: territory.center,
+
+      color:
+        userColorMap[territory.userId] ??
+        TERRITORY_COLORS[TERRITORY_COLORS.length - 1],
     }));
 
-    return res.status(200).json({ success: true, territories });
-
+    // ── Success Response ──────────────────────────────────────
+    return res.status(200).json({
+      success: true,
+      count: territories.length,
+      territories,
+    });
   } catch (error) {
-    console.error('GET_ALL_TERRITORIES ERROR:', error);
-    return res.status(500).json({ success: false, message: 'Something went wrong' });
+    // ── Error ─────────────────────────────────────────────────
+    console.error("GET_ALL_TERRITORIES ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch territories",
+      error: error.message,
+    });
   }
 };
-
 
 // ─────────────────────────────────────────────
 // Get Territory Events
