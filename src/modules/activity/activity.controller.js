@@ -124,24 +124,24 @@ export const finishActivity = async (req, res) => {
     await captureTerritory({ userId, activityId: activity.id, newTerritoryId: territoryId });
 
     // ── Merge own territories
-    await prisma.$executeRawUnsafe(`
-      WITH merged AS (SELECT ST_Union(boundary) AS merged_boundary FROM territories WHERE "userId" = '${userId}')
-      UPDATE territories
-      SET
-        boundary = (SELECT merged_boundary FROM merged),
-        "areaKm2" = (SELECT ST_Area(merged_boundary::geography) / 1000000 FROM merged),
-        "updatedAt" = NOW()
-      WHERE "userId" = '${userId}';
-    `);
+    // await prisma.$executeRawUnsafe(`
+    //   WITH merged AS (SELECT ST_Union(boundary) AS merged_boundary FROM territories WHERE "userId" = '${userId}')
+    //   UPDATE territories
+    //   SET
+    //     boundary = (SELECT merged_boundary FROM merged),
+    //     "areaKm2" = (SELECT ST_Area(merged_boundary::geography) / 1000000 FROM merged),
+    //     "updatedAt" = NOW()
+    //   WHERE "userId" = '${userId}';
+    // `);
 
     // ── Keep only the newest territory per user
-    await prisma.$executeRawUnsafe(`
-      DELETE FROM territories
-      WHERE id NOT IN (
-        SELECT DISTINCT ON ("userId") id FROM territories WHERE "userId" = '${userId}' ORDER BY "userId", "createdAt" DESC
-      )
-      AND "userId" = '${userId}';
-    `);
+    // await prisma.$executeRawUnsafe(`
+    //   DELETE FROM territories
+    //   WHERE id NOT IN (
+    //     SELECT DISTINCT ON ("userId") id FROM territories WHERE "userId" = '${userId}' ORDER BY "userId", "createdAt" DESC
+    //   )
+    //   AND "userId" = '${userId}';
+    // `);
 
     // ── Get final territory
     const finalTerritory = await prisma.$queryRawUnsafe(`
