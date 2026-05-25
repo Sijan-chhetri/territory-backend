@@ -13,5 +13,5 @@ export const LEVELS = [
 
   { level: 11, kmNeeded: 255, xpNeeded: 12750 },
 
-  // continue until level 50
+  
 ];

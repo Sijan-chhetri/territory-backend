@@ -156,17 +156,23 @@ export const finishActivity = async (req, res) => {
     });
 
     // ─────────────────────────────────────────
-    // XP — reward based on activity
+    // XP — only award for meaningful activities
+    // minimum 0.1 km, 10 XP per km
     // ─────────────────────────────────────────
-    const xpEarned = Math.round(distanceKm * 10);  // 10 XP per km base
+    const MIN_DISTANCE_KM = 0.1;
+    const xpEarned = distanceKm >= MIN_DISTANCE_KM
+      ? Math.round(distanceKm * 10)
+      : 0;
 
-    await addXP({
-      userId,
-      amount: xpEarned,
-      type: 'ACTIVITY',
-      description: `${mode} — ${distanceKm} km`,
-      activityId: activity.id,
-    });
+    if (xpEarned > 0) {
+      await addXP({
+        userId,
+        amount: xpEarned,
+        type: 'ACTIVITY',
+        description: `${mode} — ${distanceKm} km`,
+        activityId: activity.id,
+      });
+    }
 
     // bonus XP for each territory captured
     const captureBonus = recentEvents.length * 25;
@@ -188,11 +194,11 @@ export const finishActivity = async (req, res) => {
       create: {
         userId,
         totalDistanceKm: distanceKm,
-        activitiesCount: 1,
+        activitiesCount: distanceKm >= MIN_DISTANCE_KM ? 1 : 0,
       },
       update: {
         totalDistanceKm: { increment: distanceKm },
-        activitiesCount: { increment: 1 },
+        activitiesCount: distanceKm >= MIN_DISTANCE_KM ? { increment: 1 } : undefined,
       },
     });
 
