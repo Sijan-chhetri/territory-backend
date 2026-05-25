@@ -83,7 +83,7 @@ const TERRITORY_COLORS = [
 // ─────────────────────────────────────────────
 export const getAllTerritories = async (req, res) => {
   try {
-    // ── Get Territories ───────────────────────────────────────
+    // ── Get Territories + Activity Route ──────────────────────
     const territoryRows = await prisma.$queryRaw`
       SELECT
         t.id,
@@ -99,12 +99,17 @@ export const getAllTerritories = async (req, res) => {
         ST_AsGeoJSON(t.center)::json AS center,
 
         u.username,
-        u.full_name AS "fullName"
+        u.full_name AS "fullName",
+
+        a."routeEncoded"
 
       FROM territories t
 
       JOIN users u
         ON u.id = t."userId"
+
+      LEFT JOIN activities a
+        ON a.id = t."activityId"
 
       ORDER BY t."capturedAt" DESC;
     `;
@@ -155,6 +160,9 @@ export const getAllTerritories = async (req, res) => {
 
       center: territory.center,
 
+      // ── Activity Route ──────────────────────────────────────
+      routeEncoded: territory.routeEncoded,
+
       color:
         userColorMap[territory.userId] ??
         TERRITORY_COLORS[TERRITORY_COLORS.length - 1],
@@ -166,7 +174,9 @@ export const getAllTerritories = async (req, res) => {
       count: territories.length,
       territories,
     });
+
   } catch (error) {
+
     // ── Error ─────────────────────────────────────────────────
     console.error("GET_ALL_TERRITORIES ERROR:", error);
 
@@ -177,6 +187,8 @@ export const getAllTerritories = async (req, res) => {
     });
   }
 };
+
+
 
 // ─────────────────────────────────────────────
 // Get Territory Events
