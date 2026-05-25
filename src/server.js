@@ -18,6 +18,7 @@ app.get("/", (req, res) => {
 
 app.use('/api/auth', require('./modules/auth/auth.routes'));
 app.use('/api/activities', require('./modules/activity/activity.routes'));
+app.use('/api/territories', require('./modules/activity/territory.routes'));
 
 
 const PORT = process.env.PORT || 3000;

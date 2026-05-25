@@ -2,6 +2,8 @@
 
 const prisma = require('../../config/prisma');
 
+const territoryController = require('./territory.controller');
+
 
 // ─────────────────────────────────────────────
 // Helpers
@@ -127,6 +129,7 @@ exports.getMyActivities = async (req, res) => {
 // ─────────────────────────────────────────────
 exports.finishActivity = async (req, res) => {
   try {
+
     const userId = req.user.id;
 
     const {
@@ -145,123 +148,259 @@ exports.finishActivity = async (req, res) => {
       startedAt,
       endedAt,
       routeEncoded,
-      // [{ lat, lng, timestamp }]  — timestamp required for splits
+
+      // [{ lat, lng, timestamp }]
       coordinates,
-      // optional: pre-computed splits from device
-      // [{ km, timeSec, pace, paceFormatted }]
+
+      // optional device splits
       kmSplits: clientKmSplits,
+
     } = req.body;
 
-    if (!coordinates || coordinates.length < 1) {
-      return res.status(400).json({ message: 'Not enough GPS points' });
+    // ─────────────────────────────────────────
+    // Validation
+    // ─────────────────────────────────────────
+
+    if (!coordinates || coordinates.length < 2) {
+      return res.status(400).json({
+        message: 'Not enough GPS points',
+      });
     }
 
-    // ── Use device splits if provided, otherwise compute server-side
-    const kmSplits = (clientKmSplits && clientKmSplits.length > 0)
-      ? clientKmSplits
-      : computeKmSplits(coordinates);
+    // ─────────────────────────────────────────
+    // Splits
+    // ─────────────────────────────────────────
 
-    // ── Build LINESTRING
-    const lineString = coordinates.map((p) => `${p.lng} ${p.lat}`).join(',');
+    const kmSplits =
+      (clientKmSplits && clientKmSplits.length > 0)
+        ? clientKmSplits
+        : computeKmSplits(coordinates);
+
+    // ─────────────────────────────────────────
+    // Build LINESTRING
+    // ─────────────────────────────────────────
+
+    const lineString = coordinates
+      .map((p) => `${p.lng} ${p.lat}`)
+      .join(',');
+
     const routeWKT = `LINESTRING(${lineString})`;
 
-    // ── Save activity
+    // ─────────────────────────────────────────
+    // Save Activity
+    // ─────────────────────────────────────────
+
     const activity = await prisma.activity.create({
       data: {
         userId,
+
         mode,
+
         distanceKm,
         durationSec,
+
         stopTime,
         elapsedTime,
         movingTime,
+
         avgPace,
         topPace,
+
         avgSpeed,
         topSpeed,
+
         calories,
         elevationGain,
-        startedAt:  new Date(startedAt),
-        endedAt:    new Date(endedAt),
+
+        startedAt: new Date(startedAt),
+        endedAt: new Date(endedAt),
+
         routeEncoded,
+
         kmSplits,
       },
     });
 
-    // ── Create buffered territory (20 m around path)
-    await prisma.$queryRawUnsafe(`
+    // ─────────────────────────────────────────
+    // Create Territory
+    // ─────────────────────────────────────────
+
+    const territoryResult = await prisma.$queryRawUnsafe(`
       WITH new_route AS (
         SELECT ST_GeomFromText('${routeWKT}', 4326) AS route
       ),
+
       new_area AS (
         SELECT ST_Buffer(route::geography, 20)::geometry AS territory
         FROM new_route
       )
+
       INSERT INTO territories (
-        id, "userId", "activityId", boundary, "areaKm2", "capturedAt", "updatedAt"
+        id,
+        "userId",
+        "activityId",
+        boundary,
+        "areaKm2",
+        "capturedAt",
+        "createdAt",
+        "updatedAt"
       )
+
       SELECT
         gen_random_uuid(),
+
         '${userId}',
+
         '${activity.id}',
+
         territory,
+
         ST_Area(territory::geography) / 1000000,
+
+        NOW(),
         NOW(),
         NOW()
+
       FROM new_area
+
       RETURNING id;
     `);
 
-    // ── Merge overlapping territories for this user
+    const territoryId = territoryResult[0].id;
+
+    // ─────────────────────────────────────────
+    // Capture Enemy Territories
+    // ─────────────────────────────────────────
+
+    await territoryController.captureTerritory({
+      userId,
+      activityId: activity.id,
+      newTerritoryId: territoryId,
+    });
+
+    // ─────────────────────────────────────────
+    // Merge Own Territories
+    // ─────────────────────────────────────────
+
     await prisma.$executeRawUnsafe(`
-      UPDATE territories t
-      SET
-        boundary  = merged.new_boundary,
-        "areaKm2" = merged.new_area,
-        "updatedAt" = NOW()
-      FROM (
+      WITH merged AS (
+
         SELECT
-          t1.id,
-          ST_Union(t1.boundary::geometry, t2.boundary::geometry) AS new_boundary,
-          ST_Area(
-            ST_Union(t1.boundary::geometry, t2.boundary::geometry)::geography
-          ) / 1000000 AS new_area
-        FROM territories t1
-        JOIN territories t2
-          ON  t1."userId" = t2."userId"
-          AND t1.id != t2.id
-        WHERE
-          t1."userId" = '${userId}'
-          AND ST_Intersects(t1.boundary, t2.boundary)
-      ) merged
-      WHERE t.id = merged.id;
+          ST_Union(boundary) AS merged_boundary
+
+        FROM territories
+
+        WHERE "userId" = '${userId}'
+      )
+
+      UPDATE territories
+
+      SET
+        boundary = (
+          SELECT merged_boundary
+          FROM merged
+        ),
+
+        "areaKm2" = (
+          SELECT
+            ST_Area(
+              merged_boundary::geography
+            ) / 1000000
+          FROM merged
+        ),
+
+        "updatedAt" = NOW()
+
+      WHERE "userId" = '${userId}';
     `);
 
-    // ── Find enemy territories that overlap the new one
-    const enemies = await prisma.$queryRawUnsafe(`
-      WITH current_territory AS (
-        SELECT boundary FROM territories
-        WHERE "activityId" = '${activity.id}'
-        LIMIT 1
+    // ─────────────────────────────────────────
+    // Delete duplicate territories
+    // keep newest only
+    // ─────────────────────────────────────────
+
+    await prisma.$executeRawUnsafe(`
+      DELETE FROM territories
+
+      WHERE id NOT IN (
+
+        SELECT DISTINCT ON ("userId")
+          id
+
+        FROM territories
+
+        WHERE "userId" = '${userId}'
+
+        ORDER BY "userId", "createdAt" DESC
       )
-      SELECT id, "userId"
-      FROM territories
-      WHERE
-        "userId" != '${userId}'
-        AND ST_Intersects(boundary, (SELECT boundary FROM current_territory));
+
+      AND "userId" = '${userId}';
     `);
+
+    // ─────────────────────────────────────────
+    // Get Updated Territory
+    // ─────────────────────────────────────────
+
+    const finalTerritory = await prisma.$queryRawUnsafe(`
+      SELECT
+        id,
+        "userId",
+        "activityId",
+        "areaKm2",
+        "capturedAt",
+        "createdAt",
+        "updatedAt",
+
+        ST_AsGeoJSON(boundary)::json AS boundary
+
+      FROM territories
+
+      WHERE id = '${territoryId}'
+
+      LIMIT 1;
+    `);
+
+    // ─────────────────────────────────────────
+    // Recent Capture Events
+    // ─────────────────────────────────────────
+
+    const recentEvents = await prisma.territoryEvent.findMany({
+      where: {
+        activityId: activity.id,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+
+    // ─────────────────────────────────────────
+    // Response
+    // ─────────────────────────────────────────
 
     return res.status(201).json({
-      message: 'Activity completed',
+
+      success: true,
+
+      message: 'Activity completed successfully',
+
       activity,
-      enemyTerritories: enemies,
+
+      territory: finalTerritory[0] || null,
+
+      captureEvents: recentEvents,
     });
 
   } catch (error) {
+
     console.error('FINISH_ACTIVITY ERROR:', error);
+
     return res.status(500).json({
+      success: false,
       message: 'Server error',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+      error:
+        process.env.NODE_ENV === 'development'
+          ? error.message
+          : undefined,
     });
   }
 };
@@ -391,53 +530,4 @@ exports.getActivityDetail = async (req, res) => {
 
 
 
-exports.getAllTerritories = async (req, res) => {
-  try {
-    const territoryRows = await prisma.$queryRaw`
-      SELECT
-        t.id,
-        t."userId",
-        t."activityId",
-        t.name,
-        t."areaKm2",
-        t."capturedAt",
-        t."createdAt",
-        t."updatedAt",
-        ST_AsGeoJSON(t.boundary)::json AS boundary,
-        ST_AsGeoJSON(t.center)::json AS center,
-        u.username,
-        u.full_name AS "fullName"
-      FROM territories t
-      JOIN users u ON u.id = t."userId"
-      ORDER BY t."capturedAt" DESC;
-    `;
-
-    const territories = territoryRows.map((t) => ({
-      id: t.id,
-      userId: t.userId,
-      activityId: t.activityId,
-      name: t.name,
-      owner: {
-        username: t.username,
-        fullName: t.fullName,
-      },
-      areaKm2: t.areaKm2,
-      capturedAt: t.capturedAt,
-      createdAt: t.createdAt,
-      updatedAt: t.updatedAt,
-      geojson: t.boundary,
-      center: t.center,
-    }));
-
-    return res.status(200).json({
-      success: true,
-      territories,
-    });
-  } catch (error) {
-    console.error('GET_ALL_TERRITORIES ERROR:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Something went wrong',
-    });
-  }
-};
+// Remove getAllTerritories from here — it lives in territory.controller.js
