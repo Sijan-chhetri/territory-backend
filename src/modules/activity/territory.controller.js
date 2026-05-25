@@ -21,7 +21,7 @@ exports.captureTerritory = async ({
     SELECT
       t.id,
       t."userId",
-      t.boundary
+      ST_AsText(t.boundary) AS boundary
     FROM territories t
     WHERE
       t."userId" != '${userId}'
