@@ -10,7 +10,13 @@ const authMiddleware = require('../../middlewares/auth');
 router.post('/finish', authMiddleware, activityController.finishActivity);
 
 router.get('/my', authMiddleware, activityController.getMyActivities);
-router.get('/territories', authMiddleware, activityController.getActivityDetail);
+// router.get('/territories', authMiddleware, activityController.getActivityDetail);
+
+router.get('/territories/all', authMiddleware, activityController.getAllTerritories);
+
+router.get('/:id/territories', authMiddleware, activityController.getActivityDetail);
+
+
 
 router.get('/finishActivity', authMiddleware, activityController.finishActivity);
 

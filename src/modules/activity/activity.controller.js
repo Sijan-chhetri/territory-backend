@@ -388,3 +388,56 @@ exports.getActivityDetail = async (req, res) => {
   }
 };
 
+
+
+
+exports.getAllTerritories = async (req, res) => {
+  try {
+    const territoryRows = await prisma.$queryRaw`
+      SELECT
+        t.id,
+        t."userId",
+        t."activityId",
+        t.name,
+        t."areaKm2",
+        t."capturedAt",
+        t."createdAt",
+        t."updatedAt",
+        ST_AsGeoJSON(t.boundary)::json AS boundary,
+        ST_AsGeoJSON(t.center)::json AS center,
+        u.username,
+        u.full_name AS "fullName"
+      FROM territories t
+      JOIN users u ON u.id = t."userId"
+      ORDER BY t."capturedAt" DESC;
+    `;
+
+    const territories = territoryRows.map((t) => ({
+      id: t.id,
+      userId: t.userId,
+      activityId: t.activityId,
+      name: t.name,
+      owner: {
+        username: t.username,
+        fullName: t.fullName,
+      },
+      areaKm2: t.areaKm2,
+      capturedAt: t.capturedAt,
+      createdAt: t.createdAt,
+      updatedAt: t.updatedAt,
+      geojson: t.boundary,
+      center: t.center,
+    }));
+
+    return res.status(200).json({
+      success: true,
+      territories,
+    });
+  } catch (error) {
+    console.error('GET_ALL_TERRITORIES ERROR:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Something went wrong',
+    });
+  }
+};
