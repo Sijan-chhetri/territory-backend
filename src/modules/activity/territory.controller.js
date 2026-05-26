@@ -177,7 +177,6 @@ export const getAllTerritories = async (req, res) => {
         t."capturedAt",
         t."createdAt",
         t."updatedAt",
-        t.boundary                     AS boundary_raw,
         ST_AsGeoJSON(t.boundary)::json AS boundary,
         ST_AsGeoJSON(t.center)::json   AS center,
         u.username,
@@ -222,7 +221,7 @@ export const getAllTerritories = async (req, res) => {
             SELECT boundary FROM territories WHERE id = '${t.id}'
           ),
           claimed AS (
-            SELECT ST_Union(ARRAY[${claimedWKTs.map((w) => `ST_GeomFromText('${w}', 4326)`).join(',')}]) AS geom
+            SELECT ST_Union(ARRAY[${claimedWKTs.map((w) => `ST_SetSRID(ST_GeomFromText('${w}'), 4326)`).join(',')}]) AS geom
           ),
           clipped AS (
             SELECT
