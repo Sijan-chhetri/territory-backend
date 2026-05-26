@@ -3,6 +3,7 @@ import { captureTerritory } from './territory.controller.js';
 import { addXP } from '../xp/xp.service.js';
 import { checkLevelUp } from '../level/level.service.js';
 import { checkBadges } from '../badge/badge.service.js';
+import polyline from '@mapbox/polyline';
 
 
 // ─────────────────────────────────────────────
@@ -89,13 +90,22 @@ export const finishActivity = async (req, res) => {
       kmSplits: clientKmSplits,
     } = req.body;
 
-    if (!coordinates || coordinates.length < 2) {
-      return res.status(400).json({ message: 'Not enough GPS points' });
+    // ── Resolve coordinates from raw array or decode Google polyline
+    let resolvedCoords = coordinates;
+
+    if ((!resolvedCoords || resolvedCoords.length < 2) && routeEncoded) {
+      // @mapbox/polyline decodes Google encoded polyline → [[lat, lng], ...]
+      const decoded = polyline.decode(routeEncoded);
+      resolvedCoords = decoded.map(([lat, lng]) => ({ lat, lng }));
     }
 
-    const kmSplits = (clientKmSplits?.length > 0) ? clientKmSplits : computeKmSplits(coordinates);
+    if (!resolvedCoords || resolvedCoords.length < 2) {
+      return res.status(400).json({ message: 'Not enough GPS points — provide coordinates or routeEncoded' });
+    }
 
-    const lineString = coordinates.map((p) => `${p.lng} ${p.lat}`).join(',');
+    const kmSplits = (clientKmSplits?.length > 0) ? clientKmSplits : computeKmSplits(resolvedCoords);
+
+    const lineString = resolvedCoords.map((p) => `${p.lng} ${p.lat}`).join(',');
     const routeWKT = `LINESTRING(${lineString})`;
 
     const activity = await prisma.activity.create({

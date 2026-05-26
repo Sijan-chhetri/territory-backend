@@ -2,60 +2,112 @@ import prisma from '../../config/prisma.js';
 
 // ─────────────────────────────────────────────
 // Capture Enemy Territories
+//
+// When user2 runs over user1's rectangle territory:
+//   1. Compute the intersection (the stolen area)
+//   2. Subtract it from user1's boundary (ST_Difference)
+//   3. Add it to user2's boundary (ST_Union)
+//   4. Delete user1's territory if it becomes empty
 // ─────────────────────────────────────────────
 export const captureTerritory = async ({ userId, activityId, newTerritoryId }) => {
 
+  // Find all enemy territories that overlap the new territory
   const enemyTerritories = await prisma.$queryRawUnsafe(`
     WITH current_territory AS (
       SELECT boundary FROM territories WHERE id = '${newTerritoryId}' LIMIT 1
     )
-    SELECT t.id, t."userId", ST_AsText(t.boundary) AS boundary
+    SELECT t.id, t."userId"
     FROM territories t
     WHERE
       t."userId" != '${userId}'
-      AND ST_Intersects(t.boundary, (SELECT boundary FROM current_territory));
+      AND ST_Intersects(t.boundary, (SELECT boundary FROM current_territory))
+      AND NOT ST_IsEmpty(ST_Intersection(t.boundary, (SELECT boundary FROM current_territory)));
   `);
 
   for (const enemy of enemyTerritories) {
 
+    // Compute the overlapping area (what gets stolen)
     const overlap = await prisma.$queryRawUnsafe(`
       WITH attacker AS (SELECT boundary FROM territories WHERE id = '${newTerritoryId}'),
            defender AS (SELECT boundary FROM territories WHERE id = '${enemy.id}')
       SELECT
-        ST_AsText(ST_Intersection((SELECT boundary FROM attacker), (SELECT boundary FROM defender))) AS overlap_wkt,
-        ST_Area(ST_Intersection((SELECT boundary FROM attacker), (SELECT boundary FROM defender))::geography) / 1000000 AS overlap_area;
+        ST_AsText(
+          ST_Intersection(
+            (SELECT boundary FROM attacker),
+            (SELECT boundary FROM defender)
+          )
+        ) AS overlap_wkt,
+        ST_Area(
+          ST_Intersection(
+            (SELECT boundary FROM attacker),
+            (SELECT boundary FROM defender)
+          )::geography
+        ) / 1000000 AS overlap_area;
     `);
 
-    if (!overlap[0]?.overlap_wkt) continue;
+    if (!overlap[0]?.overlap_wkt || overlap[0].overlap_area < 0.000001) continue;
 
-    const overlapWKT = overlap[0].overlap_wkt;
-    const overlapArea = overlap[0].overlap_area;
+    const overlapWKT  = overlap[0].overlap_wkt;
+    const overlapArea = Number(overlap[0].overlap_area);
 
+    // ── Subtract stolen area from enemy territory
     await prisma.$executeRawUnsafe(`
       UPDATE territories
       SET
-        boundary = ST_Difference(boundary, ST_GeomFromText('${overlapWKT}', 4326)),
-        "areaKm2" = ST_Area(ST_Difference(boundary, ST_GeomFromText('${overlapWKT}', 4326))::geography) / 1000000,
+        boundary = ST_Difference(
+          boundary,
+          ST_GeomFromText('${overlapWKT}', 4326)
+        ),
+        "areaKm2" = GREATEST(0, ST_Area(
+          ST_Difference(
+            boundary,
+            ST_GeomFromText('${overlapWKT}', 4326)
+          )::geography
+        ) / 1000000),
         "updatedAt" = NOW()
       WHERE id = '${enemy.id}';
     `);
 
+    // ── Add stolen area to attacker territory
     await prisma.$executeRawUnsafe(`
       UPDATE territories
       SET
-        boundary = ST_Union(boundary, ST_GeomFromText('${overlapWKT}', 4326)),
-        "areaKm2" = ST_Area(ST_Union(boundary, ST_GeomFromText('${overlapWKT}', 4326))::geography) / 1000000,
+        boundary = ST_Union(
+          boundary,
+          ST_GeomFromText('${overlapWKT}', 4326)
+        ),
+        "areaKm2" = ST_Area(
+          ST_Union(
+            boundary,
+            ST_GeomFromText('${overlapWKT}', 4326)
+          )::geography
+        ) / 1000000,
         "updatedAt" = NOW()
       WHERE id = '${newTerritoryId}';
     `);
 
+    // ── Record the capture event
     await prisma.territoryEvent.create({
-      data: { territoryId: newTerritoryId, userId, opponentUserId: enemy.userId, activityId, type: 'CAPTURE', affectedAreaKm2: overlapArea },
+      data: {
+        territoryId:    newTerritoryId,
+        userId,
+        opponentUserId: enemy.userId,
+        activityId,
+        type:           'CAPTURE',
+        affectedAreaKm2: overlapArea,
+      },
     });
 
+    // ── Delete enemy territory if it's now empty
     await prisma.$executeRawUnsafe(`
       DELETE FROM territories
-      WHERE id = '${enemy.id}' AND (boundary IS NULL OR ST_IsEmpty(boundary) OR "areaKm2" <= 0.00001);
+      WHERE
+        id = '${enemy.id}'
+        AND (
+          boundary IS NULL
+          OR ST_IsEmpty(boundary)
+          OR "areaKm2" <= 0.000001
+        );
     `);
   }
 };
