@@ -142,14 +142,14 @@ export const captureTerritory = async ({ userId, activityId, newTerritoryId }) =
 // index 0 = biggest (blue), last = smallest (yellow)
 // ─────────────────────────────────────────────
 const TERRITORY_COLORS = [
-  { fill: 'rgba(59,  130, 246, 0.25)', border: 'rgba(59,  130, 246, 0.6)' }, // blue
-  { fill: 'rgba(34,  197,  94, 0.25)', border: 'rgba(34,  197,  94, 0.6)' }, // green
-  { fill: 'rgba(239,  68,  68, 0.25)', border: 'rgba(239,  68,  68, 0.6)' }, // red
-  { fill: 'rgba(168,  85, 247, 0.25)', border: 'rgba(168,  85, 247, 0.6)' }, // purple
-  { fill: 'rgba(249, 115,  22, 0.25)', border: 'rgba(249, 115,  22, 0.6)' }, // orange
-  { fill: 'rgba(236,  72, 153, 0.25)', border: 'rgba(236,  72, 153, 0.6)' }, // pink
-  { fill: 'rgba(107, 114, 128, 0.25)', border: 'rgba(107, 114, 128, 0.6)' }, // gray
-  { fill: 'rgba(234, 179,   8, 0.25)', border: 'rgba(234, 179,   8, 0.6)' }, // yellow
+  { fill: 'rgba(59,  130, 246, 0.28)', border: 'rgba(59,  130, 246, 1)' }, // blue
+  { fill: 'rgba(34,  197,  94, 0.28)', border: 'rgba(34,  197,  94, 1)' }, // green
+  { fill: 'rgba(239,  68,  68, 0.28)', border: 'rgba(239,  68,  68, 1)' }, // red
+  { fill: 'rgba(168,  85, 247, 0.28)', border: 'rgba(168,  85, 247, 1)' }, // purple
+  { fill: 'rgba(249, 115,  22, 0.28)', border: 'rgba(249, 115,  22, 1)' }, // orange
+  { fill: 'rgba(236,  72, 153, 0.28)', border: 'rgba(236,  72, 153, 1)' }, // pink
+  { fill: 'rgba(107, 114, 128, 0.28)', border: 'rgba(107, 114, 128, 1)' }, // gray
+  { fill: 'rgba(234, 179,   8, 0.28)', border: 'rgba(234, 179,   8, 1)' }, // yellow
 ];
 
 
