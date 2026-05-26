@@ -50,36 +50,60 @@ export const captureTerritory = async ({ userId, activityId, newTerritoryId }) =
     const overlapWKT  = overlap[0].overlap_wkt;
     const overlapArea = Number(overlap[0].overlap_area);
 
-    // ── Subtract stolen area from enemy territory
+    // ── Subtract stolen area from enemy territory FIRST
     await prisma.$executeRawUnsafe(`
       UPDATE territories
       SET
-        boundary = ST_Difference(
-          boundary,
-          ST_GeomFromText('${overlapWKT}', 4326)
+        boundary = ST_Buffer(
+          ST_SnapToGrid(
+            ST_Difference(
+              boundary,
+              ST_GeomFromText('${overlapWKT}', 4326)
+            ),
+            0.0000001
+          ),
+          0
         ),
         "areaKm2" = GREATEST(0, ST_Area(
-          ST_Difference(
-            boundary,
-            ST_GeomFromText('${overlapWKT}', 4326)
+          ST_Buffer(
+            ST_SnapToGrid(
+              ST_Difference(
+                boundary,
+                ST_GeomFromText('${overlapWKT}', 4326)
+              ),
+              0.0000001
+            ),
+            0
           )::geography
         ) / 1000000),
         "updatedAt" = NOW()
       WHERE id = '${enemy.id}';
     `);
 
-    // ── Add stolen area to attacker territory
+    // ── Add stolen area to attacker territory AFTER enemy is trimmed
     await prisma.$executeRawUnsafe(`
       UPDATE territories
       SET
-        boundary = ST_Union(
-          boundary,
-          ST_GeomFromText('${overlapWKT}', 4326)
+        boundary = ST_Buffer(
+          ST_SnapToGrid(
+            ST_Union(
+              boundary,
+              ST_GeomFromText('${overlapWKT}', 4326)
+            ),
+            0.0000001
+          ),
+          0
         ),
         "areaKm2" = ST_Area(
-          ST_Union(
-            boundary,
-            ST_GeomFromText('${overlapWKT}', 4326)
+          ST_Buffer(
+            ST_SnapToGrid(
+              ST_Union(
+                boundary,
+                ST_GeomFromText('${overlapWKT}', 4326)
+              ),
+              0.0000001
+            ),
+            0
           )::geography
         ) / 1000000,
         "updatedAt" = NOW()
