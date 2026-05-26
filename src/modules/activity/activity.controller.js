@@ -126,15 +126,18 @@ export const finishActivity = async (req, res) => {
         SELECT ST_SnapToGrid(
           ST_Buffer(route::geography, 20)::geometry,
           0.0000001
-        ) AS territory
+        ) AS territory,
+        route
         FROM new_route
       )
-      INSERT INTO territories (id, "userId", "activityId", boundary, "areaKm2", "capturedAt", "createdAt", "updatedAt")
+      INSERT INTO territories (id, "userId", "activityId", boundary, "routeEncoded", "routeGeometry", "areaKm2", "capturedAt", "createdAt", "updatedAt")
       SELECT
         gen_random_uuid(),
         '${userId}',
         '${activity.id}',
         territory,
+        '${(routeEncoded || '').replace(/'/g, "''")}',
+        route,
         ST_Area(territory::geography) / 1000000,
         NOW(), NOW(), NOW()
       FROM new_area
@@ -201,6 +204,7 @@ export const finishActivity = async (req, res) => {
     // ── Get final territory
     const finalTerritory = await prisma.$queryRawUnsafe(`
       SELECT id, "userId", "activityId", "areaKm2", "capturedAt", "createdAt", "updatedAt",
+             "routeEncoded",
              ST_AsGeoJSON(boundary)::json AS boundary
       FROM territories WHERE id = '${territoryId}' LIMIT 1;
     `);

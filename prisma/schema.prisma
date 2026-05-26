@@ -169,7 +169,11 @@ model Territory {
   name String?
 
   boundary Unsupported("geometry(Geometry, 4326)")
-  center Unsupported("geometry(Point, 4326)")?
+  center   Unsupported("geometry(Point, 4326)")?
+
+  // route that created/last updated this territory
+  routeEncoded  String?                                          // Google encoded polyline
+  routeGeometry Unsupported("geometry(LineString, 4326)")?      // GIS line for spatial queries
 
   areaKm2 Float
 

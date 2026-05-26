@@ -1,4 +1,33 @@
 import prisma from '../../config/prisma.js';
+import polylineLib from '@mapbox/polyline';
+
+// ─────────────────────────────────────────────
+// Re-encode a PostGIS LineString to Google polyline
+// ─────────────────────────────────────────────
+async function reEncodeRoute(territoryId) {
+  const rows = await prisma.$queryRawUnsafe(`
+    SELECT ST_AsGeoJSON("routeGeometry")::json AS route
+    FROM territories
+    WHERE id = '${territoryId}'
+      AND "routeGeometry" IS NOT NULL
+    LIMIT 1;
+  `);
+
+  if (!rows[0]?.route) return null;
+
+  const geojson = rows[0].route;
+  let coords = [];
+
+  if (geojson.type === 'LineString') {
+    coords = geojson.coordinates.map(([lng, lat]) => [lat, lng]);
+  } else if (geojson.type === 'MultiLineString') {
+    // flatten all segments
+    coords = geojson.coordinates.flatMap((seg) => seg.map(([lng, lat]) => [lat, lng]));
+  }
+
+  if (coords.length < 2) return null;
+  return polylineLib.encode(coords);
+}
 
 // ─────────────────────────────────────────────
 // Capture Enemy Territories
@@ -133,6 +162,36 @@ export const captureTerritory = async ({ userId, activityId, newTerritoryId }) =
           OR "areaKm2" <= 0.000001
         );
     `);
+
+    // ── Clip enemy route: remove the portion that now falls inside attacker's territory
+    await prisma.$executeRawUnsafe(`
+      UPDATE territories
+      SET
+        "routeGeometry" = CASE
+          WHEN "routeGeometry" IS NOT NULL
+            AND ST_Intersects(
+              "routeGeometry",
+              (SELECT boundary FROM territories WHERE id = '${newTerritoryId}')
+            )
+          THEN ST_Difference(
+            "routeGeometry",
+            (SELECT boundary FROM territories WHERE id = '${newTerritoryId}')
+          )
+          ELSE "routeGeometry"
+        END,
+        "updatedAt" = NOW()
+      WHERE id = '${enemy.id}';
+    `);
+
+    // Re-encode the clipped route back to Google polyline and save
+    const clippedEncoded = await reEncodeRoute(enemy.id);
+    if (clippedEncoded !== null) {
+      await prisma.$executeRawUnsafe(`
+        UPDATE territories
+        SET "routeEncoded" = '${clippedEncoded.replace(/'/g, "''")}'
+        WHERE id = '${enemy.id}';
+      `);
+    }
   }
 };
 
@@ -175,11 +234,10 @@ export const getAllTerritories = async (req, res) => {
           t.center,
           u.username,
           u.full_name        AS "fullName",
-          a."routeEncoded",
+          t."routeEncoded",
           ROW_NUMBER() OVER (ORDER BY t."updatedAt" DESC) AS rn
         FROM territories t
         JOIN users u ON u.id = t."userId"
-        LEFT JOIN activities a ON a.id = t."activityId"
         WHERE t.boundary IS NOT NULL
           AND NOT ST_IsEmpty(t.boundary)
       ),
@@ -279,9 +337,61 @@ export const getAllTerritories = async (req, res) => {
 
 
 // ─────────────────────────────────────────────
-// Get Territory Events
-// GET /api/territories/events
+// Update Territory Route
+// PUT /api/territories/:id/route
 // ─────────────────────────────────────────────
+export const updateTerritoryRoute = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.id;
+    const { routeEncoded } = req.body;
+
+    if (!routeEncoded) {
+      return res.status(400).json({ success: false, message: 'routeEncoded is required' });
+    }
+
+    // Verify ownership
+    const territory = await prisma.territory.findUnique({ where: { id } });
+    if (!territory) return res.status(404).json({ success: false, message: 'Territory not found' });
+    if (territory.userId !== userId) return res.status(403).json({ success: false, message: 'Forbidden' });
+
+    // Decode Google polyline → LINESTRING WKT
+    const decoded = polylineLib.decode(routeEncoded);
+    if (!decoded || decoded.length < 2) {
+      return res.status(400).json({ success: false, message: 'routeEncoded must decode to at least 2 points' });
+    }
+
+    const lineString = decoded.map(([lat, lng]) => `${lng} ${lat}`).join(',');
+    const routeWKT   = `LINESTRING(${lineString})`;
+
+    // Save routeEncoded + routeGeometry
+    await prisma.$executeRawUnsafe(`
+      UPDATE territories
+      SET
+        "routeEncoded"  = '${routeEncoded.replace(/'/g, "''")}',
+        "routeGeometry" = ST_SetSRID(ST_GeomFromText('${routeWKT}'), 4326),
+        "updatedAt"     = NOW()
+      WHERE id = '${id}';
+    `);
+
+    const updated = await prisma.$queryRawUnsafe(`
+      SELECT
+        id, "userId", "activityId", "areaKm2", "capturedAt", "updatedAt",
+        "routeEncoded",
+        ST_AsGeoJSON(boundary)::json      AS boundary,
+        ST_AsGeoJSON("routeGeometry")::json AS route
+      FROM territories
+      WHERE id = '${id}'
+      LIMIT 1;
+    `);
+
+    return res.status(200).json({ success: true, territory: updated[0] });
+
+  } catch (error) {
+    console.error('UPDATE_TERRITORY_ROUTE ERROR:', error);
+    return res.status(500).json({ success: false, message: 'Something went wrong', error: process.env.NODE_ENV === 'development' ? error.message : undefined });
+  }
+};
 export const getTerritoryEvents = async (req, res) => {
   try {
     const events = await prisma.territoryEvent.findMany({
