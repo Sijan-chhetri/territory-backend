@@ -142,16 +142,15 @@ export const captureTerritory = async ({ userId, activityId, newTerritoryId }) =
 // index 0 = biggest (blue), last = smallest (yellow)
 // ─────────────────────────────────────────────
 const TERRITORY_COLORS = [
-  { fill: 'rgba(59,  130, 246, 0.28)', border: 'rgba(59,  130, 246, 1)' }, // blue
-  { fill: 'rgba(34,  197,  94, 0.28)', border: 'rgba(34,  197,  94, 1)' }, // green
-  { fill: 'rgba(239,  68,  68, 0.28)', border: 'rgba(239,  68,  68, 1)' }, // red
-  { fill: 'rgba(168,  85, 247, 0.28)', border: 'rgba(168,  85, 247, 1)' }, // purple
-  { fill: 'rgba(249, 115,  22, 0.28)', border: 'rgba(249, 115,  22, 1)' }, // orange
-  { fill: 'rgba(236,  72, 153, 0.28)', border: 'rgba(236,  72, 153, 1)' }, // pink
-  { fill: 'rgba(107, 114, 128, 0.28)', border: 'rgba(107, 114, 128, 1)' }, // gray
-  { fill: 'rgba(234, 179,   8, 0.28)', border: 'rgba(234, 179,   8, 1)' }, // yellow
+  { fill: 'rgba(37,  99, 235, 0.38)', border: 'rgba(30,  64, 175, 1)' }, // deep blue
+  { fill: 'rgba(22, 163,  74, 0.38)', border: 'rgba(21, 128,  61, 1)' }, // deep green
+  { fill: 'rgba(220,  38,  38, 0.38)', border: 'rgba(153,  27,  27, 1)' }, // deep red
+  { fill: 'rgba(147,  51, 234, 0.38)', border: 'rgba(107,  33, 168, 1)' }, // deep purple
+  { fill: 'rgba(234,  88,  12, 0.38)', border: 'rgba(154,  52,  18, 1)' }, // deep orange
+  { fill: 'rgba(219,  39, 119, 0.38)', border: 'rgba(157,  23,  77, 1)' }, // deep pink
+  { fill: 'rgba(75,   85,  99, 0.38)', border: 'rgba(55,   65,  81, 1)' }, // deep gray
+  { fill: 'rgba(202, 138,   4, 0.38)', border: 'rgba(133,  77,  14, 1)' }, // deep yellow
 ];
-
 
 // ─────────────────────────────────────────────
 // Get All Territories (map view)
