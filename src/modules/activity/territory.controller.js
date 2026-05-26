@@ -156,10 +156,17 @@ const TERRITORY_COLORS = [
 // ─────────────────────────────────────────────
 // Get All Territories (map view)
 // GET /api/territories/all
+//
+// Color logic:
+// - Each territory row gets a color based on its position in the
+//   TERRITORY_COLORS palette, assigned by order of first appearance (userId).
+// - If two territory rows overlap (capture sliver), the more recently
+//   updated row wins — the older row's geometry is clipped server-side
+//   so the frontend never renders two colors on the same zone.
 // ─────────────────────────────────────────────
 export const getAllTerritories = async (req, res) => {
   try {
-    // ── Get Territories + Activity Route ──────────────────────
+    // Fetch territories ordered newest first (most recent owner wins disputes)
     const territoryRows = await prisma.$queryRaw`
       SELECT
         t.id,
@@ -170,95 +177,121 @@ export const getAllTerritories = async (req, res) => {
         t."capturedAt",
         t."createdAt",
         t."updatedAt",
-
+        t.boundary                     AS boundary_raw,
         ST_AsGeoJSON(t.boundary)::json AS boundary,
-        ST_AsGeoJSON(t.center)::json AS center,
-
+        ST_AsGeoJSON(t.center)::json   AS center,
         u.username,
         u.full_name AS "fullName",
-
         a."routeEncoded"
-
       FROM territories t
-
-      JOIN users u
-        ON u.id = t."userId"
-
-      LEFT JOIN activities a
-        ON a.id = t."activityId"
-
-      ORDER BY t."capturedAt" DESC;
+      JOIN users u ON u.id = t."userId"
+      LEFT JOIN activities a ON a.id = t."activityId"
+      WHERE t.boundary IS NOT NULL
+        AND NOT ST_IsEmpty(t.boundary)
+      ORDER BY t."updatedAt" DESC;
     `;
 
-    // ── Calculate Total Area Per User ─────────────────────────
-    const userAreaMap = {};
-
-    for (const territory of territoryRows) {
-      userAreaMap[territory.userId] =
-        (userAreaMap[territory.userId] || 0) +
-        Number(territory.areaKm2);
+    // ── Assign a stable color per userId (first-seen order)
+    const seenUsers = [];
+    for (const t of territoryRows) {
+      if (!seenUsers.includes(t.userId)) seenUsers.push(t.userId);
     }
-
-    // ── Assign Colors Based On Rank ───────────────────────────
     const userColorMap = Object.fromEntries(
-      Object.entries(userAreaMap)
-        .sort((a, b) => b[1] - a[1])
-        .map(([userId], index) => [
-          userId,
-          TERRITORY_COLORS[
-            Math.min(index, TERRITORY_COLORS.length - 1)
-          ],
-        ])
+      seenUsers.map((userId, index) => [
+        userId,
+        TERRITORY_COLORS[Math.min(index, TERRITORY_COLORS.length - 1)],
+      ])
     );
 
-    // ── Format Response ───────────────────────────────────────
-    const territories = territoryRows.map((territory) => ({
-      id: territory.id,
+    // ── Clip overlapping zones: process newest → oldest.
+    // Each territory claims its area. Any older territory that overlaps
+    // an already-claimed zone gets that zone subtracted from its geojson
+    // before sending to the frontend. This is purely a display fix —
+    // the DB geometry is unchanged.
+    const claimedWKTs = []; // array of WKT strings already claimed
+    const result = [];
 
-      userId: territory.userId,
+    for (const t of territoryRows) {
+      if (!t.boundary) continue;
 
-      activityId: territory.activityId,
+      // Check if this territory overlaps any already-claimed zone
+      if (claimedWKTs.length > 0) {
+        // Build union of all claimed zones and subtract from this territory's geojson
+        const clippedRows = await prisma.$queryRawUnsafe(`
+          WITH this_geom AS (
+            SELECT boundary FROM territories WHERE id = '${t.id}'
+          ),
+          claimed AS (
+            SELECT ST_Union(ARRAY[${claimedWKTs.map((w) => `ST_GeomFromText('${w}', 4326)`).join(',')}]) AS geom
+          ),
+          clipped AS (
+            SELECT
+              CASE
+                WHEN ST_Intersects((SELECT boundary FROM this_geom), (SELECT geom FROM claimed))
+                THEN ST_Difference((SELECT boundary FROM this_geom), (SELECT geom FROM claimed))
+                ELSE (SELECT boundary FROM this_geom)
+              END AS final_geom
+          )
+          SELECT
+            ST_AsGeoJSON(final_geom)::json AS geojson,
+            ST_IsEmpty(final_geom) AS is_empty
+          FROM clipped;
+        `);
 
-      name: territory.name,
+        const clipped = clippedRows[0];
+        if (clipped.is_empty) continue; // fully consumed by newer territories
 
-      owner: {
-        username: territory.username,
-        fullName: territory.fullName,
-      },
+        result.push({
+          id:          t.id,
+          userId:      t.userId,
+          activityId:  t.activityId,
+          name:        t.name,
+          owner:       { username: t.username, fullName: t.fullName },
+          areaKm2:     Number(t.areaKm2),
+          capturedAt:  t.capturedAt,
+          createdAt:   t.createdAt,
+          updatedAt:   t.updatedAt,
+          geojson:     clipped.geojson,
+          center:      t.center,
+          routeEncoded: t.routeEncoded,
+          color:       userColorMap[t.userId] ?? TERRITORY_COLORS[TERRITORY_COLORS.length - 1],
+        });
+      } else {
+        result.push({
+          id:          t.id,
+          userId:      t.userId,
+          activityId:  t.activityId,
+          name:        t.name,
+          owner:       { username: t.username, fullName: t.fullName },
+          areaKm2:     Number(t.areaKm2),
+          capturedAt:  t.capturedAt,
+          createdAt:   t.createdAt,
+          updatedAt:   t.updatedAt,
+          geojson:     t.boundary,
+          center:      t.center,
+          routeEncoded: t.routeEncoded,
+          color:       userColorMap[t.userId] ?? TERRITORY_COLORS[TERRITORY_COLORS.length - 1],
+        });
+      }
 
-      areaKm2: Number(territory.areaKm2),
+      // Mark this territory's area as claimed (use WKT for SQL reuse)
+      const wktRow = await prisma.$queryRawUnsafe(`
+        SELECT ST_AsText(boundary) AS wkt FROM territories WHERE id = '${t.id}';
+      `);
+      if (wktRow[0]?.wkt) claimedWKTs.push(wktRow[0].wkt);
+    }
 
-      capturedAt: territory.capturedAt,
-      createdAt: territory.createdAt,
-      updatedAt: territory.updatedAt,
-
-      geojson: territory.boundary,
-
-      center: territory.center,
-
-      // ── Activity Route ──────────────────────────────────────
-      routeEncoded: territory.routeEncoded,
-
-      color:
-        userColorMap[territory.userId] ??
-        TERRITORY_COLORS[TERRITORY_COLORS.length - 1],
-    }));
-
-    // ── Success Response ──────────────────────────────────────
     return res.status(200).json({
       success: true,
-      count: territories.length,
-      territories,
+      count: result.length,
+      territories: result,
     });
 
   } catch (error) {
-
-    // ── Error ─────────────────────────────────────────────────
-    console.error("GET_ALL_TERRITORIES ERROR:", error);
-
+    console.error('GET_ALL_TERRITORIES ERROR:', error);
     return res.status(500).json({
       success: false,
-      message: "Failed to fetch territories",
+      message: 'Failed to fetch territories',
       error: error.message,
     });
   }
