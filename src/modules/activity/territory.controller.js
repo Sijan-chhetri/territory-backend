@@ -2,243 +2,297 @@ import prisma from '../../config/prisma.js';
 import polylineLib from '@mapbox/polyline';
 
 // ─────────────────────────────────────────────
-// Clip a Google polyline by removing points that fall
-// inside a PostGIS boundary polygon.
-// Returns a new encoded polyline with those points removed.
+// Helpers
 // ─────────────────────────────────────────────
-async function clipRouteByBoundary(encodedRoute, boundaryTerritoryId) {
-  if (!encodedRoute) return null;
 
-  // Decode original route → [[lat, lng], ...]
-  let decoded;
-  try {
-    decoded = polylineLib.decode(encodedRoute);
-  } catch {
-    return encodedRoute; // can't decode, return as-is
+function roundCoord(n) {
+  return parseFloat(Number(n).toFixed(5));
+}
+
+function encodeLineString(coords) {
+  if (!Array.isArray(coords) || coords.length < 2) return null;
+
+  const points = coords
+    .map(([lng, lat]) => [roundCoord(lat), roundCoord(lng)])
+    .filter(([lat, lng]) => Number.isFinite(lat) && Number.isFinite(lng));
+
+  const deduped = points.filter(
+    (pt, i) =>
+      i === 0 ||
+      pt[0] !== points[i - 1][0] ||
+      pt[1] !== points[i - 1][1]
+  );
+
+  if (deduped.length < 2) return null;
+
+  return polylineLib.encode(deduped);
+}
+
+function encodeRouteSegmentsFromGeoJson(geojson) {
+  if (!geojson) {
+    return {
+      main: null,
+      segments: [],
+    };
   }
 
-  if (!decoded || decoded.length < 2) return encodedRoute;
+  if (geojson.type === 'LineString') {
+    const encoded = encodeLineString(geojson.coordinates);
 
-  // Ask PostGIS which points are OUTSIDE the boundary (keep those)
-  // Build a VALUES list of points and check each one
-  const pointValues = decoded
-    .map(([lat, lng], i) => `(${i}, ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326))`)
-    .join(',');
+    return {
+      main: encoded,
+      segments: encoded ? [encoded] : [],
+    };
+  }
 
-  const rows = await prisma.$queryRawUnsafe(`
-    WITH pts(idx, geom) AS (VALUES ${pointValues}),
-    boundary AS (SELECT boundary FROM territories WHERE id = '${boundaryTerritoryId}' LIMIT 1)
-    SELECT pts.idx
-    FROM pts, boundary
-    WHERE NOT ST_Within(pts.geom, boundary.boundary)
-    ORDER BY pts.idx;
-  `);
+  if (geojson.type === 'MultiLineString') {
+    const segments = geojson.coordinates
+      .map((segment) => encodeLineString(segment))
+      .filter(Boolean);
 
-  const keepIndices = new Set(rows.map((r) => Number(r.idx)));
-
-  if (keepIndices.size === decoded.length) return encodedRoute; // nothing removed
-  if (keepIndices.size < 2) return null; // entire route was inside enemy territory
-
-  // Keep only points outside the boundary, split into segments at gaps
-  const segments = [];
-  let current = [];
-
-  for (let i = 0; i < decoded.length; i++) {
-    if (keepIndices.has(i)) {
-      current.push(decoded[i]);
-    } else {
-      if (current.length >= 2) segments.push([...current]);
-      current = [];
+    if (segments.length === 0) {
+      return {
+        main: null,
+        segments: [],
+      };
     }
+
+    // Choose longest encoded segment as routeEncoded.
+    // Keep all segments in routeSegmentsEncoded.
+    const main = [...segments].sort((a, b) => b.length - a.length)[0];
+
+    return {
+      main,
+      segments,
+    };
   }
-  if (current.length >= 2) segments.push(current);
 
-  if (segments.length === 0) return null;
+  return {
+    main: null,
+    segments: [],
+  };
+}
 
-  // Encode each segment and join
-  return segments.map((seg) => polylineLib.encode(seg)).join('');
+async function updateRouteEncodedFromGeometry(territoryId) {
+  const rows = await prisma.$queryRaw`
+    SELECT ST_AsGeoJSON("routeGeometry")::json AS route
+    FROM territories
+    WHERE id = ${territoryId}
+      AND "routeGeometry" IS NOT NULL
+    LIMIT 1;
+  `;
+
+  const routeGeoJson = rows[0]?.route;
+
+  const { main, segments } = encodeRouteSegmentsFromGeoJson(routeGeoJson);
+
+  await prisma.$executeRaw`
+    UPDATE territories
+    SET
+      "routeEncoded" = ${main},
+      "routeSegmentsEncoded" = ${JSON.stringify(segments)}::jsonb,
+      "updatedAt" = NOW()
+    WHERE id = ${territoryId};
+  `;
+
+  return {
+    routeEncoded: main,
+    routeSegmentsEncoded: segments,
+  };
 }
 
 // ─────────────────────────────────────────────
-// Capture Enemy Territories
+// Capture Territory
 //
-// When user2 runs over user1's rectangle territory:
-//   1. Compute the intersection (the stolen area)
-//   2. Subtract it from user1's boundary (ST_Difference)
-//   3. Add it to user2's boundary (ST_Union)
-//   4. Delete user1's territory if it becomes empty
+// Rule:
+// Activity route stays full/original.
+// Territory boundary is subtracted.
+// Territory routeGeometry is clipped.
+// routeSegmentsEncoded stores all resulting route parts.
 // ─────────────────────────────────────────────
+
 export const captureTerritory = async ({ userId, activityId, newTerritoryId }) => {
-
-  // Find all enemy territories that overlap the new territory
-  const enemyTerritories = await prisma.$queryRawUnsafe(`
+  // 1. Subtract all other users' existing territory boundaries
+  // from the new territory boundary.
+  const subtractionResult = await prisma.$queryRaw`
     WITH current_territory AS (
-      SELECT boundary FROM territories WHERE id = '${newTerritoryId}' LIMIT 1
-    )
-    SELECT t.id, t."userId"
-    FROM territories t
-    WHERE
-      t."userId" != '${userId}'
-      AND ST_Intersects(t.boundary, (SELECT boundary FROM current_territory))
-      AND NOT ST_IsEmpty(ST_Intersection(t.boundary, (SELECT boundary FROM current_territory)));
-  `);
-
-  for (const enemy of enemyTerritories) {
-
-    // Compute the overlapping area (what gets stolen)
-    const overlap = await prisma.$queryRawUnsafe(`
-      WITH attacker AS (SELECT boundary FROM territories WHERE id = '${newTerritoryId}'),
-           defender AS (SELECT boundary FROM territories WHERE id = '${enemy.id}')
       SELECT
-        ST_AsText(
-          ST_Intersection(
-            (SELECT boundary FROM attacker),
-            (SELECT boundary FROM defender)
+        id,
+        boundary,
+        "routeGeometry"
+      FROM territories
+      WHERE id = ${newTerritoryId}
+      LIMIT 1
+    ),
+    enemy_union AS (
+      SELECT ST_MakeValid(ST_Union(boundary)) AS boundary
+      FROM territories
+      WHERE "userId" != ${userId}
+        AND id != ${newTerritoryId}
+        AND boundary IS NOT NULL
+        AND NOT ST_IsEmpty(boundary)
+        AND ST_Intersects(
+          boundary,
+          (SELECT boundary FROM current_territory)
+        )
+    ),
+    diffed AS (
+      SELECT
+        CASE
+          WHEN enemy_union.boundary IS NULL THEN current_territory.boundary
+          ELSE ST_Difference(
+            current_territory.boundary,
+            enemy_union.boundary
           )
-        ) AS overlap_wkt,
-        ST_Area(
-          ST_Intersection(
-            (SELECT boundary FROM attacker),
-            (SELECT boundary FROM defender)
-          )::geography
-        ) / 1000000 AS overlap_area;
-    `);
-
-    if (!overlap[0]?.overlap_wkt || overlap[0].overlap_area < 0.000001) continue;
-
-    const overlapWKT  = overlap[0].overlap_wkt;
-    const overlapArea = Number(overlap[0].overlap_area);
-
-    // ── Subtract stolen area from enemy territory FIRST
-    await prisma.$executeRawUnsafe(`
+        END AS new_boundary,
+        CASE
+          WHEN enemy_union.boundary IS NULL THEN current_territory."routeGeometry"
+          ELSE ST_Difference(
+            current_territory."routeGeometry",
+            enemy_union.boundary
+          )
+        END AS new_route
+      FROM current_territory
+      LEFT JOIN enemy_union ON true
+    ),
+    cleaned AS (
+      SELECT
+        ST_Multi(
+          ST_CollectionExtract(
+            ST_MakeValid(new_boundary),
+            3
+          )
+        ) AS boundary,
+        ST_CollectionExtract(
+          ST_MakeValid(new_route),
+          2
+        ) AS route
+      FROM diffed
+      WHERE new_boundary IS NOT NULL
+        AND NOT ST_IsEmpty(new_boundary)
+    ),
+    updated AS (
       UPDATE territories
       SET
-        boundary = ST_Buffer(
-          ST_SnapToGrid(
-            ST_Difference(
-              boundary,
-              ST_GeomFromText('${overlapWKT}', 4326)
-            ),
-            0.0000001
-          ),
-          0
-        ),
-        "areaKm2" = GREATEST(0, ST_Area(
-          ST_Buffer(
-            ST_SnapToGrid(
-              ST_Difference(
-                boundary,
-                ST_GeomFromText('${overlapWKT}', 4326)
-              ),
-              0.0000001
-            ),
-            0
-          )::geography
-        ) / 1000000),
+        boundary = cleaned.boundary,
+        center = ST_PointOnSurface(cleaned.boundary),
+        "routeGeometry" = cleaned.route,
+        "areaKm2" = ST_Area(cleaned.boundary::geography) / 1000000,
         "updatedAt" = NOW()
-      WHERE id = '${enemy.id}';
-    `);
+      FROM cleaned
+      WHERE territories.id = ${newTerritoryId}
+        AND cleaned.boundary IS NOT NULL
+        AND NOT ST_IsEmpty(cleaned.boundary)
+      RETURNING
+        territories.id,
+        territories."areaKm2"
+    )
+    SELECT * FROM updated;
+  `;
 
-    // ── Add stolen area to attacker territory AFTER enemy is trimmed
-    await prisma.$executeRawUnsafe(`
-      UPDATE territories
-      SET
-        boundary = ST_Buffer(
-          ST_SnapToGrid(
-            ST_Union(
-              boundary,
-              ST_GeomFromText('${overlapWKT}', 4326)
-            ),
-            0.0000001
-          ),
-          0
-        ),
-        "areaKm2" = ST_Area(
-          ST_Buffer(
-            ST_SnapToGrid(
-              ST_Union(
-                boundary,
-                ST_GeomFromText('${overlapWKT}', 4326)
-              ),
-              0.0000001
-            ),
-            0
-          )::geography
-        ) / 1000000,
-        "updatedAt" = NOW()
-      WHERE id = '${newTerritoryId}';
-    `);
+  // If no remaining territory exists, delete the new territory.
+  if (!subtractionResult || subtractionResult.length === 0) {
+    await prisma.$executeRaw`
+      DELETE FROM territories
+      WHERE id = ${newTerritoryId};
+    `;
 
-    // ── Record the capture event
+    return {
+      captured: false,
+      areaKm2: 0,
+    };
+  }
+
+  const finalAreaKm2 = Number(subtractionResult[0].areaKm2 || 0);
+
+  if (finalAreaKm2 <= 0.000001) {
+    await prisma.$executeRaw`
+      DELETE FROM territories
+      WHERE id = ${newTerritoryId};
+    `;
+
+    return {
+      captured: false,
+      areaKm2: 0,
+    };
+  }
+
+  // 2. Update routeEncoded + routeSegmentsEncoded from clipped routeGeometry.
+  await updateRouteEncodedFromGeometry(newTerritoryId);
+
+  // 3. Record capture events for enemies that overlapped.
+  const overlappedEnemies = await prisma.$queryRaw`
+    WITH current_territory AS (
+      SELECT boundary
+      FROM territories
+      WHERE id = ${newTerritoryId}
+      LIMIT 1
+    )
+    SELECT
+      t.id,
+      t."userId",
+      ST_Area(
+        ST_Intersection(
+          t.boundary,
+          (SELECT boundary FROM current_territory)
+        )::geography
+      ) / 1000000 AS overlap_area
+    FROM territories t
+    WHERE t."userId" != ${userId}
+      AND t.id != ${newTerritoryId}
+      AND t.boundary IS NOT NULL
+      AND NOT ST_IsEmpty(t.boundary)
+      AND ST_Intersects(
+        t.boundary,
+        (SELECT boundary FROM current_territory)
+      );
+  `;
+
+  for (const enemy of overlappedEnemies) {
+    const affectedAreaKm2 = Number(enemy.overlap_area || 0);
+
+    if (affectedAreaKm2 <= 0.000001) continue;
+
     await prisma.territoryEvent.create({
       data: {
-        territoryId:    newTerritoryId,
+        territoryId: newTerritoryId,
         userId,
         opponentUserId: enemy.userId,
         activityId,
-        type:           'CAPTURE',
-        affectedAreaKm2: overlapArea,
+        type: 'CAPTURE',
+        affectedAreaKm2,
       },
     });
-
-    // ── Delete enemy territory if it's now empty
-    await prisma.$executeRawUnsafe(`
-      DELETE FROM territories
-      WHERE
-        id = '${enemy.id}'
-        AND (
-          boundary IS NULL
-          OR ST_IsEmpty(boundary)
-          OR "areaKm2" <= 0.000001
-        );
-    `);
-
-    // ── Clip enemy routeEncoded: remove points that fall inside attacker's territory
-    // Fetch enemy's original routeEncoded, clip it in JS, save back
-    const enemyRouteRow = await prisma.$queryRawUnsafe(`
-      SELECT "routeEncoded" FROM territories WHERE id = '${enemy.id}' LIMIT 1;
-    `);
-
-    if (enemyRouteRow[0]?.routeEncoded) {
-      const clipped = await clipRouteByBoundary(
-        enemyRouteRow[0].routeEncoded,
-        newTerritoryId
-      );
-      if (clipped !== null) {
-        await prisma.$executeRawUnsafe(`
-          UPDATE territories
-          SET "routeEncoded" = '${clipped.replace(/'/g, "''")}'
-          WHERE id = '${enemy.id}';
-        `);
-      }
-    }
   }
+
+  return {
+    captured: true,
+    areaKm2: finalAreaKm2,
+  };
 };
 
+// ─────────────────────────────────────────────
+// Color palette
+// ─────────────────────────────────────────────
 
-// ─────────────────────────────────────────────
-// Color palette — ranked by territory size
-// index 0 = biggest (blue), last = smallest (yellow)
-// ─────────────────────────────────────────────
 const TERRITORY_COLORS = [
-  { fill: 'rgba(37,  99, 235, 0.38)', border: 'rgba(30,  64, 175, 1)' }, // deep blue
-  { fill: 'rgba(22, 163,  74, 0.38)', border: 'rgba(21, 128,  61, 1)' }, // deep green
-  { fill: 'rgba(220,  38,  38, 0.38)', border: 'rgba(153,  27,  27, 1)' }, // deep red
-  { fill: 'rgba(147,  51, 234, 0.38)', border: 'rgba(107,  33, 168, 1)' }, // deep purple
-  { fill: 'rgba(234,  88,  12, 0.38)', border: 'rgba(154,  52,  18, 1)' }, // deep orange
-  { fill: 'rgba(219,  39, 119, 0.38)', border: 'rgba(157,  23,  77, 1)' }, // deep pink
-  { fill: 'rgba(75,   85,  99, 0.38)', border: 'rgba(55,   65,  81, 1)' }, // deep gray
-  { fill: 'rgba(202, 138,   4, 0.38)', border: 'rgba(133,  77,  14, 1)' }, // deep yellow
+  { fill: 'rgba(37,  99, 235, 0.38)', border: 'rgba(30,  64, 175, 1)' },
+  { fill: 'rgba(22, 163,  74, 0.38)', border: 'rgba(21, 128,  61, 1)' },
+  { fill: 'rgba(220,  38,  38, 0.38)', border: 'rgba(153,  27,  27, 1)' },
+  { fill: 'rgba(147,  51, 234, 0.38)', border: 'rgba(107,  33, 168, 1)' },
+  { fill: 'rgba(234,  88,  12, 0.38)', border: 'rgba(154,  52,  18, 1)' },
+  { fill: 'rgba(219,  39, 119, 0.38)', border: 'rgba(157,  23,  77, 1)' },
+  { fill: 'rgba(75,   85,  99, 0.38)', border: 'rgba(55,   65,  81, 1)' },
+  { fill: 'rgba(202, 138,   4, 0.38)', border: 'rgba(133,  77,  14, 1)' },
 ];
 
 // ─────────────────────────────────────────────
-// Get All Territories (map view)
+// Get All Territories
 // GET /api/territories/all
 // ─────────────────────────────────────────────
+
 export const getAllTerritories = async (req, res) => {
   try {
-    // Single query: for each territory, subtract all newer territories'
-    // boundaries so every geographic point shows only the most recent owner.
     const territoryRows = await prisma.$queryRaw`
       WITH ranked AS (
         SELECT
@@ -253,8 +307,9 @@ export const getAllTerritories = async (req, res) => {
           t.boundary,
           t.center,
           u.username,
-          u.full_name        AS "fullName",
+          u.full_name AS "fullName",
           t."routeEncoded",
+          t."routeSegmentsEncoded",
           ROW_NUMBER() OVER (ORDER BY t."updatedAt" DESC) AS rn
         FROM territories t
         JOIN users u ON u.id = t."userId"
@@ -274,7 +329,7 @@ export const getAllTerritories = async (req, res) => {
           r.username,
           r."fullName",
           r."routeEncoded",
-          -- subtract all newer territories from this one
+          r."routeSegmentsEncoded",
           COALESCE(
             (
               SELECT ST_Difference(
@@ -302,6 +357,7 @@ export const getAllTerritories = async (req, res) => {
         username,
         "fullName",
         "routeEncoded",
+        "routeSegmentsEncoded",
         center,
         ST_AsGeoJSON(clipped_boundary)::json AS boundary
       FROM clipped
@@ -310,11 +366,14 @@ export const getAllTerritories = async (req, res) => {
       ORDER BY "updatedAt" DESC;
     `;
 
-    // Assign a stable color per userId (first-seen = newest territory owner)
     const seenUsers = [];
+
     for (const t of territoryRows) {
-      if (!seenUsers.includes(t.userId)) seenUsers.push(t.userId);
+      if (!seenUsers.includes(t.userId)) {
+        seenUsers.push(t.userId);
+      }
     }
+
     const userColorMap = Object.fromEntries(
       seenUsers.map((userId, index) => [
         userId,
@@ -323,19 +382,25 @@ export const getAllTerritories = async (req, res) => {
     );
 
     const territories = territoryRows.map((t) => ({
-      id:          t.id,
-      userId:      t.userId,
-      activityId:  t.activityId,
-      name:        t.name,
-      owner:       { username: t.username, fullName: t.fullName },
-      areaKm2:     Number(t.areaKm2),
-      capturedAt:  t.capturedAt,
-      createdAt:   t.createdAt,
-      updatedAt:   t.updatedAt,
-      geojson:     t.boundary,
-      center:      t.center,
+      id: t.id,
+      userId: t.userId,
+      activityId: t.activityId,
+      name: t.name,
+      owner: {
+        username: t.username,
+        fullName: t.fullName,
+      },
+      areaKm2: Number(t.areaKm2),
+      capturedAt: t.capturedAt,
+      createdAt: t.createdAt,
+      updatedAt: t.updatedAt,
+      geojson: t.boundary,
+      center: t.center,
       routeEncoded: t.routeEncoded,
-      color:       userColorMap[t.userId] ?? TERRITORY_COLORS[TERRITORY_COLORS.length - 1],
+      routeSegmentsEncoded: t.routeSegmentsEncoded ?? [],
+      color:
+        userColorMap[t.userId] ??
+        TERRITORY_COLORS[TERRITORY_COLORS.length - 1],
     }));
 
     return res.status(200).json({
@@ -343,75 +408,165 @@ export const getAllTerritories = async (req, res) => {
       count: territories.length,
       territories,
     });
-
   } catch (error) {
     console.error('GET_ALL_TERRITORIES ERROR:', error);
+
     return res.status(500).json({
       success: false,
       message: 'Failed to fetch territories',
-      error: error.message,
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
     });
   }
 };
-
-
 
 // ─────────────────────────────────────────────
 // Update Territory Route
 // PUT /api/territories/:id/route
 // ─────────────────────────────────────────────
+
 export const updateTerritoryRoute = async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.user.id;
-    const { routeEncoded } = req.body;
+    const { routeEncoded, routeSegmentsEncoded } = req.body;
 
-    if (!routeEncoded) {
-      return res.status(400).json({ success: false, message: 'routeEncoded is required' });
+    const territory = await prisma.territory.findUnique({
+      where: { id },
+    });
+
+    if (!territory) {
+      return res.status(404).json({
+        success: false,
+        message: 'Territory not found',
+      });
     }
 
-    // Verify ownership
-    const territory = await prisma.territory.findUnique({ where: { id } });
-    if (!territory) return res.status(404).json({ success: false, message: 'Territory not found' });
-    if (territory.userId !== userId) return res.status(403).json({ success: false, message: 'Forbidden' });
-
-    // Decode Google polyline → LINESTRING WKT
-    const decoded = polylineLib.decode(routeEncoded);
-    if (!decoded || decoded.length < 2) {
-      return res.status(400).json({ success: false, message: 'routeEncoded must decode to at least 2 points' });
+    if (territory.userId !== userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'Forbidden',
+      });
     }
 
-    const lineString = decoded.map(([lat, lng]) => `${lng} ${lat}`).join(',');
-    const routeWKT   = `LINESTRING(${lineString})`;
+    let segments = [];
 
-    // Save routeEncoded + routeGeometry
-    await prisma.$executeRawUnsafe(`
+    if (Array.isArray(routeSegmentsEncoded) && routeSegmentsEncoded.length > 0) {
+      segments = routeSegmentsEncoded.filter(
+        (segment) => typeof segment === 'string' && segment.trim().length > 0
+      );
+    } else if (routeEncoded) {
+      segments = [routeEncoded];
+    }
+
+    if (segments.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'routeEncoded or routeSegmentsEncoded is required',
+      });
+    }
+
+    const lineGeoJsonSegments = [];
+
+    for (const segment of segments) {
+      let decoded;
+
+      try {
+        decoded = polylineLib.decode(segment);
+      } catch {
+        continue;
+      }
+
+      if (!decoded || decoded.length < 2) continue;
+
+      const coordinates = decoded
+        .map(([lat, lng]) => [Number(lng), Number(lat)])
+        .filter(
+          ([lng, lat]) =>
+            Number.isFinite(lat) &&
+            Number.isFinite(lng) &&
+            lat >= -90 &&
+            lat <= 90 &&
+            lng >= -180 &&
+            lng <= 180
+        );
+
+      if (coordinates.length >= 2) {
+        lineGeoJsonSegments.push(coordinates);
+      }
+    }
+
+    if (lineGeoJsonSegments.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No valid route segments found',
+      });
+    }
+
+    const routeGeoJson =
+      lineGeoJsonSegments.length === 1
+        ? {
+            type: 'LineString',
+            coordinates: lineGeoJsonSegments[0],
+          }
+        : {
+            type: 'MultiLineString',
+            coordinates: lineGeoJsonSegments,
+          };
+
+    const routeGeoJsonString = JSON.stringify(routeGeoJson);
+    const mainRouteEncoded =
+      routeEncoded || [...segments].sort((a, b) => b.length - a.length)[0];
+
+    await prisma.$executeRaw`
       UPDATE territories
       SET
-        "routeEncoded"  = '${routeEncoded.replace(/'/g, "''")}',
-        "routeGeometry" = ST_SetSRID(ST_GeomFromText('${routeWKT}'), 4326),
-        "updatedAt"     = NOW()
-      WHERE id = '${id}';
-    `);
+        "routeEncoded" = ${mainRouteEncoded},
+        "routeSegmentsEncoded" = ${JSON.stringify(segments)}::jsonb,
+        "routeGeometry" = ST_SetSRID(
+          ST_GeomFromGeoJSON(${routeGeoJsonString}),
+          4326
+        ),
+        "updatedAt" = NOW()
+      WHERE id = ${id};
+    `;
 
-    const updated = await prisma.$queryRawUnsafe(`
+    const updated = await prisma.$queryRaw`
       SELECT
-        id, "userId", "activityId", "areaKm2", "capturedAt", "updatedAt",
+        id,
+        "userId",
+        "activityId",
+        "areaKm2",
+        "capturedAt",
+        "updatedAt",
         "routeEncoded",
-        ST_AsGeoJSON(boundary)::json      AS boundary,
+        "routeSegmentsEncoded",
+        ST_AsGeoJSON(boundary)::json AS boundary,
         ST_AsGeoJSON("routeGeometry")::json AS route
       FROM territories
-      WHERE id = '${id}'
+      WHERE id = ${id}
       LIMIT 1;
-    `);
+    `;
 
-    return res.status(200).json({ success: true, territory: updated[0] });
-
+    return res.status(200).json({
+      success: true,
+      territory: updated[0],
+    });
   } catch (error) {
     console.error('UPDATE_TERRITORY_ROUTE ERROR:', error);
-    return res.status(500).json({ success: false, message: 'Something went wrong', error: process.env.NODE_ENV === 'development' ? error.message : undefined });
+
+    return res.status(500).json({
+      success: false,
+      message: 'Something went wrong',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+    });
   }
 };
+
+// ─────────────────────────────────────────────
+// Get Territory Events
+// GET /api/territories/events
+// ─────────────────────────────────────────────
+
 export const getTerritoryEvents = async (req, res) => {
   try {
     const events = await prisma.territoryEvent.findMany({
@@ -420,10 +575,16 @@ export const getTerritoryEvents = async (req, res) => {
       take: 50,
     });
 
-    return res.status(200).json({ success: true, events });
-
+    return res.status(200).json({
+      success: true,
+      events,
+    });
   } catch (error) {
     console.error('GET_TERRITORY_EVENTS ERROR:', error);
-    return res.status(500).json({ success: false, message: 'Something went wrong' });
+
+    return res.status(500).json({
+      success: false,
+      message: 'Something went wrong',
+    });
   }
 };

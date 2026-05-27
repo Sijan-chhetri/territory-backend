@@ -158,10 +158,10 @@ model Territory {
   id String @id @default(uuid())
 
   userId String
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   activityId String?
-  activity Activity? @relation(fields: [activityId], references: [id], onDelete: SetNull)
+  activity   Activity? @relation(fields: [activityId], references: [id], onDelete: SetNull)
 
   // connected territory island
   landmassId String?
@@ -172,8 +172,9 @@ model Territory {
   center   Unsupported("geometry(Point, 4326)")?
 
   // route that created/last updated this territory
-  routeEncoded  String?                                          // Google encoded polyline
-  routeGeometry Unsupported("geometry(Geometry, 4326)")?        // GIS line — can be LineString or MultiLineString after clipping
+  routeEncoded         String?                                   // main/longest route segment
+  routeSegmentsEncoded Json?                                     // all route segments after clipping
+  routeGeometry        Unsupported("geometry(Geometry, 4326)")?  // LineString or MultiLineString
 
   areaKm2 Float
 
@@ -188,7 +189,6 @@ model Territory {
 
   @@map("territories")
 }
-
 
 
 model TerritoryEvent {
