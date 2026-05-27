@@ -2,11 +2,14 @@ import prisma from '../../config/prisma.js';
 import polylineLib from '@mapbox/polyline';
 
 // ─────────────────────────────────────────────
-// Re-encode a PostGIS LineString to Google polyline
+// Re-encode a PostGIS geometry back to Google polyline
+// Rounds to 5dp to avoid precision artifacts (? chars)
 // ─────────────────────────────────────────────
 async function reEncodeRoute(territoryId) {
   const rows = await prisma.$queryRawUnsafe(`
-    SELECT ST_AsGeoJSON("routeGeometry")::json AS route
+    SELECT ST_AsGeoJSON(
+      ST_SnapToGrid("routeGeometry", 0.00001)
+    )::json AS route
     FROM territories
     WHERE id = '${territoryId}'
       AND "routeGeometry" IS NOT NULL
@@ -16,13 +19,26 @@ async function reEncodeRoute(territoryId) {
   if (!rows[0]?.route) return null;
 
   const geojson = rows[0].route;
+
+  const round = (n) => Math.round(n * 1e5) / 1e5;
+
   let coords = [];
 
   if (geojson.type === 'LineString') {
-    coords = geojson.coordinates.map(([lng, lat]) => [lat, lng]);
+    coords = geojson.coordinates.map(([lng, lat]) => [round(lat), round(lng)]);
   } else if (geojson.type === 'MultiLineString') {
-    // flatten all segments
-    coords = geojson.coordinates.flatMap((seg) => seg.map(([lng, lat]) => [lat, lng]));
+    // encode each segment separately and join — keeps segments intact
+    const segments = geojson.coordinates
+      .filter((seg) => seg.length >= 2)
+      .map((seg) => seg.map(([lng, lat]) => [round(lat), round(lng)]));
+
+    if (segments.length === 0) return null;
+    if (segments.length === 1) {
+      coords = segments[0];
+    } else {
+      // encode each segment and concatenate the polylines
+      return segments.map((seg) => polylineLib.encode(seg)).join('');
+    }
   }
 
   if (coords.length < 2) return null;

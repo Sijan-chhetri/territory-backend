@@ -119,7 +119,7 @@ model Activity {
   kmSplits Json?
 
   // actual GIS route
-  routeGeometry Unsupported("geometry(LineString, 4326)")?
+  routeGeometry Unsupported("geometry(Geometry, 4326)")?
 
   /**
    * |--------------------------------------------------------------------------
@@ -173,7 +173,7 @@ model Territory {
 
   // route that created/last updated this territory
   routeEncoded  String?                                          // Google encoded polyline
-  routeGeometry Unsupported("geometry(LineString, 4326)")?      // GIS line for spatial queries
+  routeGeometry Unsupported("geometry(Geometry, 4326)")?        // GIS line — can be LineString or MultiLineString after clipping
 
   areaKm2 Float
 

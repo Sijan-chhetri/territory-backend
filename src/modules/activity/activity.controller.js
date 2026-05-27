@@ -8,19 +8,33 @@ import polyline from '@mapbox/polyline';
 // Re-encode a territory's routeGeometry back to Google polyline
 async function reEncodeRouteById(territoryId) {
   const rows = await prisma.$queryRawUnsafe(`
-    SELECT ST_AsGeoJSON("routeGeometry")::json AS route
+    SELECT ST_AsGeoJSON(
+      ST_SnapToGrid("routeGeometry", 0.00001)
+    )::json AS route
     FROM territories
     WHERE id = '${territoryId}' AND "routeGeometry" IS NOT NULL
     LIMIT 1;
   `);
   if (!rows[0]?.route) return null;
+
   const geojson = rows[0].route;
+  const round = (n) => Math.round(n * 1e5) / 1e5;
   let coords = [];
+
   if (geojson.type === 'LineString') {
-    coords = geojson.coordinates.map(([lng, lat]) => [lat, lng]);
+    coords = geojson.coordinates.map(([lng, lat]) => [round(lat), round(lng)]);
   } else if (geojson.type === 'MultiLineString') {
-    coords = geojson.coordinates.flatMap((seg) => seg.map(([lng, lat]) => [lat, lng]));
+    const segments = geojson.coordinates
+      .filter((seg) => seg.length >= 2)
+      .map((seg) => seg.map(([lng, lat]) => [round(lat), round(lng)]));
+    if (segments.length === 0) return null;
+    if (segments.length === 1) {
+      coords = segments[0];
+    } else {
+      return segments.map((seg) => polyline.encode(seg)).join('');
+    }
   }
+
   if (coords.length < 2) return null;
   return polyline.encode(coords);
 }
@@ -101,6 +115,7 @@ export const getMyActivities = async (req, res) => {
 export const finishActivity = async (req, res) => {
   try {
     const userId = req.user.id;
+    console.log('finishActivity userId:', userId);
 
     const {
       mode, distanceKm, durationSec, stopTime, elapsedTime, movingTime,
@@ -359,7 +374,7 @@ export const finishActivity = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: 'Server error',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+      error: error.message,
     });
   }
 };
