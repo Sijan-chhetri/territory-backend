@@ -3,11 +3,13 @@ import polylineLib from '@mapbox/polyline';
 
 // ─────────────────────────────────────────────
 // Re-encode a PostGIS geometry back to Google polyline
-// Rounds coords in JS to 5dp to avoid precision artifacts
+// Simplifies geometry first to remove near-duplicate points
 // ─────────────────────────────────────────────
 async function reEncodeRoute(territoryId) {
   const rows = await prisma.$queryRawUnsafe(`
-    SELECT ST_AsGeoJSON("routeGeometry")::json AS route
+    SELECT ST_AsGeoJSON(
+      ST_SimplifyPreserveTopology("routeGeometry", 0.00001)
+    )::json AS route
     FROM territories
     WHERE id = '${territoryId}'
       AND "routeGeometry" IS NOT NULL
@@ -21,26 +23,27 @@ async function reEncodeRoute(territoryId) {
 function encodeGeojsonRoute(geojson) {
   if (!geojson) return null;
 
-  // Round to 5 decimal places (~1m precision) — prevents ? artifacts
   const r = (n) => parseFloat(n.toFixed(5));
 
-  if (geojson.type === 'LineString') {
-    const coords = geojson.coordinates
+  const encodeSegment = (coords) => {
+    const pts = coords
       .map(([lng, lat]) => [r(lat), r(lng)])
       .filter(([lat, lng]) => isFinite(lat) && isFinite(lng));
-    if (coords.length < 2) return null;
-    return polylineLib.encode(coords);
+    // deduplicate consecutive identical points
+    const deduped = pts.filter(
+      (pt, i) => i === 0 || pt[0] !== pts[i - 1][0] || pt[1] !== pts[i - 1][1]
+    );
+    return deduped.length >= 2 ? polylineLib.encode(deduped) : null;
+  };
+
+  if (geojson.type === 'LineString') {
+    return encodeSegment(geojson.coordinates);
   }
 
   if (geojson.type === 'MultiLineString') {
     const encoded = geojson.coordinates
       .filter((seg) => seg.length >= 2)
-      .map((seg) => {
-        const coords = seg
-          .map(([lng, lat]) => [r(lat), r(lng)])
-          .filter(([lat, lng]) => isFinite(lat) && isFinite(lng));
-        return coords.length >= 2 ? polylineLib.encode(coords) : null;
-      })
+      .map(encodeSegment)
       .filter(Boolean);
     return encoded.length > 0 ? encoded.join('') : null;
   }
@@ -181,73 +184,6 @@ export const captureTerritory = async ({ userId, activityId, newTerritoryId }) =
           OR "areaKm2" <= 0.000001
         );
     `);
-
-    // ── Clip enemy route: remove the portion that now falls inside attacker's territory
-    await prisma.$executeRawUnsafe(`
-      UPDATE territories
-      SET
-        "routeGeometry" = CASE
-          WHEN "routeGeometry" IS NOT NULL
-            AND ST_Intersects(
-              "routeGeometry",
-              (SELECT boundary FROM territories WHERE id = '${newTerritoryId}')
-            )
-          THEN ST_Difference(
-            "routeGeometry",
-            (SELECT boundary FROM territories WHERE id = '${newTerritoryId}')
-          )
-          ELSE "routeGeometry"
-        END,
-        "updatedAt" = NOW()
-      WHERE id = '${enemy.id}';
-    `);
-
-    // Re-encode the clipped enemy route back to Google polyline and save
-    const clippedEncoded = await reEncodeRoute(enemy.id);
-    if (clippedEncoded !== null) {
-      await prisma.$executeRawUnsafe(`
-        UPDATE territories
-        SET "routeEncoded" = '${clippedEncoded.replace(/'/g, "''")}'
-        WHERE id = '${enemy.id}';
-      `);
-    }
-
-    // ── Clip attacker route: remove sections that still fall inside enemy's remaining boundary
-    // (enemy may still own parts of the area the attacker passed through)
-    await prisma.$executeRawUnsafe(`
-      UPDATE territories
-      SET
-        "routeGeometry" = CASE
-          WHEN "routeGeometry" IS NOT NULL
-            AND EXISTS (
-              SELECT 1 FROM territories
-              WHERE id = '${enemy.id}'
-                AND boundary IS NOT NULL
-                AND NOT ST_IsEmpty(boundary)
-            )
-            AND ST_Intersects(
-              "routeGeometry",
-              (SELECT boundary FROM territories WHERE id = '${enemy.id}')
-            )
-          THEN ST_Difference(
-            "routeGeometry",
-            (SELECT boundary FROM territories WHERE id = '${enemy.id}')
-          )
-          ELSE "routeGeometry"
-        END,
-        "updatedAt" = NOW()
-      WHERE id = '${newTerritoryId}';
-    `);
-
-    // Re-encode the attacker's updated route
-    const attackerEncoded = await reEncodeRoute(newTerritoryId);
-    if (attackerEncoded !== null) {
-      await prisma.$executeRawUnsafe(`
-        UPDATE territories
-        SET "routeEncoded" = '${attackerEncoded.replace(/'/g, "''")}'
-        WHERE id = '${newTerritoryId}';
-      `);
-    }
   }
 };
 

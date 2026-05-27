@@ -269,15 +269,8 @@ export const finishActivity = async (req, res) => {
         );
     `);
 
-    // Re-encode the merged route to Google polyline
-    const mergedEncoded = await reEncodeRouteById(territoryId);
-    if (mergedEncoded) {
-      await prisma.$executeRawUnsafe(`
-        UPDATE territories
-        SET "routeEncoded" = '${mergedEncoded.replace(/'/g, "''")}'
-        WHERE id = '${territoryId}';
-      `);
-    }
+    // Territory routeEncoded keeps the original activity routeEncoded — no re-encoding needed
+    // Only the boundary polygon gets merged, not the route
 
     // ── Get final territory
     const finalTerritory = await prisma.$queryRawUnsafe(`
