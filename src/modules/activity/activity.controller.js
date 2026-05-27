@@ -5,6 +5,26 @@ import { checkLevelUp } from '../level/level.service.js';
 import { checkBadges } from '../badge/badge.service.js';
 import polyline from '@mapbox/polyline';
 
+// Re-encode a territory's routeGeometry back to Google polyline
+async function reEncodeRouteById(territoryId) {
+  const rows = await prisma.$queryRawUnsafe(`
+    SELECT ST_AsGeoJSON("routeGeometry")::json AS route
+    FROM territories
+    WHERE id = '${territoryId}' AND "routeGeometry" IS NOT NULL
+    LIMIT 1;
+  `);
+  if (!rows[0]?.route) return null;
+  const geojson = rows[0].route;
+  let coords = [];
+  if (geojson.type === 'LineString') {
+    coords = geojson.coordinates.map(([lng, lat]) => [lat, lng]);
+  } else if (geojson.type === 'MultiLineString') {
+    coords = geojson.coordinates.flatMap((seg) => seg.map(([lng, lat]) => [lat, lng]));
+  }
+  if (coords.length < 2) return null;
+  return polyline.encode(coords);
+}
+
 
 // ─────────────────────────────────────────────
 // Helpers
@@ -181,25 +201,65 @@ export const finishActivity = async (req, res) => {
         );
       `);
 
-    // ── Merge own territories
-    // await prisma.$executeRawUnsafe(`
-    //   WITH merged AS (SELECT ST_Union(boundary) AS merged_boundary FROM territories WHERE "userId" = '${userId}')
-    //   UPDATE territories
-    //   SET
-    //     boundary = (SELECT merged_boundary FROM merged),
-    //     "areaKm2" = (SELECT ST_Area(merged_boundary::geography) / 1000000 FROM merged),
-    //     "updatedAt" = NOW()
-    //   WHERE "userId" = '${userId}';
-    // `);
+    // ── Merge own territories that touch or overlap the new territory
+    // If user ran A→B (territory1) then A→C (territory2) and they connect,
+    // merge into one territory with combined boundary and route.
+    const mergeResult = await prisma.$queryRawUnsafe(`
+      WITH touching AS (
+        -- find all territories of this user that touch or overlap the new one
+        SELECT id
+        FROM territories
+        WHERE "userId" = '${userId}'
+          AND id != '${territoryId}'
+          AND (
+            ST_Intersects(boundary, (SELECT boundary FROM territories WHERE id = '${territoryId}'))
+            OR ST_Touches(boundary, (SELECT boundary FROM territories WHERE id = '${territoryId}'))
+          )
+      ),
+      all_ids AS (
+        SELECT '${territoryId}'::text AS id
+        UNION ALL
+        SELECT id::text FROM touching
+      ),
+      merged AS (
+        SELECT
+          ST_Union(t.boundary)                          AS merged_boundary,
+          ST_LineMerge(ST_Union(t."routeGeometry"))     AS merged_route,
+          ST_Area(ST_Union(t.boundary)::geography) / 1000000 AS merged_area
+        FROM territories t
+        WHERE t.id IN (SELECT id FROM all_ids)
+          AND t.boundary IS NOT NULL
+      )
+      UPDATE territories
+      SET
+        boundary        = (SELECT merged_boundary FROM merged),
+        "routeGeometry" = (SELECT merged_route    FROM merged),
+        "areaKm2"       = (SELECT merged_area     FROM merged),
+        "updatedAt"     = NOW()
+      WHERE id = '${territoryId}'
+      RETURNING id;
+    `);
 
-    // ── Keep only the newest territory per user
-    // await prisma.$executeRawUnsafe(`
-    //   DELETE FROM territories
-    //   WHERE id NOT IN (
-    //     SELECT DISTINCT ON ("userId") id FROM territories WHERE "userId" = '${userId}' ORDER BY "userId", "createdAt" DESC
-    //   )
-    //   AND "userId" = '${userId}';
-    // `);
+    // Delete the old territory rows that were merged in
+    await prisma.$executeRawUnsafe(`
+      DELETE FROM territories
+      WHERE "userId" = '${userId}'
+        AND id != '${territoryId}'
+        AND (
+          ST_Intersects(boundary, (SELECT boundary FROM territories WHERE id = '${territoryId}'))
+          OR ST_Touches(boundary,  (SELECT boundary FROM territories WHERE id = '${territoryId}'))
+        );
+    `);
+
+    // Re-encode the merged route to Google polyline
+    const mergedEncoded = await reEncodeRouteById(territoryId);
+    if (mergedEncoded) {
+      await prisma.$executeRawUnsafe(`
+        UPDATE territories
+        SET "routeEncoded" = '${mergedEncoded.replace(/'/g, "''")}'
+        WHERE id = '${territoryId}';
+      `);
+    }
 
     // ── Get final territory
     const finalTerritory = await prisma.$queryRawUnsafe(`

@@ -183,13 +183,50 @@ export const captureTerritory = async ({ userId, activityId, newTerritoryId }) =
       WHERE id = '${enemy.id}';
     `);
 
-    // Re-encode the clipped route back to Google polyline and save
+    // Re-encode the clipped enemy route back to Google polyline and save
     const clippedEncoded = await reEncodeRoute(enemy.id);
     if (clippedEncoded !== null) {
       await prisma.$executeRawUnsafe(`
         UPDATE territories
         SET "routeEncoded" = '${clippedEncoded.replace(/'/g, "''")}'
         WHERE id = '${enemy.id}';
+      `);
+    }
+
+    // ── Clip attacker route: remove sections that still fall inside enemy's remaining boundary
+    // (enemy may still own parts of the area the attacker passed through)
+    await prisma.$executeRawUnsafe(`
+      UPDATE territories
+      SET
+        "routeGeometry" = CASE
+          WHEN "routeGeometry" IS NOT NULL
+            AND EXISTS (
+              SELECT 1 FROM territories
+              WHERE id = '${enemy.id}'
+                AND boundary IS NOT NULL
+                AND NOT ST_IsEmpty(boundary)
+            )
+            AND ST_Intersects(
+              "routeGeometry",
+              (SELECT boundary FROM territories WHERE id = '${enemy.id}')
+            )
+          THEN ST_Difference(
+            "routeGeometry",
+            (SELECT boundary FROM territories WHERE id = '${enemy.id}')
+          )
+          ELSE "routeGeometry"
+        END,
+        "updatedAt" = NOW()
+      WHERE id = '${newTerritoryId}';
+    `);
+
+    // Re-encode the attacker's updated route
+    const attackerEncoded = await reEncodeRoute(newTerritoryId);
+    if (attackerEncoded !== null) {
+      await prisma.$executeRawUnsafe(`
+        UPDATE territories
+        SET "routeEncoded" = '${attackerEncoded.replace(/'/g, "''")}'
+        WHERE id = '${newTerritoryId}';
       `);
     }
   }
