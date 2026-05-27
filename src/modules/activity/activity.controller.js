@@ -8,9 +8,7 @@ import polyline from '@mapbox/polyline';
 // Re-encode a territory's routeGeometry back to Google polyline
 async function reEncodeRouteById(territoryId) {
   const rows = await prisma.$queryRawUnsafe(`
-    SELECT ST_AsGeoJSON(
-      ST_SnapToGrid("routeGeometry", 0.00001)
-    )::json AS route
+    SELECT ST_AsGeoJSON("routeGeometry")::json AS route
     FROM territories
     WHERE id = '${territoryId}' AND "routeGeometry" IS NOT NULL
     LIMIT 1;
@@ -18,25 +16,30 @@ async function reEncodeRouteById(territoryId) {
   if (!rows[0]?.route) return null;
 
   const geojson = rows[0].route;
-  const round = (n) => Math.round(n * 1e5) / 1e5;
-  let coords = [];
+  const r = (n) => parseFloat(n.toFixed(5));
 
   if (geojson.type === 'LineString') {
-    coords = geojson.coordinates.map(([lng, lat]) => [round(lat), round(lng)]);
-  } else if (geojson.type === 'MultiLineString') {
-    const segments = geojson.coordinates
-      .filter((seg) => seg.length >= 2)
-      .map((seg) => seg.map(([lng, lat]) => [round(lat), round(lng)]));
-    if (segments.length === 0) return null;
-    if (segments.length === 1) {
-      coords = segments[0];
-    } else {
-      return segments.map((seg) => polyline.encode(seg)).join('');
-    }
+    const coords = geojson.coordinates
+      .map(([lng, lat]) => [r(lat), r(lng)])
+      .filter(([lat, lng]) => isFinite(lat) && isFinite(lng));
+    if (coords.length < 2) return null;
+    return polyline.encode(coords);
   }
 
-  if (coords.length < 2) return null;
-  return polyline.encode(coords);
+  if (geojson.type === 'MultiLineString') {
+    const encoded = geojson.coordinates
+      .filter((seg) => seg.length >= 2)
+      .map((seg) => {
+        const coords = seg
+          .map(([lng, lat]) => [r(lat), r(lng)])
+          .filter(([lat, lng]) => isFinite(lat) && isFinite(lng));
+        return coords.length >= 2 ? polyline.encode(coords) : null;
+      })
+      .filter(Boolean);
+    return encoded.length > 0 ? encoded.join('') : null;
+  }
+
+  return null;
 }
 
 

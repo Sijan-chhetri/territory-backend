@@ -3,13 +3,11 @@ import polylineLib from '@mapbox/polyline';
 
 // ─────────────────────────────────────────────
 // Re-encode a PostGIS geometry back to Google polyline
-// Rounds to 5dp to avoid precision artifacts (? chars)
+// Rounds coords in JS to 5dp to avoid precision artifacts
 // ─────────────────────────────────────────────
 async function reEncodeRoute(territoryId) {
   const rows = await prisma.$queryRawUnsafe(`
-    SELECT ST_AsGeoJSON(
-      ST_SnapToGrid("routeGeometry", 0.00001)
-    )::json AS route
+    SELECT ST_AsGeoJSON("routeGeometry")::json AS route
     FROM territories
     WHERE id = '${territoryId}'
       AND "routeGeometry" IS NOT NULL
@@ -17,32 +15,37 @@ async function reEncodeRoute(territoryId) {
   `);
 
   if (!rows[0]?.route) return null;
+  return encodeGeojsonRoute(rows[0].route);
+}
 
-  const geojson = rows[0].route;
+function encodeGeojsonRoute(geojson) {
+  if (!geojson) return null;
 
-  const round = (n) => Math.round(n * 1e5) / 1e5;
-
-  let coords = [];
+  // Round to 5 decimal places (~1m precision) — prevents ? artifacts
+  const r = (n) => parseFloat(n.toFixed(5));
 
   if (geojson.type === 'LineString') {
-    coords = geojson.coordinates.map(([lng, lat]) => [round(lat), round(lng)]);
-  } else if (geojson.type === 'MultiLineString') {
-    // encode each segment separately and join — keeps segments intact
-    const segments = geojson.coordinates
-      .filter((seg) => seg.length >= 2)
-      .map((seg) => seg.map(([lng, lat]) => [round(lat), round(lng)]));
-
-    if (segments.length === 0) return null;
-    if (segments.length === 1) {
-      coords = segments[0];
-    } else {
-      // encode each segment and concatenate the polylines
-      return segments.map((seg) => polylineLib.encode(seg)).join('');
-    }
+    const coords = geojson.coordinates
+      .map(([lng, lat]) => [r(lat), r(lng)])
+      .filter(([lat, lng]) => isFinite(lat) && isFinite(lng));
+    if (coords.length < 2) return null;
+    return polylineLib.encode(coords);
   }
 
-  if (coords.length < 2) return null;
-  return polylineLib.encode(coords);
+  if (geojson.type === 'MultiLineString') {
+    const encoded = geojson.coordinates
+      .filter((seg) => seg.length >= 2)
+      .map((seg) => {
+        const coords = seg
+          .map(([lng, lat]) => [r(lat), r(lng)])
+          .filter(([lat, lng]) => isFinite(lat) && isFinite(lng));
+        return coords.length >= 2 ? polylineLib.encode(coords) : null;
+      })
+      .filter(Boolean);
+    return encoded.length > 0 ? encoded.join('') : null;
+  }
+
+  return null;
 }
 
 // ─────────────────────────────────────────────
