@@ -5,15 +5,16 @@ import { checkLevelUp } from '../level/level.service.js';
 import { checkBadges } from '../badge/badge.service.js';
 import polyline from '@mapbox/polyline';
 
-
 // ─────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────
 
 function formatPace(secPerKm) {
   if (secPerKm == null) return null;
+
   const mins = Math.floor(secPerKm / 60);
   const secs = Math.round(secPerKm % 60).toString().padStart(2, '0');
+
   return `${mins}:${secs}/km`;
 }
 
@@ -24,9 +25,16 @@ function computeKmSplits(coordinates) {
 
   function haversine(a, b) {
     const R = 6371;
+
     const dLat = toRad(b.lat - a.lat);
     const dLng = toRad(b.lng - a.lng);
-    const h = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
+
+    const h =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(toRad(a.lat)) *
+      Math.cos(toRad(b.lat)) *
+      Math.sin(dLng / 2) ** 2;
+
     return R * 2 * Math.asin(Math.sqrt(h));
   }
 
@@ -38,12 +46,23 @@ function computeKmSplits(coordinates) {
   for (let i = 1; i < coordinates.length; i++) {
     const prev = coordinates[i - 1];
     const curr = coordinates[i];
+
     accDist += haversine(prev, curr);
 
     while (accDist >= 1) {
       kmCount++;
-      const timeSec = Math.round((new Date(curr.timestamp).getTime() - kmStartTime) / 1000);
-      splits.push({ km: kmCount, timeSec, pace: timeSec, paceFormatted: formatPace(timeSec) });
+
+      const timeSec = Math.round(
+        (new Date(curr.timestamp).getTime() - kmStartTime) / 1000
+      );
+
+      splits.push({
+        km: kmCount,
+        timeSec,
+        pace: timeSec,
+        paceFormatted: formatPace(timeSec),
+      });
+
       kmStartTime = new Date(curr.timestamp).getTime();
       accDist -= 1;
     }
@@ -52,11 +71,58 @@ function computeKmSplits(coordinates) {
   return splits;
 }
 
+function validateRouteEncoded(routeEncoded) {
+  if (!routeEncoded) return null;
+
+  if (typeof routeEncoded !== 'string') {
+    throw new Error('routeEncoded must be a string');
+  }
+
+  if (routeEncoded.includes('�')) {
+    throw new Error('routeEncoded contains corrupted replacement characters');
+  }
+
+  return routeEncoded.trim();
+}
+
+function normalizeCoordinates(coordinates) {
+  if (!Array.isArray(coordinates)) return [];
+
+  return coordinates
+    .map((p) => ({
+      lat: Number(p.lat),
+      lng: Number(p.lng),
+      timestamp: p.timestamp,
+    }))
+    .filter(
+      (p) =>
+        Number.isFinite(p.lat) &&
+        Number.isFinite(p.lng) &&
+        p.lat >= -90 &&
+        p.lat <= 90 &&
+        p.lng >= -180 &&
+        p.lng <= 180
+    );
+}
+
+function buildLineGeoJsonFromCoords(coords) {
+  return {
+    type: 'LineString',
+    coordinates: coords.map((p) => [p.lng, p.lat]),
+  };
+}
+
+function getRouteSegmentsFromEncoded(routeEncoded) {
+  if (!routeEncoded) return [];
+
+  return [routeEncoded];
+}
 
 // ─────────────────────────────────────────────
 // Get My Activities
 // GET /api/activities/my
 // ─────────────────────────────────────────────
+
 export const getMyActivities = async (req, res) => {
   try {
     const activities = await prisma.activity.findMany({
@@ -65,166 +131,299 @@ export const getMyActivities = async (req, res) => {
       include: { territories: true },
     });
 
-    return res.status(200).json({ message: 'Activities loaded', activities });
-
+    return res.status(200).json({
+      success: true,
+      message: 'Activities loaded',
+      activities,
+    });
   } catch (error) {
     console.error('GET_MY_ACTIVITIES ERROR:', error);
-    return res.status(500).json({ message: 'Server error' });
+
+    return res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+    });
   }
 };
-
 
 // ─────────────────────────────────────────────
 // Finish Activity
 // POST /api/activities/finish
 // ─────────────────────────────────────────────
+
 export const finishActivity = async (req, res) => {
   try {
     const userId = req.user.id;
 
     const {
-      mode, distanceKm, durationSec, stopTime, elapsedTime, movingTime,
-      avgPace, topPace, avgSpeed, topSpeed, calories, elevationGain,
-      startedAt, endedAt, routeEncoded,
+      mode,
+      distanceKm,
+      durationSec,
+      stopTime,
+      elapsedTime,
+      movingTime,
+      avgPace,
+      topPace,
+      avgSpeed,
+      topSpeed,
+      calories,
+      elevationGain,
+      startedAt,
+      endedAt,
+      routeEncoded,
       coordinates,
       kmSplits: clientKmSplits,
     } = req.body;
 
-    // ── Resolve coordinates from raw array or decode Google polyline
-    let resolvedCoords = coordinates;
+    const safeRouteEncoded = validateRouteEncoded(routeEncoded);
 
-    if ((!resolvedCoords || resolvedCoords.length < 2) && routeEncoded) {
-      // @mapbox/polyline decodes Google encoded polyline → [[lat, lng], ...]
-      const decoded = polyline.decode(routeEncoded);
+    let resolvedCoords = normalizeCoordinates(coordinates);
+
+    if ((!resolvedCoords || resolvedCoords.length < 2) && safeRouteEncoded) {
+      let decoded;
+
+      try {
+        decoded = polyline.decode(safeRouteEncoded);
+      } catch (error) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid routeEncoded. Could not decode polyline.',
+          error:
+            process.env.NODE_ENV === 'development'
+              ? error.message
+              : undefined,
+        });
+      }
+
       resolvedCoords = decoded.map(([lat, lng]) => ({ lat, lng }));
+      resolvedCoords = normalizeCoordinates(resolvedCoords);
     }
 
     if (!resolvedCoords || resolvedCoords.length < 2) {
-      return res.status(400).json({ message: 'Not enough GPS points — provide coordinates or routeEncoded' });
+      return res.status(400).json({
+        success: false,
+        message: 'Not enough GPS points — provide coordinates or routeEncoded',
+      });
     }
 
-    const kmSplits = (clientKmSplits?.length > 0) ? clientKmSplits : computeKmSplits(resolvedCoords);
+    const routeGeoJson = buildLineGeoJsonFromCoords(resolvedCoords);
+    const routeGeoJsonString = JSON.stringify(routeGeoJson);
 
-    const lineString = resolvedCoords.map((p) => `${p.lng} ${p.lat}`).join(',');
-    const routeWKT = `LINESTRING(${lineString})`;
+    const kmSplits =
+      clientKmSplits?.length > 0
+        ? clientKmSplits
+        : computeKmSplits(resolvedCoords);
 
+    // 1. Save original activity.
+    // Important: activity route is NEVER subtracted.
     const activity = await prisma.activity.create({
       data: {
-        userId, mode, distanceKm, durationSec, stopTime, elapsedTime, movingTime,
-        avgPace, topPace, avgSpeed, topSpeed, calories, elevationGain,
-        startedAt: new Date(startedAt), endedAt: new Date(endedAt),
-        routeEncoded, kmSplits,
+        userId,
+        mode,
+        distanceKm,
+        durationSec,
+        stopTime,
+        elapsedTime,
+        movingTime,
+        avgPace,
+        topPace,
+        avgSpeed,
+        topSpeed,
+        calories,
+        elevationGain,
+        startedAt: new Date(startedAt),
+        endedAt: new Date(endedAt),
+        routeEncoded: safeRouteEncoded,
+        kmSplits,
       },
     });
 
-    // ── Create territory (20m buffer around route, snapped to grid to avoid slivers)
-    const territoryResult = await prisma.$queryRawUnsafe(`
+    // 2. Save activity routeGeometry safely.
+    await prisma.$executeRaw`
+      UPDATE activities
+      SET "routeGeometry" = ST_SetSRID(
+        ST_GeomFromGeoJSON(${routeGeoJsonString}),
+        4326
+      )
+      WHERE id = ${activity.id};
+    `;
+
+    // 3. Create raw territory from route buffer.
+    // At this point, it is still full buffered route.
+    // captureTerritory() will subtract enemy territory from this.
+    const territoryResult = await prisma.$queryRaw`
       WITH new_route AS (
-        SELECT ST_GeomFromText('${routeWKT}', 4326) AS route
+        SELECT ST_SetSRID(
+          ST_GeomFromGeoJSON(${routeGeoJsonString}),
+          4326
+        ) AS route
       ),
       new_area AS (
-        SELECT ST_SnapToGrid(
-          ST_Buffer(route::geography, 20)::geometry,
-          0.0000001
-        ) AS territory,
-        route
-        FROM new_route
+  SELECT
+    ST_MakeValid(
+      ST_SnapToGrid(
+        ST_Buffer(
+          route::geography,
+          1,
+          'endcap=flat join=round quad_segs=2'
+        )::geometry,
+        0.0000001
       )
-      INSERT INTO territories (id, "userId", "activityId", boundary, "routeEncoded", "routeGeometry", "areaKm2", "capturedAt", "createdAt", "updatedAt")
-      SELECT
-        gen_random_uuid(),
-        '${userId}',
-        '${activity.id}',
-        territory,
-        '${(routeEncoded || '').replace(/'/g, "''")}',
-        route,
-        ST_Area(territory::geography) / 1000000,
-        NOW(), NOW(), NOW()
-      FROM new_area
-      RETURNING id;
-    `);
+    ) AS territory,
+    route
+  FROM new_route
+),
+      inserted AS (
+        INSERT INTO territories (
+          id,
+          "userId",
+          "activityId",
+          boundary,
+          center,
+          "routeEncoded",
+          "routeSegmentsEncoded",
+          "routeGeometry",
+          "areaKm2",
+          "capturedAt",
+          "createdAt",
+          "updatedAt"
+        )
+        SELECT
+          gen_random_uuid(),
+          ${userId},
+          ${activity.id},
+          territory,
+          ST_PointOnSurface(territory),
+          ${safeRouteEncoded},
+          ${JSON.stringify(getRouteSegmentsFromEncoded(safeRouteEncoded))}::jsonb,
+          route,
+          ST_Area(territory::geography) / 1000000,
+          NOW(),
+          NOW(),
+          NOW()
+        FROM new_area
+        WHERE territory IS NOT NULL
+          AND NOT ST_IsEmpty(territory)
+        RETURNING id
+      )
+      SELECT id FROM inserted;
+    `;
+
+    if (!territoryResult || territoryResult.length === 0) {
+      return res.status(201).json({
+        success: true,
+        message: 'Activity completed, but no territory was created.',
+        activity,
+        territory: null,
+        captureEvents: [],
+      });
+    }
 
     const territoryId = territoryResult[0].id;
 
-    // ── Capture enemy territories
-    // ── Capture enemy territories
-      await captureTerritory({
-        userId,
-        activityId: activity.id,
-        newTerritoryId: territoryId,
-      });
+    // 4. Subtract other users' existing territories from this new territory.
+    // This affects Territory only. Activity route stays original.
+    await captureTerritory({
+      userId,
+      activityId: activity.id,
+      newTerritoryId: territoryId,
+    });
 
-      // ── Remove captured area from enemy activity routes
-      await prisma.$executeRawUnsafe(`
-        UPDATE activities
-        SET
-          "routeGeometry" = ST_Difference(
-            "routeGeometry",
-            (
-              SELECT boundary
-              FROM territories
-              WHERE id = '${territoryId}'
+    // 5. Merge own territories that touch or overlap.
+    // This merges territory boundary. It does not corrupt activity route.
+    await prisma.$queryRaw`
+      WITH touching AS (
+        SELECT id
+        FROM territories
+        WHERE "userId" = ${userId}
+          AND id != ${territoryId}
+          AND boundary IS NOT NULL
+          AND NOT ST_IsEmpty(boundary)
+          AND (
+            ST_Intersects(
+              boundary,
+              (SELECT boundary FROM territories WHERE id = ${territoryId})
+            )
+            OR ST_Touches(
+              boundary,
+              (SELECT boundary FROM territories WHERE id = ${territoryId})
             )
           )
-        WHERE id IN (
-          SELECT "activityId"
-          FROM territories
-          WHERE "userId" != '${userId}'
-            AND ST_Intersects(
-              boundary,
-              (
-                SELECT boundary
-                FROM territories
-                WHERE id = '${territoryId}'
-              )
-            )
+      ),
+      all_ids AS (
+        SELECT ${territoryId}::text AS id
+        UNION ALL
+        SELECT id::text FROM touching
+      ),
+      merged AS (
+        SELECT
+          ST_MakeValid(ST_Union(t.boundary)) AS merged_boundary,
+          ST_LineMerge(ST_Union(t."routeGeometry")) AS merged_route,
+          ST_Area(ST_Union(t.boundary)::geography) / 1000000 AS merged_area
+        FROM territories t
+        WHERE t.id IN (SELECT id FROM all_ids)
+          AND t.boundary IS NOT NULL
+          AND NOT ST_IsEmpty(t.boundary)
+      )
+      UPDATE territories
+      SET
+        boundary = ST_Multi((SELECT merged_boundary FROM merged)),
+        center = ST_PointOnSurface((SELECT merged_boundary FROM merged)),
+        "routeGeometry" = (SELECT merged_route FROM merged),
+        "areaKm2" = (SELECT merged_area FROM merged),
+        "updatedAt" = NOW()
+      WHERE id = ${territoryId}
+      RETURNING id;
+    `;
+
+    // 6. Delete old own territories that were merged into the new one.
+    await prisma.$executeRaw`
+      DELETE FROM territories
+      WHERE "userId" = ${userId}
+        AND id != ${territoryId}
+        AND (
+          ST_Intersects(
+            boundary,
+            (SELECT boundary FROM territories WHERE id = ${territoryId})
+          )
+          OR ST_Touches(
+            boundary,
+            (SELECT boundary FROM territories WHERE id = ${territoryId})
+          )
         );
-      `);
+    `;
 
-    // ── Merge own territories
-    // await prisma.$executeRawUnsafe(`
-    //   WITH merged AS (SELECT ST_Union(boundary) AS merged_boundary FROM territories WHERE "userId" = '${userId}')
-    //   UPDATE territories
-    //   SET
-    //     boundary = (SELECT merged_boundary FROM merged),
-    //     "areaKm2" = (SELECT ST_Area(merged_boundary::geography) / 1000000 FROM merged),
-    //     "updatedAt" = NOW()
-    //   WHERE "userId" = '${userId}';
-    // `);
-
-    // ── Keep only the newest territory per user
-    // await prisma.$executeRawUnsafe(`
-    //   DELETE FROM territories
-    //   WHERE id NOT IN (
-    //     SELECT DISTINCT ON ("userId") id FROM territories WHERE "userId" = '${userId}' ORDER BY "userId", "createdAt" DESC
-    //   )
-    //   AND "userId" = '${userId}';
-    // `);
-
-    // ── Get final territory
-    const finalTerritory = await prisma.$queryRawUnsafe(`
-      SELECT id, "userId", "activityId", "areaKm2", "capturedAt", "createdAt", "updatedAt",
-             "routeEncoded",
-             ST_AsGeoJSON(boundary)::json AS boundary
-      FROM territories WHERE id = '${territoryId}' LIMIT 1;
-    `);
+    // 7. Fetch final territory.
+    const finalTerritory = await prisma.$queryRaw`
+      SELECT
+        id,
+        "userId",
+        "activityId",
+        "areaKm2",
+        "capturedAt",
+        "createdAt",
+        "updatedAt",
+        "routeEncoded",
+        "routeSegmentsEncoded",
+        ST_AsGeoJSON(boundary)::json AS boundary,
+        ST_AsGeoJSON(center)::json AS center,
+        ST_AsGeoJSON("routeGeometry")::json AS route
+      FROM territories
+      WHERE id = ${territoryId}
+      LIMIT 1;
+    `;
 
     const recentEvents = await prisma.territoryEvent.findMany({
       where: { activityId: activity.id },
       orderBy: { createdAt: 'desc' },
     });
 
-    // ─────────────────────────────────────────
-    // XP — only award for meaningful activities
-    // minimum 0.1 km, 10 XP per km
-    // ─────────────────────────────────────────
+    // XP
     const MIN_DISTANCE_KM = 0.1;
-    
     const XP_PER_KM = 50;
 
-    const xpEarned = distanceKm > 0
-      ? Math.round(distanceKm * XP_PER_KM)
-      : 0;
+    const xpEarned = distanceKm > 0 ? Math.round(distanceKm * XP_PER_KM) : 0;
 
     if (xpEarned > 0) {
       await addXP({
@@ -236,11 +435,6 @@ export const finishActivity = async (req, res) => {
       });
     }
 
-  
-
-    // ─────────────────────────────────────────
-    // Update progress stats
-    // ─────────────────────────────────────────
     await prisma.userProgress.upsert({
       where: { userId },
       create: {
@@ -250,23 +444,14 @@ export const finishActivity = async (req, res) => {
       },
       update: {
         totalDistanceKm: { increment: distanceKm },
-        activitiesCount: distanceKm >= MIN_DISTANCE_KM ? { increment: 1 } : undefined,
+        activitiesCount:
+          distanceKm >= MIN_DISTANCE_KM ? { increment: 1 } : undefined,
       },
     });
 
-    // ─────────────────────────────────────────
-    // Level check
-    // ─────────────────────────────────────────
     const levelResult = await checkLevelUp(userId);
-
-    // ─────────────────────────────────────────
-    // Badge check
-    // ─────────────────────────────────────────
     const newBadges = await checkBadges(userId);
 
-    // ─────────────────────────────────────────
-    // Final progress snapshot
-    // ─────────────────────────────────────────
     const progress = await prisma.userProgress.findUnique({
       where: { userId },
     });
@@ -277,25 +462,24 @@ export const finishActivity = async (req, res) => {
       activity,
       territory: finalTerritory[0] || null,
       captureEvents: recentEvents,
-      // ── Progression
       progression: {
-        xpEarned:      xpEarned ,
-        leveledUp:     levelResult?.leveledUp ?? false,
-        level:         levelResult?.level ?? progress?.level ?? 0,
+        xpEarned,
+        leveledUp: levelResult?.leveledUp ?? false,
+        level: levelResult?.level ?? progress?.level ?? 0,
         newBadges,
         progress: {
-          currentXp:      progress?.currentXp,
-          totalXp:        progress?.totalXp,
-          xpToNextLevel:  progress?.xpToNextLevel,
-          level:          progress?.level,
+          currentXp: progress?.currentXp,
+          totalXp: progress?.totalXp,
+          xpToNextLevel: progress?.xpToNextLevel,
+          level: progress?.level,
           totalDistanceKm: progress?.totalDistanceKm,
           activitiesCount: progress?.activitiesCount,
         },
       },
     });
-
   } catch (error) {
     console.error('FINISH_ACTIVITY ERROR:', error);
+
     return res.status(500).json({
       success: false,
       message: 'Server error',
@@ -304,60 +488,111 @@ export const finishActivity = async (req, res) => {
   }
 };
 
-
 // ─────────────────────────────────────────────
-// Get Activity Detail (map + stats)
+// Get Activity Detail
 // GET /api/activities/:id
 // ─────────────────────────────────────────────
+
 export const getActivityDetail = async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.user.id;
 
-    const activity = await prisma.activity.findUnique({ where: { id } });
+    const activity = await prisma.activity.findUnique({
+      where: { id },
+    });
 
-    if (!activity) return res.status(404).json({ success: false, message: 'Activity not found' });
-    if (activity.userId !== userId) return res.status(403).json({ success: false, message: 'Forbidden' });
+    if (!activity) {
+      return res.status(404).json({
+        success: false,
+        message: 'Activity not found',
+      });
+    }
+
+    if (activity.userId !== userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'Forbidden',
+      });
+    }
 
     const territoryRows = await prisma.$queryRaw`
       SELECT
-        t.id, t."userId", t."activityId", t.name, t."areaKm2",
-        t."capturedAt", t."createdAt", t."updatedAt",
+        t.id,
+        t."userId",
+        t."activityId",
+        t.name,
+        t."areaKm2",
+        t."capturedAt",
+        t."createdAt",
+        t."updatedAt",
+        t."routeEncoded",
+        t."routeSegmentsEncoded",
         ST_AsGeoJSON(t.boundary)::json AS boundary,
-        ST_AsGeoJSON(t.center)::json   AS center,
-        u.username, u."fullName"
+        ST_AsGeoJSON(t.center)::json AS center,
+        u.username,
+        u.full_name AS "fullName"
       FROM territories t
       JOIN users u ON u.id = t."userId"
       ORDER BY t."capturedAt" DESC;
     `;
 
     const territories = territoryRows.map((t) => ({
-      id: t.id, userId: t.userId, activityId: t.activityId, name: t.name,
-      owner: { username: t.username, fullName: t.fullName },
-      areaKm2: t.areaKm2, capturedAt: t.capturedAt, createdAt: t.createdAt, updatedAt: t.updatedAt,
-      geojson: t.boundary, center: t.center,
+      id: t.id,
+      userId: t.userId,
+      activityId: t.activityId,
+      name: t.name,
+      owner: {
+        username: t.username,
+        fullName: t.fullName,
+      },
+      areaKm2: Number(t.areaKm2),
+      capturedAt: t.capturedAt,
+      createdAt: t.createdAt,
+      updatedAt: t.updatedAt,
+      geojson: t.boundary,
+      center: t.center,
+      routeEncoded: t.routeEncoded,
+      routeSegmentsEncoded: t.routeSegmentsEncoded ?? [],
     }));
 
     return res.status(200).json({
       success: true,
       data: {
-        id: activity.id, mode: activity.mode,
-        startedAt: activity.startedAt, endedAt: activity.endedAt,
-        durationSec: activity.durationSec, elapsedTime: activity.elapsedTime,
-        movingTime: activity.movingTime, stopTime: activity.stopTime,
+        id: activity.id,
+        mode: activity.mode,
+        startedAt: activity.startedAt,
+        endedAt: activity.endedAt,
+        durationSec: activity.durationSec,
+        elapsedTime: activity.elapsedTime,
+        movingTime: activity.movingTime,
+        stopTime: activity.stopTime,
         distanceKm: activity.distanceKm,
-        avgPace: activity.avgPace, avgPaceFormatted: formatPace(activity.avgPace),
-        topPace: activity.topPace, topPaceFormatted: formatPace(activity.topPace),
-        avgSpeed: activity.avgSpeed, topSpeed: activity.topSpeed,
-        calories: activity.calories, elevationGain: activity.elevationGain,
+        avgPace: activity.avgPace,
+        avgPaceFormatted: formatPace(activity.avgPace),
+        topPace: activity.topPace,
+        topPaceFormatted: formatPace(activity.topPace),
+        avgSpeed: activity.avgSpeed,
+        topSpeed: activity.topSpeed,
+        calories: activity.calories,
+        elevationGain: activity.elevationGain,
         kmSplits: activity.kmSplits ?? [],
+
+        // Original activity route.
+        // This is never clipped/subtracted.
         routeEncoded: activity.routeEncoded,
+
+        // Territory result routes.
         territories,
       },
     });
-
   } catch (error) {
     console.error('GET_ACTIVITY_DETAIL ERROR:', error);
-    return res.status(500).json({ success: false, message: 'Something went wrong', error: process.env.NODE_ENV === 'development' ? error.message : undefined });
+
+    return res.status(500).json({
+      success: false,
+      message: 'Something went wrong',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+    });
   }
 };
