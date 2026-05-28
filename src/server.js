@@ -11,6 +11,8 @@ import progressionRoutes from './modules/progression/progression.routes.js';
 import xpRoutes          from './modules/xp/xp.routes.js';
 import badgeRoutes       from './modules/badge/badge.routes.js';
 import levelRoutes       from './modules/level/level.routes.js';
+import friendRoutes      from './modules/friends/friend.routes.js';
+import clanRoutes        from './modules/clan/clan.route.js';
 
 const app = express();
 
@@ -28,6 +30,8 @@ app.use('/api/progression', progressionRoutes);
 app.use('/api/xp',          xpRoutes);
 app.use('/api/badges',      badgeRoutes);
 app.use('/api/levels',      levelRoutes);
+app.use('/api/friends',     friendRoutes);
+app.use('/api/clans',       clanRoutes);
 
 const PORT = process.env.PORT || 3000;
 

@@ -112,163 +112,211 @@ async function updateRouteEncodedFromGeometry(territoryId) {
 // ─────────────────────────────────────────────
 
 export const captureTerritory = async ({ userId, activityId, newTerritoryId }) => {
-  // 1. Subtract all other users' existing territory boundaries
-  // from the new territory boundary.
-  const subtractionResult = await prisma.$queryRaw`
-    WITH current_territory AS (
-      SELECT
-        id,
-        boundary,
-        "routeGeometry"
-      FROM territories
-      WHERE id = ${newTerritoryId}
-      LIMIT 1
-    ),
-    enemy_union AS (
-      SELECT ST_MakeValid(ST_Union(boundary)) AS boundary
-      FROM territories
-      WHERE "userId" != ${userId}
-        AND id != ${newTerritoryId}
-        AND boundary IS NOT NULL
-        AND NOT ST_IsEmpty(boundary)
-        AND ST_Intersects(
-          boundary,
-          (SELECT boundary FROM current_territory)
-        )
-    ),
-    diffed AS (
-      SELECT
-        CASE
-          WHEN enemy_union.boundary IS NULL THEN current_territory.boundary
-          ELSE ST_Difference(
-            current_territory.boundary,
-            enemy_union.boundary
+  return await prisma.$transaction(async (tx) => {
+
+    console.log('\n===================================');
+    console.log('CAPTURE TERRITORY START');
+    console.log('userId:', userId);
+    console.log('activityId:', activityId);
+    console.log('newTerritoryId:', newTerritoryId);
+    console.log('===================================\n');
+
+    
+    // 1. Find captured parts from enemy territories
+    const capturedParts = await tx.$queryRaw`
+      WITH current_territory AS (
+        SELECT
+          id,
+          boundary AS user_movement_boundary
+        FROM territories
+        WHERE id = ${newTerritoryId}
+        LIMIT 1
+      ),
+
+      captured_parts AS (
+        SELECT
+          enemy.id AS "enemyTerritoryId",
+          enemy."userId" AS "enemyUserId",
+
+          ST_Multi(
+            ST_CollectionExtract(
+              ST_MakeValid(
+                ST_Intersection(
+                  enemy.boundary,
+                  current_territory.user_movement_boundary
+                )
+              ),
+              3
+            )
+          ) AS captured_part
+
+        FROM territories enemy
+        CROSS JOIN current_territory
+        WHERE enemy."userId" != ${userId}
+          AND enemy.id != ${newTerritoryId}
+          AND enemy.boundary IS NOT NULL
+          AND NOT ST_IsEmpty(enemy.boundary)
+          AND ST_Intersects(
+            enemy.boundary,
+            current_territory.user_movement_boundary
           )
-        END AS new_boundary,
-        CASE
-          WHEN enemy_union.boundary IS NULL THEN current_territory."routeGeometry"
-          ELSE ST_Difference(
-            current_territory."routeGeometry",
-            enemy_union.boundary
-          )
-        END AS new_route
-      FROM current_territory
-      LEFT JOIN enemy_union ON true
-    ),
-    cleaned AS (
+      ),
+
+      valid_captured_parts AS (
+        SELECT
+          "enemyTerritoryId",
+          "enemyUserId",
+          captured_part,
+          ST_Area(captured_part::geography) / 1000000 AS "capturedAreaKm2"
+        FROM captured_parts
+        WHERE captured_part IS NOT NULL
+          AND NOT ST_IsEmpty(captured_part)
+          AND ST_Area(captured_part::geography) > 1
+      )
+
       SELECT
-        ST_Multi(
-          ST_CollectionExtract(
-            ST_MakeValid(new_boundary),
-            3
+        "enemyTerritoryId",
+        "enemyUserId",
+        "capturedAreaKm2"
+      FROM valid_captured_parts;
+    `;
+
+    // 2. Save capture events
+    for (const part of capturedParts) {
+      const affectedAreaKm2 = Number(part.capturedAreaKm2 || 0);
+
+      if (affectedAreaKm2 <= 0.000001) continue;
+
+      await tx.territoryEvent.create({
+        data: {
+          territoryId: newTerritoryId,
+          userId,
+          opponentUserId: part.enemyUserId,
+          activityId,
+          type: "CAPTURE",
+          affectedAreaKm2,
+        },
+      });
+    }
+
+    // 3. Remove captured parts from enemy territories
+    await tx.$executeRaw`
+      WITH current_territory AS (
+        SELECT
+          boundary AS user_movement_boundary
+        FROM territories
+        WHERE id = ${newTerritoryId}
+        LIMIT 1
+      ),
+
+      captured_parts AS (
+        SELECT
+          enemy.id AS enemy_territory_id,
+
+          ST_Multi(
+            ST_CollectionExtract(
+              ST_MakeValid(
+                ST_Intersection(
+                  enemy.boundary,
+                  current_territory.user_movement_boundary
+                )
+              ),
+              3
+            )
+          ) AS captured_part
+
+        FROM territories enemy
+        CROSS JOIN current_territory
+        WHERE enemy."userId" != ${userId}
+          AND enemy.id != ${newTerritoryId}
+          AND enemy.boundary IS NOT NULL
+          AND NOT ST_IsEmpty(enemy.boundary)
+          AND ST_Intersects(
+            enemy.boundary,
+            current_territory.user_movement_boundary
           )
-        ) AS boundary,
-        ST_CollectionExtract(
-          ST_MakeValid(new_route),
-          2
-        ) AS route
-      FROM diffed
-      WHERE new_boundary IS NOT NULL
-        AND NOT ST_IsEmpty(new_boundary)
-    ),
-    updated AS (
+      ),
+
+      updated_enemies AS (
+        UPDATE territories enemy
+        SET
+          boundary = ST_Multi(
+            ST_CollectionExtract(
+              ST_MakeValid(
+                ST_Difference(
+                  enemy.boundary,
+                  captured_parts.captured_part
+                )
+              ),
+              3
+            )
+          ),
+          "updatedAt" = NOW()
+        FROM captured_parts
+        WHERE enemy.id = captured_parts.enemy_territory_id
+          AND captured_parts.captured_part IS NOT NULL
+          AND NOT ST_IsEmpty(captured_parts.captured_part)
+        RETURNING enemy.id
+      )
+
+      SELECT * FROM updated_enemies;
+    `;
+
+    // 4. Recalculate enemy area and center
+    await tx.$executeRaw`
       UPDATE territories
       SET
-        boundary = cleaned.boundary,
-        center = ST_PointOnSurface(cleaned.boundary),
-        "routeGeometry" = cleaned.route,
-        "areaKm2" = ST_Area(cleaned.boundary::geography) / 1000000,
+        "areaKm2" = ST_Area(boundary::geography) / 1000000,
+        center = ST_PointOnSurface(boundary),
         "updatedAt" = NOW()
-      FROM cleaned
-      WHERE territories.id = ${newTerritoryId}
-        AND cleaned.boundary IS NOT NULL
-        AND NOT ST_IsEmpty(cleaned.boundary)
-      RETURNING
-        territories.id,
-        territories."areaKm2"
-    )
-    SELECT * FROM updated;
-  `;
-
-  // If no remaining territory exists, delete the new territory.
-  if (!subtractionResult || subtractionResult.length === 0) {
-    await prisma.$executeRaw`
-      DELETE FROM territories
-      WHERE id = ${newTerritoryId};
+      WHERE boundary IS NOT NULL
+        AND NOT ST_IsEmpty(boundary);
     `;
 
-    return {
-      captured: false,
-      areaKm2: 0,
-    };
-  }
-
-  const finalAreaKm2 = Number(subtractionResult[0].areaKm2 || 0);
-
-  if (finalAreaKm2 <= 0.000001) {
-    await prisma.$executeRaw`
+    // 5. Delete empty or tiny territories
+    await tx.$executeRaw`
       DELETE FROM territories
-      WHERE id = ${newTerritoryId};
+      WHERE boundary IS NULL
+         OR ST_IsEmpty(boundary)
+         OR ST_Area(boundary::geography) <= 1;
     `;
 
-    return {
-      captured: false,
-      areaKm2: 0,
-    };
-  }
-
-  // 2. Update routeEncoded + routeSegmentsEncoded from clipped routeGeometry.
-  await updateRouteEncodedFromGeometry(newTerritoryId);
-
-  // 3. Record capture events for enemies that overlapped.
-  const overlappedEnemies = await prisma.$queryRaw`
-    WITH current_territory AS (
-      SELECT boundary
-      FROM territories
+    // 6. Update new territory area and center
+    const updatedNewTerritory = await tx.$queryRaw`
+      UPDATE territories
+      SET
+        boundary = ST_Multi(
+          ST_CollectionExtract(
+            ST_MakeValid(boundary),
+            3
+          )
+        ),
+        center = ST_PointOnSurface(boundary),
+        "areaKm2" = ST_Area(boundary::geography) / 1000000,
+        "updatedAt" = NOW()
       WHERE id = ${newTerritoryId}
-      LIMIT 1
-    )
-    SELECT
-      t.id,
-      t."userId",
-      ST_Area(
-        ST_Intersection(
-          t.boundary,
-          (SELECT boundary FROM current_territory)
-        )::geography
-      ) / 1000000 AS overlap_area
-    FROM territories t
-    WHERE t."userId" != ${userId}
-      AND t.id != ${newTerritoryId}
-      AND t.boundary IS NOT NULL
-      AND NOT ST_IsEmpty(t.boundary)
-      AND ST_Intersects(
-        t.boundary,
-        (SELECT boundary FROM current_territory)
-      );
-  `;
+        AND boundary IS NOT NULL
+        AND NOT ST_IsEmpty(boundary)
+      RETURNING id, "areaKm2";
+    `;
 
-  for (const enemy of overlappedEnemies) {
-    const affectedAreaKm2 = Number(enemy.overlap_area || 0);
+    if (!updatedNewTerritory || updatedNewTerritory.length === 0) {
+      return {
+        captured: false,
+        areaKm2: 0,
+        capturedCount: 0,
+      };
+    }
 
-    if (affectedAreaKm2 <= 0.000001) continue;
+    // 7. Update routeEncoded / routeSegmentsEncoded after geometry changes
+    await updateRouteEncodedFromGeometry(newTerritoryId);
 
-    await prisma.territoryEvent.create({
-      data: {
-        territoryId: newTerritoryId,
-        userId,
-        opponentUserId: enemy.userId,
-        activityId,
-        type: 'CAPTURE',
-        affectedAreaKm2,
-      },
-    });
-  }
-
-  return {
-    captured: true,
-    areaKm2: finalAreaKm2,
-  };
+    return {
+      captured: capturedParts.length > 0,
+      areaKm2: Number(updatedNewTerritory[0].areaKm2 || 0),
+      capturedCount: capturedParts.length,
+    };
+  });
 };
 
 // ─────────────────────────────────────────────
@@ -505,13 +553,13 @@ export const updateTerritoryRoute = async (req, res) => {
     const routeGeoJson =
       lineGeoJsonSegments.length === 1
         ? {
-            type: 'LineString',
-            coordinates: lineGeoJsonSegments[0],
-          }
+          type: 'LineString',
+          coordinates: lineGeoJsonSegments[0],
+        }
         : {
-            type: 'MultiLineString',
-            coordinates: lineGeoJsonSegments,
-          };
+          type: 'MultiLineString',
+          coordinates: lineGeoJsonSegments,
+        };
 
     const routeGeoJsonString = JSON.stringify(routeGeoJson);
     const mainRouteEncoded =

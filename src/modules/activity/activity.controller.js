@@ -32,8 +32,8 @@ function computeKmSplits(coordinates) {
     const h =
       Math.sin(dLat / 2) ** 2 +
       Math.cos(toRad(a.lat)) *
-        Math.cos(toRad(b.lat)) *
-        Math.sin(dLng / 2) ** 2;
+      Math.cos(toRad(b.lat)) *
+      Math.sin(dLng / 2) ** 2;
 
     return R * 2 * Math.asin(Math.sqrt(h));
   }
@@ -260,16 +260,20 @@ export const finishActivity = async (req, res) => {
         ) AS route
       ),
       new_area AS (
-        SELECT
-          ST_MakeValid(
-            ST_SnapToGrid(
-              ST_Buffer(route::geography, 20)::geometry,
-              0.0000001
-            )
-          ) AS territory,
-          route
-        FROM new_route
-      ),
+  SELECT
+    ST_MakeValid(
+      ST_SnapToGrid(
+        ST_Buffer(
+          route::geography,
+          1,
+          'endcap=flat join=round quad_segs=2'
+        )::geometry,
+        0.0000001
+      )
+    ) AS territory,
+    route
+  FROM new_route
+),
       inserted AS (
         INSERT INTO territories (
           id,
