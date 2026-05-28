@@ -596,3 +596,211 @@ export const getActivityDetail = async (req, res) => {
     });
   }
 };
+
+
+
+// ─────────────────────────────────────────────
+// Get My Total Stats
+// GET /api/activities/stats/total
+// ─────────────────────────────────────────────
+
+export const getMyTotalStats = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const activityStats = await prisma.activity.aggregate({
+      where: { userId },
+      _count: { id: true },
+      _sum: {
+        distanceKm: true,
+        durationSec: true,
+        movingTime: true,
+        stopTime: true,
+        calories: true,
+        elevationGain: true,
+      },
+      _avg: {
+        avgPace: true,
+        avgSpeed: true,
+      },
+      _max: {
+        topSpeed: true,
+      },
+    });
+
+    const territoryStats = await prisma.territory.aggregate({
+      where: { userId },
+      _count: { id: true },
+      _sum: {
+        areaKm2: true,
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      stats: {
+        totalActivities: activityStats._count.id,
+
+        totalDistanceKm: Number(activityStats._sum.distanceKm ?? 0),
+        totalDurationSec: Number(activityStats._sum.durationSec ?? 0),
+        totalMovingTimeSec: Number(activityStats._sum.movingTime ?? 0),
+        totalStopTimeSec: Number(activityStats._sum.stopTime ?? 0),
+
+        totalCalories: Number(activityStats._sum.calories ?? 0),
+        totalElevationGain: Number(activityStats._sum.elevationGain ?? 0),
+
+        averagePace: activityStats._avg.avgPace,
+        averagePaceFormatted: formatPace(activityStats._avg.avgPace),
+
+        averageSpeed: activityStats._avg.avgSpeed,
+        topSpeed: activityStats._max.topSpeed,
+
+        totalTerritories: territoryStats._count.id,
+        totalAreaKm2: Number(territoryStats._sum.areaKm2 ?? 0),
+      },
+    });
+  } catch (error) {
+    console.error("GET_MY_TOTAL_STATS ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch total stats",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
+};
+
+
+// ─────────────────────────────────────────────
+// Get Today's Total Stats
+// GET /api/activities/stats/today
+// ─────────────────────────────────────────────
+
+export const getTodayStats = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+
+    const endOfDay = new Date();
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const activityStats = await prisma.activity.aggregate({
+      where: {
+        userId,
+
+        createdAt: {
+          gte: startOfDay,
+          lte: endOfDay,
+        },
+      },
+
+      _count: {
+        id: true,
+      },
+
+      _sum: {
+        distanceKm: true,
+        durationSec: true,
+        movingTime: true,
+        stopTime: true,
+        calories: true,
+        elevationGain: true,
+      },
+
+      _avg: {
+        avgPace: true,
+        avgSpeed: true,
+      },
+
+      _max: {
+        topSpeed: true,
+      },
+    });
+
+    const territoryStats = await prisma.territory.aggregate({
+      where: {
+        userId,
+
+        createdAt: {
+          gte: startOfDay,
+          lte: endOfDay,
+        },
+      },
+
+      _count: {
+        id: true,
+      },
+
+      _sum: {
+        areaKm2: true,
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+
+      date: startOfDay,
+
+      stats: {
+
+        totalActivities:
+          activityStats._count.id,
+
+        totalDistanceKm:
+          Number(activityStats._sum.distanceKm ?? 0),
+
+        totalDurationSec:
+          Number(activityStats._sum.durationSec ?? 0),
+
+        totalMovingTimeSec:
+          Number(activityStats._sum.movingTime ?? 0),
+
+        totalStopTimeSec:
+          Number(activityStats._sum.stopTime ?? 0),
+
+        totalCalories:
+          Number(activityStats._sum.calories ?? 0),
+
+        totalElevationGain:
+          Number(activityStats._sum.elevationGain ?? 0),
+
+        averagePace:
+          activityStats._avg.avgPace,
+
+        averagePaceFormatted:
+          formatPace(activityStats._avg.avgPace),
+
+        averageSpeed:
+          activityStats._avg.avgSpeed,
+
+        topSpeed:
+          activityStats._max.topSpeed,
+
+        totalTerritories:
+          territoryStats._count.id,
+
+        totalAreaKm2:
+          Number(territoryStats._sum.areaKm2 ?? 0),
+      },
+    });
+
+  } catch (error) {
+
+    console.error(
+      "GET_TODAY_STATS ERROR:",
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch today's stats",
+      error:
+        process.env.NODE_ENV === "development"
+          ? error.message
+          : undefined,
+    });
+
+  }
+};

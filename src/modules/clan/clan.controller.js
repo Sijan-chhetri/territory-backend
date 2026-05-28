@@ -59,7 +59,7 @@ export const getClanJoinRequests = async (req, res) => {
             id: true,
             username: true,
             fullName: true,
-            profilePicture: true,
+            // profilePicture: true,
           }
         }
       },
@@ -605,6 +605,158 @@ export const getMyJoinedClans = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Failed to fetch joined clans"
+    });
+  }
+};
+
+
+/**
+ * |--------------------------------------------------------------------------
+ * | GET CLAN TERRITORIES WITH FULL TERRITORY DATA
+ * |--------------------------------------------------------------------------
+ */
+
+export const getClanTerritories = async (req, res) => {
+  try {
+    const { clanId } = req.params;
+
+    const clan = await prisma.clan.findUnique({
+      where: { id: clanId },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        logo: true,
+        banner: true,
+        territoryCount: true,
+        totalAreaKm2: true,
+      },
+    });
+
+    if (!clan) {
+      return res.status(404).json({
+        success: false,
+        message: "Clan not found",
+      });
+    }
+
+    const territories = await prisma.$queryRaw`
+      SELECT
+        t.id AS "territoryId",
+        t."userId",
+        t."activityId",
+        t."landmassId",
+        t.name,
+        t."areaKm2",
+        t."capturedAt",
+        t."createdAt",
+        t."updatedAt",
+        t."routeEncoded",
+        t."routeSegmentsEncoded",
+
+        ST_AsGeoJSON(t.boundary)::json AS boundary,
+        ST_AsGeoJSON(t.center)::json AS center,
+
+        u.id AS "ownerId",
+        u.username AS "ownerUsername",
+        u."full_name" AS "ownerFullName",
+
+        cm.role AS "clanRole",
+        cm."joinedAt" AS "memberJoinedAt",
+
+        a.mode,
+        a."distanceKm",
+        a."durationSec",
+        a."avgPace",
+        a."avgSpeed",
+        a.calories,
+        a."startedAt",
+        a."endedAt"
+
+      FROM clan_members cm
+
+      JOIN territories t
+        ON t."userId" = cm."userId"
+
+      JOIN users u
+        ON u.id = t."userId"
+
+      LEFT JOIN activities a
+        ON a.id = t."activityId"
+
+      WHERE cm."clanId" = ${clanId}
+        AND t.boundary IS NOT NULL
+        AND NOT ST_IsEmpty(t.boundary)
+
+      ORDER BY t."capturedAt" DESC;
+    `;
+
+    const features = territories.map((territory) => ({
+      type: "Feature",
+      id: territory.territoryId,
+      geometry: territory.boundary,
+
+      properties: {
+        territoryId: territory.territoryId,
+        userId: territory.userId,
+        activityId: territory.activityId,
+        landmassId: territory.landmassId,
+
+        name: territory.name,
+        areaKm2: Number(territory.areaKm2),
+
+        capturedAt: territory.capturedAt,
+        createdAt: territory.createdAt,
+        updatedAt: territory.updatedAt,
+
+        center: territory.center,
+        routeEncoded: territory.routeEncoded,
+        routeSegmentsEncoded: territory.routeSegmentsEncoded ?? [],
+
+        owner: {
+          id: territory.ownerId,
+          username: territory.ownerUsername,
+          fullName: territory.ownerFullName,
+        },
+
+        clanMember: {
+          role: territory.clanRole,
+          joinedAt: territory.memberJoinedAt,
+        },
+
+        activity: territory.activityId
+          ? {
+              id: territory.activityId,
+              mode: territory.mode,
+              distanceKm: territory.distanceKm,
+              durationSec: territory.durationSec,
+              avgPace: territory.avgPace,
+              avgSpeed: territory.avgSpeed,
+              calories: territory.calories,
+              startedAt: territory.startedAt,
+              endedAt: territory.endedAt,
+            }
+          : null,
+      },
+    }));
+
+    return res.status(200).json({
+      success: true,
+      clan,
+      count: features.length,
+      geojson: {
+        type: "FeatureCollection",
+        features,
+      },
+    });
+  } catch (error) {
+    console.log("GET_CLAN_TERRITORIES_ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch clan territories",
+      error:
+        process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 };
