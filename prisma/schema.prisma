@@ -4,17 +4,409 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
-
-  extensions = [postgis]
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [postgis, uuid_ossp(map: "uuid-ossp", schema: "extensions")]
 }
 
-/**
- * |--------------------------------------------------------------------------
- * | ENUMS
- * |--------------------------------------------------------------------------
- */
+model User {
+  id                      String            @id @default(uuid())
+  email                   String            @unique
+  username                String            @unique
+  password                String
+  fullName                String?           @map("full_name")
+  country                 String?
+  city                    String?
+  createdAt               DateTime          @default(now()) @map("created_at")
+  updatedAt               DateTime          @updatedAt @map("updated_at")
+  receivedFriendRequests  FriendRequest[]   @relation("FriendRequestReceiver")
+  sentFriendRequests      FriendRequest[]   @relation("FriendRequestSender")
+  friendOf                Friendship[]      @relation("FriendshipFriend")
+  friends                 Friendship[]      @relation("FriendshipUser")
+  activities              Activity[]
+  clanActivities          ClanActivity[]
+  clanInvitesSent         ClanInvite[]      @relation("ClanInviteSender")
+  clanInvitesReceived     ClanInvite[]      @relation("ClanInviteReceiver")
+  clanJoinRequests        ClanJoinRequest[]
+  clanMemberships         ClanMember[]
+  clanTerritoriesCaptured ClanTerritory[]
+  clanCaptain             Clan[]            @relation("ClanCaptain")
+  territories             Territory[]
+  badges                  UserBadge[]
+  progress                UserProgress?
+  xpTransactions          XPTransaction[]
+
+  @@index([email])
+  @@index([username])
+  @@map("users")
+}
+
+model Clan {
+  id                 String                   @id @default(uuid())
+  name               String                   @unique
+  slug               String                   @unique
+  description        String?
+  logo               String?
+  banner             String?
+  isPrivate          Boolean                  @default(false)
+  maxMembers         Int                      @default(50)
+  /// *
+  /// * |--------------------------------------------------------------------------
+  /// * | CAPTAIN
+  /// * |--------------------------------------------------------------------------
+  captainId          String
+  /// *
+  /// * |--------------------------------------------------------------------------
+  /// * | LEADERBOARD STATS
+  /// * |--------------------------------------------------------------------------
+  totalXp            Float                    @default(0)
+  totalDistanceKm    Float                    @default(0)
+  totalActivities    Int                      @default(0)
+  territoryCount     Int                      @default(0)
+  totalAreaKm2       Float                    @default(0)
+  wins               Int                      @default(0)
+  losses             Int                      @default(0)
+  rank               Int?
+  weeklyXp           Float                    @default(0)
+  monthlyXp          Float                    @default(0)
+  weeklyDistanceKm   Float                    @default(0)
+  monthlyDistanceKm  Float                    @default(0)
+  /// *
+  /// * |--------------------------------------------------------------------------
+  /// * | TIMESTAMPS
+  /// * |--------------------------------------------------------------------------
+  createdAt          DateTime                 @default(now())
+  updatedAt          DateTime                 @updatedAt
+  activities         ClanActivity[]
+  invites            ClanInvite[]
+  joinRequests       ClanJoinRequest[]
+  leaderboardHistory ClanLeaderboardHistory[]
+  members            ClanMember[]
+  territories        ClanTerritory[]
+  captain            User                     @relation("ClanCaptain", fields: [captainId], references: [id], onDelete: Cascade)
+
+  @@index([name])
+  @@index([rank])
+  @@map("clans")
+}
+
+model ClanMember {
+  id       String   @id @default(uuid())
+  clanId   String
+  userId   String
+  role     ClanRole @default(RUNNER)
+  joinedAt DateTime @default(now())
+  clan     Clan     @relation(fields: [clanId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([clanId, userId])
+  @@index([clanId])
+  @@index([userId])
+  @@index([role])
+  @@map("clan_members")
+}
+
+model ClanJoinRequest {
+  id        String                @id @default(uuid())
+  clanId    String
+  userId    String
+  status    ClanJoinRequestStatus @default(PENDING)
+  message   String?
+  createdAt DateTime              @default(now())
+  updatedAt DateTime              @updatedAt
+  clan      Clan                  @relation(fields: [clanId], references: [id], onDelete: Cascade)
+  user      User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([clanId, userId])
+  @@index([clanId])
+  @@index([userId])
+  @@map("clan_join_requests")
+}
+
+model ClanInvite {
+  id            String           @id @default(uuid())
+  clanId        String
+  invitedById   String
+  invitedUserId String
+  status        ClanInviteStatus @default(PENDING)
+  message       String?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  clan          Clan             @relation(fields: [clanId], references: [id], onDelete: Cascade)
+  invitedBy     User             @relation("ClanInviteSender", fields: [invitedById], references: [id], onDelete: Cascade)
+  invitedUser   User             @relation("ClanInviteReceiver", fields: [invitedUserId], references: [id], onDelete: Cascade)
+
+  @@unique([clanId, invitedUserId])
+  @@index([clanId])
+  @@index([invitedById])
+  @@index([invitedUserId])
+  @@map("clan_invites")
+}
+
+model ClanTerritory {
+  id               String    @id @default(uuid())
+  clanId           String
+  territoryId      String
+  capturedByUserId String?
+  /// *
+  /// * |--------------------------------------------------------------------------
+  /// * | TERRITORY STATS
+  /// * |--------------------------------------------------------------------------
+  areaKm2          Float
+  capturedAt       DateTime  @default(now())
+  capturedBy       User?     @relation(fields: [capturedByUserId], references: [id])
+  clan             Clan      @relation(fields: [clanId], references: [id], onDelete: Cascade)
+  territory        Territory @relation(fields: [territoryId], references: [id], onDelete: Cascade)
+
+  @@unique([clanId, territoryId])
+  @@index([clanId])
+  @@index([territoryId])
+  @@map("clan_territories")
+}
+
+model ClanActivity {
+  id                  String    @id @default(uuid())
+  clanId              String
+  userId              String
+  activityId          String?
+  /// *
+  /// * |--------------------------------------------------------------------------
+  /// * | CONTRIBUTION
+  /// * |--------------------------------------------------------------------------
+  xpEarned            Float     @default(0)
+  distanceKm          Float     @default(0)
+  territoriesCaptured Int       @default(0)
+  areaCapturedKm2     Float     @default(0)
+  /// *
+  /// * |--------------------------------------------------------------------------
+  /// * | TIMESTAMPS
+  /// * |--------------------------------------------------------------------------
+  createdAt           DateTime  @default(now())
+  activity            Activity? @relation(fields: [activityId], references: [id])
+  clan                Clan      @relation(fields: [clanId], references: [id], onDelete: Cascade)
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([clanId])
+  @@index([userId])
+  @@map("clan_activities")
+}
+
+model ClanLeaderboardHistory {
+  id             String   @id @default(uuid())
+  clanId         String
+  rank           Int
+  xp             Float
+  distanceKm     Float
+  territoryCount Int
+  totalAreaKm2   Float
+  type           String
+  createdAt      DateTime @default(now())
+  clan           Clan     @relation(fields: [clanId], references: [id], onDelete: Cascade)
+
+  @@index([clanId])
+  @@index([rank])
+  @@map("clan_leaderboard_history")
+}
+
+model FriendRequest {
+  id         String              @id @default(uuid())
+  senderId   String
+  receiverId String
+  status     FriendRequestStatus @default(PENDING)
+  createdAt  DateTime            @default(now())
+  updatedAt  DateTime            @updatedAt
+  receiver   User                @relation("FriendRequestReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
+  sender     User                @relation("FriendRequestSender", fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@unique([senderId, receiverId])
+  @@index([senderId])
+  @@index([receiverId])
+}
+
+model Friendship {
+  id        String   @id @default(uuid())
+  userId    String
+  friendId  String
+  createdAt DateTime @default(now())
+  friend    User     @relation("FriendshipFriend", fields: [friendId], references: [id], onDelete: Cascade)
+  user      User     @relation("FriendshipUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, friendId])
+  @@index([userId])
+  @@index([friendId])
+}
+
+model Activity {
+  id             String                   @id @default(uuid())
+  /// *
+  /// * |--------------------------------------------------------------------------
+  /// * | RELATIONS
+  /// * |--------------------------------------------------------------------------
+  userId         String
+  /// *
+  /// * |--------------------------------------------------------------------------
+  /// * | ACTIVITY DATA
+  /// * |--------------------------------------------------------------------------
+  mode           ActivityMode
+  distanceKm     Float
+  durationSec    Int
+  stopTime       Int?
+  elapsedTime    Int?
+  movingTime     Int?
+  avgPace        Float
+  topPace        Float?
+  avgSpeed       Float?
+  topSpeed       Float?
+  calories       Float
+  elevationGain  Float?
+  startedAt      DateTime
+  endedAt        DateTime
+  routeEncoded   String?
+  kmSplits       Json?
+  routeGeometry  Unsupported("geometry")?
+  /// *
+  /// * |--------------------------------------------------------------------------
+  /// * | TIMESTAMPS
+  /// * |--------------------------------------------------------------------------
+  createdAt      DateTime                 @default(now())
+  includeInClan  Boolean                  @default(false) @map("include_in_clan")
+  notes          String?
+  user           User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clanActivities ClanActivity[]
+  territories    Territory[]
+  xptransactions XPTransaction[]
+
+  @@index([userId])
+  @@map("activities")
+}
+
+model Territory {
+  id                   String                   @id @default(uuid())
+  userId               String
+  activityId           String?
+  landmassId           String?
+  name                 String?
+  boundary             Unsupported("geometry")
+  center               Unsupported("geometry")?
+  routeEncoded         String?
+  routeGeometry        Unsupported("geometry")?
+  areaKm2              Float
+  capturedAt           DateTime                 @default(now())
+  createdAt            DateTime                 @default(now())
+  updatedAt            DateTime                 @updatedAt
+  routeSegmentsEncoded Json?
+  clanTerritories      ClanTerritory[]
+  activity             Activity?                @relation(fields: [activityId], references: [id])
+  user                 User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([activityId])
+  @@index([landmassId])
+  @@map("territories")
+}
+
+model TerritoryEvent {
+  id              String                   @id @default(uuid())
+  territoryId     String?
+  userId          String
+  activityId      String?
+  opponentUserId  String?
+  type            String
+  affectedAreaKm2 Float
+  geometry        Unsupported("geometry")?
+  createdAt       DateTime                 @default(now())
+
+  @@index([userId])
+  @@index([opponentUserId])
+  @@index([activityId])
+  @@map("territory_events")
+}
+
+model UserProgress {
+  id                  String   @id @default(uuid())
+  userId              String   @unique
+  /// *
+  /// * |--------------------------------------------------------------------------
+  /// * | LEVEL SYSTEM
+  /// * |--------------------------------------------------------------------------
+  level               Int      @default(0)
+  currentXp           Int      @default(0)
+  totalXp             Int      @default(0)
+  xpToNextLevel       Int      @default(50)
+  totalDistanceKm     Float    @default(0)
+  /// *
+  /// * |--------------------------------------------------------------------------
+  /// * | STREAKS
+  /// * |--------------------------------------------------------------------------
+  currentStreak       Int      @default(0)
+  longestStreak       Int      @default(0)
+  /// *
+  /// * |--------------------------------------------------------------------------
+  /// * | ACHIEVEMENTS
+  /// * |--------------------------------------------------------------------------
+  territoriesOwned    Int      @default(0)
+  territoriesCaptured Int      @default(0)
+  activitiesCount     Int      @default(0)
+  /// *
+  /// * |--------------------------------------------------------------------------
+  /// * | TIMESTAMPS
+  /// * |--------------------------------------------------------------------------
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([level])
+  @@map("user_progress")
+}
+
+model XPTransaction {
+  id          String    @id @default(uuid())
+  userId      String
+  activityId  String?
+  amount      Int
+  type        String
+  description String?
+  createdAt   DateTime  @default(now())
+  activity    Activity? @relation(fields: [activityId], references: [id])
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([type])
+  @@map("xp_transactions")
+}
+
+model Badge {
+  id               String      @id @default(uuid())
+  name             String      @unique
+  slug             String      @unique
+  description      String
+  icon             String?
+  xpReward         Int         @default(0)
+  rarity           String?
+  /// *
+  /// * |--------------------------------------------------------------------------
+  /// * | CONDITIONS
+  /// * |--------------------------------------------------------------------------
+  requirementType  String
+  requirementValue Int
+  createdAt        DateTime    @default(now())
+  users            UserBadge[]
+
+  @@map("badges")
+}
+
+model UserBadge {
+  id       String   @id @default(uuid())
+  userId   String
+  badgeId  String
+  earnedAt DateTime @default(now())
+  badge    Badge    @relation(fields: [badgeId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, badgeId])
+  @@index([userId])
+  @@map("user_badges")
+}
 
 enum ActivityMode {
   WALK
@@ -23,73 +415,11 @@ enum ActivityMode {
   DRIVE
 }
 
-/**
- * |--------------------------------------------------------------------------
- * | USER
- * |--------------------------------------------------------------------------
- */
-
-
-
-model User {
-  id String @id @default(uuid())
-
-  email    String @unique
-  username String @unique
-  password String
-
-  fullName String? @map("full_name")
-
-  country String?
-  city    String?
-
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-
-  /**
-   * |--------------------------------------------------------------------------
-   * | RELATIONS
-   * |--------------------------------------------------------------------------
-   */
-
-  activities  Activity[]
-  territories Territory[]
-
-  progress       UserProgress?
-  xpTransactions XPTransaction[]
-  badges         UserBadge[]
-
-  clanCaptain             Clan[]           @relation("ClanCaptain")
-  clanMemberships         ClanMember[]
-  clanJoinRequests        ClanJoinRequest[]
-  clanInvitesSent         ClanInvite[]     @relation("ClanInviteSender")
-  clanInvitesReceived     ClanInvite[]     @relation("ClanInviteReceiver")
-  clanTerritoriesCaptured ClanTerritory[]
-  clanActivities          ClanActivity[]
-
-  sentFriendRequests     FriendRequest[] @relation("FriendRequestSender")
-  receivedFriendRequests FriendRequest[] @relation("FriendRequestReceiver")
-
-  friends  Friendship[] @relation("FriendshipUser")
-  friendOf Friendship[] @relation("FriendshipFriend")
-
-  @@index([email])
-  @@index([username])
-  @@map("users")
-}
-
-
-
 enum FriendRequestStatus {
   PENDING
   ACCEPTED
   REJECTED
 }
-
-
-
-
-// CLAN ENUMS
 
 enum ClanRole {
   LEADER
@@ -106,681 +436,4 @@ enum ClanInviteStatus {
   PENDING
   ACCEPTED
   REJECTED
-}
-
-/**
- * |--------------------------------------------------------------------------
- * | CLAN
- * |--------------------------------------------------------------------------
- */
-
-
-model Clan {
-  id String @id @default(uuid())
-
-  name String @unique
-  slug String @unique
-
-  description String?
-
-  logo String?
-  banner String?
-
-  isPrivate Boolean @default(false)
-
-  maxMembers Int @default(50)
-
-  /**
-   * |--------------------------------------------------------------------------
-   * | CAPTAIN
-   * |--------------------------------------------------------------------------
-   */
-
-  captainId String
-
-  captain User @relation("ClanCaptain", fields: [captainId], references: [id], onDelete: Cascade)
-
-  /**
-   * |--------------------------------------------------------------------------
-   * | LEADERBOARD STATS
-   * |--------------------------------------------------------------------------
-   */
-
-  totalXp Float @default(0)
-
-  totalDistanceKm Float @default(0)
-
-  totalActivities Int @default(0)
-
-  territoryCount Int @default(0)
-
-  totalAreaKm2 Float @default(0)
-
-  wins Int @default(0)
-
-  losses Int @default(0)
-
-  rank Int?
-
-  weeklyXp Float @default(0)
-
-  monthlyXp Float @default(0)
-
-  weeklyDistanceKm Float @default(0)
-
-  monthlyDistanceKm Float @default(0)
-
-  /**
-   * |--------------------------------------------------------------------------
-   * | TIMESTAMPS
-   * |--------------------------------------------------------------------------
-   */
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  /**
-   * |--------------------------------------------------------------------------
-   * | RELATIONS
-   * |--------------------------------------------------------------------------
-   */
-
-  members ClanMember[]
-
-  joinRequests ClanJoinRequest[]
-
-  invites ClanInvite[]
-
-  territories ClanTerritory[]
-
-  activities ClanActivity[]
-
-  leaderboardHistory ClanLeaderboardHistory[]
-
-  @@index([name])
-  @@index([rank])
-
-  @@map("clans")
-}
-
-
-/**
- * |--------------------------------------------------------------------------
- * | CLAN MEMBERS
- * |--------------------------------------------------------------------------
- */
-
-model ClanMember {
-  id String @id @default(uuid())
-
-  clanId String
-  userId String
-
-  role ClanRole @default(RUNNER)
-
-  joinedAt DateTime @default(now())
-
-  /**
-   * |--------------------------------------------------------------------------
-   * | RELATIONS
-   * |--------------------------------------------------------------------------
-   */
-
-  clan Clan @relation(fields: [clanId], references: [id], onDelete: Cascade)
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  /**
-   * |--------------------------------------------------------------------------
-   * | INDEXES
-   * |--------------------------------------------------------------------------
-   */
-
-  @@unique([clanId, userId])
-
-  @@index([clanId])
-  @@index([userId])
-  @@index([role])
-
-  @@map("clan_members")
-}
-
-/**
- * |--------------------------------------------------------------------------
- * | CLAN JOIN REQUEST
- * |--------------------------------------------------------------------------
- */
-
-model ClanJoinRequest {
-  id String @id @default(uuid())
-
-  clanId String
-  userId String
-
-  status ClanJoinRequestStatus @default(PENDING)
-
-  message String?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  /**
-   * |--------------------------------------------------------------------------
-   * | RELATIONS
-   * |--------------------------------------------------------------------------
-   */
-
-  clan Clan @relation(fields: [clanId], references: [id], onDelete: Cascade)
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  /**
-   * |--------------------------------------------------------------------------
-   * | INDEXES
-   * |--------------------------------------------------------------------------
-   */
-
-  @@unique([clanId, userId])
-
-  @@index([clanId])
-  @@index([userId])
-
-  @@map("clan_join_requests")
-}
-
-/**
- * |--------------------------------------------------------------------------
- * | CLAN INVITES
- * |--------------------------------------------------------------------------
- */
-
-model ClanInvite {
-  id String @id @default(uuid())
-
-  clanId String
-
-  invitedById String
-
-  invitedUserId String
-
-  status ClanInviteStatus @default(PENDING)
-
-  message String?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  /**
-   * |--------------------------------------------------------------------------
-   * | RELATIONS
-   * |--------------------------------------------------------------------------
-   */
-
-  clan Clan @relation(fields: [clanId], references: [id], onDelete: Cascade)
-
-  invitedBy   User @relation("ClanInviteSender",   fields: [invitedById],   references: [id], onDelete: Cascade)
-  invitedUser User @relation("ClanInviteReceiver", fields: [invitedUserId], references: [id], onDelete: Cascade)
-
-  /**
-   * |--------------------------------------------------------------------------
-   * | INDEXES
-   * |--------------------------------------------------------------------------
-   */
-
-  @@unique([clanId, invitedUserId])
-
-  @@index([clanId])
-  @@index([invitedById])
-  @@index([invitedUserId])
-
-  @@map("clan_invites")
-}
-
-
-
-model ClanTerritory {
-  id String @id @default(uuid())
-
-  clanId String
-  territoryId String
-
-  capturedByUserId String?
-
-  /**
-   * |--------------------------------------------------------------------------
-   * | TERRITORY STATS
-   * |--------------------------------------------------------------------------
-   */
-
-  areaKm2 Float
-
-  capturedAt DateTime @default(now())
-
-  /**
-   * |--------------------------------------------------------------------------
-   * | RELATIONS
-   * |--------------------------------------------------------------------------
-   */
-
-  clan Clan @relation(fields: [clanId], references: [id], onDelete: Cascade)
-
-  territory Territory @relation(fields: [territoryId], references: [id], onDelete: Cascade)
-
-  capturedBy User? @relation(fields: [capturedByUserId], references: [id])
-
-  @@unique([clanId, territoryId])
-
-  @@index([clanId])
-  @@index([territoryId])
-
-  @@map("clan_territories")
-}
-
-
-
-model ClanActivity {
-  id String @id @default(uuid())
-
-  clanId String
-  userId String
-  activityId String?
-
-  /**
-   * |--------------------------------------------------------------------------
-   * | CONTRIBUTION
-   * |--------------------------------------------------------------------------
-   */
-
-  xpEarned Float @default(0)
-
-  distanceKm Float @default(0)
-
-  territoriesCaptured Int @default(0)
-
-  areaCapturedKm2 Float @default(0)
-
-  /**
-   * |--------------------------------------------------------------------------
-   * | TIMESTAMPS
-   * |--------------------------------------------------------------------------
-   */
-
-  createdAt DateTime @default(now())
-
-  /**
-   * |--------------------------------------------------------------------------
-   * | RELATIONS
-   * |--------------------------------------------------------------------------
-   */
-
-  clan Clan @relation(fields: [clanId], references: [id], onDelete: Cascade)
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  activity Activity? @relation(fields: [activityId], references: [id], onDelete: SetNull)
-
-  @@index([clanId])
-  @@index([userId])
-
-  @@map("clan_activities")
-}
-
-
-
-model ClanLeaderboardHistory {
-  id String @id @default(uuid())
-
-  clanId String
-
-  rank Int
-
-  xp Float
-
-  distanceKm Float
-
-  territoryCount Int
-
-  totalAreaKm2 Float
-
-  type String
-  // WEEKLY
-  // MONTHLY
-  // ALL_TIME
-
-  createdAt DateTime @default(now())
-
-  clan Clan @relation(fields: [clanId], references: [id], onDelete: Cascade)
-
-  @@index([clanId])
-  @@index([rank])
-
-  @@map("clan_leaderboard_history")
-}
-
-model FriendRequest {
-  id String @id @default(uuid())
-
-  senderId String
-  receiverId String
-
-  sender   User @relation("FriendRequestSender", fields: [senderId], references: [id], onDelete: Cascade)
-  receiver User @relation("FriendRequestReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
-
-  status FriendRequestStatus @default(PENDING)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([senderId, receiverId])
-
-  @@index([senderId])
-  @@index([receiverId])
-}
-
-
-model Friendship {
-  id String @id @default(uuid())
-
-  userId String
-  friendId String
-
-  user   User @relation("FriendshipUser", fields: [userId], references: [id], onDelete: Cascade)
-  friend User @relation("FriendshipFriend", fields: [friendId], references: [id], onDelete: Cascade)
-
-  createdAt DateTime @default(now())
-
-  @@unique([userId, friendId])
-
-  @@index([userId])
-  @@index([friendId])
-}
-
-
-/**
- * |--------------------------------------------------------------------------
- * | ACTIVITY
- * |--------------------------------------------------------------------------
- */
-
-model Activity {
-  id String @id @default(uuid())
-
-  /**
-   * |--------------------------------------------------------------------------
-   * | RELATIONS
-   * |--------------------------------------------------------------------------
-   */
-
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  /**
-   * |--------------------------------------------------------------------------
-   * | ACTIVITY DATA
-   * |--------------------------------------------------------------------------
-   */
-
-  mode ActivityMode
-
-  distanceKm  Float
-  durationSec Int // total elapsed seconds (start → end)
-
-  stopTime    Int? // total seconds paused
-  elapsedTime Int? // alias for durationSec — wall-clock duration
-  movingTime  Int? // durationSec - stopTime
-
-  avgPace  Float // sec/km = movingTime / distanceKm
-  topPace  Float? // best (fastest) sec/km recorded during activity
-  avgSpeed Float? // km/h = distanceKm / (movingTime / 3600)
-  topSpeed Float? // peak km/h recorded during activity
-  calories Float
-
-  elevationGain Float?
-
-  startedAt DateTime
-  endedAt   DateTime
-
-  /**
-   * |--------------------------------------------------------------------------
-   * | ROUTE DATA
-   * |--------------------------------------------------------------------------
-   */
-
-  // frontend polyline
-  routeEncoded String?
-
-  // per-km splits: [{ km: 1, timeSec: 312, pace: 312, paceFormatted: "5:12/km" }, ...]
-  kmSplits Json?
-
-  // actual GIS route
-  routeGeometry Unsupported("geometry(Geometry, 4326)")?
-
-  /**
-   * |--------------------------------------------------------------------------
-   * | TIMESTAMPS
-   * |--------------------------------------------------------------------------
-   */
-
-  createdAt DateTime @default(now())
-
-  /**
-   * |--------------------------------------------------------------------------
-   * | RELATIONS
-   * |--------------------------------------------------------------------------
-   */
-
-  territories Territory[]
-
-  /**
-   * |--------------------------------------------------------------------------
-   * | INDEXES
-   * |--------------------------------------------------------------------------
-   */
-  xptransactions XPTransaction[]
-  clanActivities ClanActivity[]
-
-  @@index([userId])
-  @@map("activities")
-}
-
-/**
- * |--------------------------------------------------------------------------
- * | TERRITORY
- * |--------------------------------------------------------------------------
- */
-
-model Territory {
-  id String @id @default(uuid())
-
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  activityId String?
-  activity   Activity? @relation(fields: [activityId], references: [id], onDelete: SetNull)
-
-  // connected territory island
-  landmassId String?
-
-  name String?
-
-  boundary Unsupported("geometry(Geometry, 4326)")
-  center   Unsupported("geometry(Point, 4326)")?
-
-  // route that created/last updated this territory
-  routeEncoded         String?                                   // main/longest route segment
-  routeSegmentsEncoded Json?                                     // all route segments after clipping
-  routeGeometry        Unsupported("geometry(Geometry, 4326)")?  // LineString or MultiLineString
-
-  areaKm2 Float
-
-  capturedAt DateTime @default(now())
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([userId])
-  @@index([activityId])
-  @@index([landmassId])
-
-  clanTerritories ClanTerritory[]
-
-  @@map("territories")
-}
-
-model TerritoryEvent {
-  id              String                                   @id @default(uuid())
-  territoryId     String?
-  userId          String
-  activityId      String?
-  opponentUserId  String?
-  type            String
-  affectedAreaKm2 Float
-  geometry        Unsupported("geometry(Geometry, 4326)")?
-  createdAt       DateTime                                 @default(now())
-
-  @@index([userId])
-  @@index([opponentUserId])
-  @@index([activityId])
-  @@map("territory_events")
-}
-
-model UserProgress {
-  id String @id @default(uuid())
-
-  userId String @unique
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  /**
-   * |--------------------------------------------------------------------------
-   * | LEVEL SYSTEM
-   * |--------------------------------------------------------------------------
-   */
-
-  level Int @default(0)
-
-  currentXp Int @default(0)
-
-  totalXp Int @default(0)
-
-  xpToNextLevel Int @default(50)
-
-  totalDistanceKm Float @default(0)
-
-  /**
-   * |--------------------------------------------------------------------------
-   * | STREAKS
-   * |--------------------------------------------------------------------------
-   */
-
-  currentStreak Int @default(0)
-  longestStreak Int @default(0)
-
-  /**
-   * |--------------------------------------------------------------------------
-   * | ACHIEVEMENTS
-   * |--------------------------------------------------------------------------
-   */
-
-  territoriesOwned Int @default(0)
-
-  territoriesCaptured Int @default(0)
-
-  activitiesCount Int @default(0)
-
-  /**
-   * |--------------------------------------------------------------------------
-   * | TIMESTAMPS
-   * |--------------------------------------------------------------------------
-   */
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([level])
-  @@map("user_progress")
-}
-
-model XPTransaction {
-  id String @id @default(uuid())
-
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  activityId String?
-  activity   Activity? @relation(fields: [activityId], references: [id], onDelete: SetNull)
-
-  amount Int
-
-  type String
-  // examples:
-  // ACTIVITY
-  // TERRITORY_CAPTURE
-  // DAILY_STREAK
-  // BADGE_REWARD
-  // EVENT_REWARD
-
-  description String?
-
-  createdAt DateTime @default(now())
-
-  @@index([userId])
-  @@index([type])
-  @@map("xp_transactions")
-}
-
-model Badge {
-  id String @id @default(uuid())
-
-  name String @unique
-
-  slug String @unique
-
-  description String
-
-  icon String?
-
-  xpReward Int @default(0)
-
-  rarity String?
-  // COMMON
-  // RARE
-  // EPIC
-  // LEGENDARY
-
-  /**
-   * |--------------------------------------------------------------------------
-   * | CONDITIONS
-   * |--------------------------------------------------------------------------
-   */
-
-  requirementType String
-  // DISTANCE
-  // ACTIVITIES
-  // TERRITORIES
-  // STREAK
-  // LEVEL
-
-  requirementValue Int
-
-  createdAt DateTime @default(now())
-
-  users UserBadge[]
-
-  @@map("badges")
-}
-
-model UserBadge {
-  id String @id @default(uuid())
-
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  badgeId String
-  badge   Badge  @relation(fields: [badgeId], references: [id], onDelete: Cascade)
-
-  earnedAt DateTime @default(now())
-
-  @@unique([userId, badgeId])
-  @@index([userId])
-  @@map("user_badges")
 }

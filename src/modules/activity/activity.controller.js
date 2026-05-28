@@ -174,6 +174,8 @@ export const finishActivity = async (req, res) => {
       routeEncoded,
       coordinates,
       kmSplits: clientKmSplits,
+      includeInClan,
+      notes
     } = req.body;
 
     const safeRouteEncoded = validateRouteEncoded(routeEncoded);
@@ -236,6 +238,8 @@ export const finishActivity = async (req, res) => {
         endedAt: new Date(endedAt),
         routeEncoded: safeRouteEncoded,
         kmSplits,
+        includeInClan: includeInClan ?? false,
+        notes: notes ?? null,
       },
     });
 
@@ -798,6 +802,72 @@ export const getTodayStats = async (req, res) => {
       message: "Failed to fetch today's stats",
       error:
         process.env.NODE_ENV === "development"
+          ? error.message
+          : undefined,
+    });
+
+  }
+};
+
+
+
+// ─────────────────────────────────────────────
+// Get My Today's Activities
+// GET /api/activities/my/today
+// ─────────────────────────────────────────────
+
+export const getMyTodayActivities = async (req, res) => {
+  try {
+
+    const userId = req.user.id;
+
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+
+    const endOfDay = new Date();
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const activities = await prisma.activity.findMany({
+      where: {
+        userId,
+
+        createdAt: {
+          gte: startOfDay,
+          lte: endOfDay,
+        },
+      },
+
+      orderBy: {
+        startedAt: 'desc',
+      },
+
+      include: {
+        territories: true,
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+
+      date: startOfDay,
+
+      count: activities.length,
+
+      activities,
+    });
+
+  } catch (error) {
+
+    console.error(
+      'GET_MY_TODAY_ACTIVITIES ERROR:',
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch today activities',
+      error:
+        process.env.NODE_ENV === 'development'
           ? error.message
           : undefined,
     });

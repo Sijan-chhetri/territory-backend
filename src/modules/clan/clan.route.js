@@ -11,9 +11,10 @@ import {
   rejectClanInvite,
   getMyJoinedClans,
   getClanTerritories,
+  getClanJoinRequests
 } from "../clan/clan.controller.js";
 
-import { getClanJoinRequests } from "../clan/clan.controller.js";
+// import { getClanJoinRequests } from "../clan/clan.controller.js";
 
 const router = express.Router();
 
