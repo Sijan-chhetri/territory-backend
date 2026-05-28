@@ -687,6 +687,7 @@ export const getClanTerritories = async (req, res) => {
       WHERE cm."clanId" = ${clanId}
         AND t.boundary IS NOT NULL
         AND NOT ST_IsEmpty(t.boundary)
+        AND a."include_in_clan" = true
 
       ORDER BY t."capturedAt" DESC;
     `;

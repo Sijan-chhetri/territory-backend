@@ -121,7 +121,7 @@ async function updateRouteEncodedFromGeometry(territoryId) {
 //     console.log('newTerritoryId:', newTerritoryId);
 //     console.log('===================================\n');
 
-    
+
 //     // 1. Find captured parts from enemy territories
 //     const capturedParts = await tx.$queryRaw`
 //       WITH current_territory AS (
@@ -320,7 +320,7 @@ async function updateRouteEncodedFromGeometry(territoryId) {
 
 // );
 
-  
+
 // };
 
 
@@ -591,9 +591,20 @@ export const getAllTerritories = async (req, res) => {
           t."routeSegmentsEncoded",
           ROW_NUMBER() OVER (ORDER BY t."updatedAt" DESC) AS rn
         FROM territories t
-        JOIN users u ON u.id = t."userId"
-        WHERE t.boundary IS NOT NULL
-          AND NOT ST_IsEmpty(t.boundary)
+
+JOIN users u
+  ON u.id = t."userId"
+
+LEFT JOIN activities a
+  ON a.id = t."activityId"
+
+WHERE t.boundary IS NOT NULL
+  AND NOT ST_IsEmpty(t.boundary)
+
+  AND (
+    a."include_in_clan" IS NULL
+    OR a."include_in_clan" = false
+  )
       ),
       clipped AS (
         SELECT
