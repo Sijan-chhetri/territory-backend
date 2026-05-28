@@ -9,6 +9,7 @@ import {
   rejectClanJoinRequest,
   acceptClanInvite,
   rejectClanInvite,
+  getMyJoinedClans,
 } from "../clan/clan.controller.js";
 
 import { getClanJoinRequests } from "../clan/clan.controller.js";
@@ -23,5 +24,6 @@ router.patch("/join-request/:requestId/reject", authMiddleware, rejectClanJoinRe
 router.patch("/invite/:inviteId/accept",      authMiddleware, acceptClanInvite);
 router.patch("/invite/:inviteId/reject",      authMiddleware, rejectClanInvite);
 router.get("/:clanId/join-requests", authMiddleware, getClanJoinRequests);
+router.get("/me/joined", authMiddleware, getMyJoinedClans);
 
 export default router;

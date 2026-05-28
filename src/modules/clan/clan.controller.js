@@ -548,3 +548,63 @@ export const rejectClanInvite = async (req, res) => {
   }
 };
 
+
+
+/**
+ * |--------------------------------------------------------------------------
+ * | GET MY JOINED CLANS
+ * |--------------------------------------------------------------------------
+ */
+
+export const getMyJoinedClans = async (req, res) => {
+  try {
+
+    const userId = req.user.id;
+
+    const joinedClans = await prisma.clanMember.findMany({
+      where: {
+        userId
+      },
+      include: {
+        clan: {
+          include: {
+            captain: {
+              select: {
+                id: true,
+                username: true,
+                fullName: true,
+                // profilePicture: true,
+              }
+            },
+            _count: {
+              select: {
+                members: true
+              }
+            }
+          }
+        }
+      },
+      orderBy: {
+        joinedAt: "desc"
+      }
+    });
+
+    return res.status(200).json({
+      success: true,
+      count: joinedClans.length,
+      data: joinedClans.map(member => ({
+        role: member.role,
+        joinedAt: member.joinedAt,
+        clan: member.clan
+      }))
+    });
+
+  } catch (error) {
+    console.log(error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch joined clans"
+    });
+  }
+};
