@@ -843,6 +843,14 @@ export const getMyTodayActivities = async (req, res) => {
 
       include: {
         territories: true,
+
+        user: {
+          select: {
+            id: true,
+            username: true,
+            fullName: true,
+          },
+        },
       },
     });
 
