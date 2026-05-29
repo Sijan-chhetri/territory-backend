@@ -3,6 +3,8 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
+import http from "http";
+import { initSocket } from "./config/socket.js";
 
 import authRoutes        from './modules/auth/auth.routes.js';
 import activityRoutes    from './modules/activity/activity.routes.js';
@@ -13,13 +15,19 @@ import badgeRoutes       from './modules/badge/badge.routes.js';
 import levelRoutes       from './modules/level/level.routes.js';
 import friendRoutes      from './modules/friends/friend.routes.js';
 import clanRoutes        from './modules/clan/clan.route.js';
+import notificationRoutes from "./modules/notification/notification.route.js"
 
 const app = express();
+
 
 app.use(cors());
 app.use(helmet());
 app.use(morgan('dev'));
 app.use(express.json());
+
+const server = http.createServer(app);
+
+initSocket(server);
 
 app.get('/', (_, res) => res.send('Territory Backend Running'));
 
@@ -32,6 +40,7 @@ app.use('/api/badges',      badgeRoutes);
 app.use('/api/levels',      levelRoutes);
 app.use('/api/friends',     friendRoutes);
 app.use('/api/clans',       clanRoutes);
+app.use('/api/notification',       notificationRoutes);
 
 const PORT = process.env.PORT || 3000;
 

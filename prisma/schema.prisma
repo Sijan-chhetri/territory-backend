@@ -31,6 +31,7 @@ model User {
   clanMemberships         ClanMember[]
   clanTerritoriesCaptured ClanTerritory[]
   clanCaptain             Clan[]            @relation("ClanCaptain")
+  notifications           Notification[]
   territories             Territory[]
   badges                  UserBadge[]
   progress                UserProgress?
@@ -303,6 +304,23 @@ model Territory {
   @@index([activityId])
   @@index([landmassId])
   @@map("territories")
+}
+
+model Notification {
+  id          String   @id @default(uuid())
+  userId      String
+  title       String
+  message     String
+  type        String
+  territoryId String?
+  activityId  String?
+  isRead      Boolean  @default(false)
+  createdAt   DateTime @default(now()) @db.Timestamp(6)
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "notifications_user_fk")
+
+  @@index([isRead], map: "notifications_is_read_idx")
+  @@index([userId], map: "notifications_user_idx")
+  @@map("notifications")
 }
 
 model TerritoryEvent {

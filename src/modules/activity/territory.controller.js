@@ -1,5 +1,6 @@
 import prisma from '../../config/prisma.js';
 import polylineLib from '@mapbox/polyline';
+import { createNotification } from "../notification/notification.controller.js";
 
 // ─────────────────────────────────────────────
 // Helpers
@@ -410,6 +411,22 @@ export const captureTerritory = async ({ userId, activityId, newTerritoryId }) =
             affectedAreaKm2,
           },
         });
+
+        await createNotification({
+          userId: part.enemyUserId,
+
+          title: "Territory Captured",
+
+          message:
+            "Another player captured part of your territory.",
+
+          type: "TERRITORY_CAPTURED",
+
+          territoryId: part.enemyTerritoryId,
+
+          activityId,
+        });
+
       }
 
       // 3. Remove captured parts from enemy territories
