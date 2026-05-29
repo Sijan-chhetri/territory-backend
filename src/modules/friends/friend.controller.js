@@ -202,9 +202,7 @@ export const acceptFriendRequest = async (req, res) => {
     const { requestId } = req.params;
 
     const request = await prisma.friendRequest.findUnique({
-      where: {
-        id: requestId,
-      },
+      where: { id: requestId },
     });
 
     if (!request) {
@@ -221,24 +219,7 @@ export const acceptFriendRequest = async (req, res) => {
       });
     }
 
-    if (request.status !== "PENDING") {
-      return res.status(400).json({
-        success: false,
-        message: "Request already handled",
-      });
-    }
-
-    // transaction
     await prisma.$transaction([
-      prisma.friendRequest.update({
-        where: {
-          id: requestId,
-        },
-        data: {
-          status: "ACCEPTED",
-        },
-      }),
-
       prisma.friendship.createMany({
         data: [
           {
@@ -250,6 +231,11 @@ export const acceptFriendRequest = async (req, res) => {
             friendId: request.senderId,
           },
         ],
+        skipDuplicates: true,
+      }),
+
+      prisma.friendRequest.delete({
+        where: { id: requestId },
       }),
     ]);
 
@@ -258,7 +244,7 @@ export const acceptFriendRequest = async (req, res) => {
       message: "Friend request accepted",
     });
   } catch (error) {
-    console.log(error);
+    console.error("ACCEPT_FRIEND_REQUEST_ERROR:", error);
 
     return res.status(500).json({
       success: false,
@@ -279,9 +265,7 @@ export const rejectFriendRequest = async (req, res) => {
     const { requestId } = req.params;
 
     const request = await prisma.friendRequest.findUnique({
-      where: {
-        id: requestId,
-      },
+      where: { id: requestId },
     });
 
     if (!request) {
@@ -298,13 +282,8 @@ export const rejectFriendRequest = async (req, res) => {
       });
     }
 
-    await prisma.friendRequest.update({
-      where: {
-        id: requestId,
-      },
-      data: {
-        status: "REJECTED",
-      },
+    await prisma.friendRequest.delete({
+      where: { id: requestId },
     });
 
     return res.status(200).json({
@@ -312,7 +291,7 @@ export const rejectFriendRequest = async (req, res) => {
       message: "Friend request rejected",
     });
   } catch (error) {
-    console.log(error);
+    console.error("REJECT_FRIEND_REQUEST_ERROR:", error);
 
     return res.status(500).json({
       success: false,
@@ -449,6 +428,53 @@ export const removeFriend = async (req, res) => {
     });
   } catch (error) {
     console.log(error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+};
+
+
+/**
+ * ============================================================================
+ * GET MY FRIENDS
+ * ============================================================================
+ */
+
+export const getMyFriends = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const friends = await prisma.friendship.findMany({
+      where: {
+        userId,
+      },
+      include: {
+        friend: {
+          select: {
+            id: true,
+            username: true,
+            fullName: true,
+            // profileImage: true, 
+            // xp: true,           
+            // level: true,        
+          },
+        },
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      count: friends.length,
+      friends: friends.map((item) => item.friend),
+    });
+  } catch (error) {
+    console.error("GET_MY_FRIENDS_ERROR:", error);
 
     return res.status(500).json({
       success: false,

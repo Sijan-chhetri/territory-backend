@@ -10,6 +10,7 @@ import {
   rejectFriendRequest,
   searchUsers,
   getFriends,
+  getMyFriends,
   removeFriend,
 } from "./friend.controller.js";
 
@@ -57,5 +58,7 @@ router.get("/", authMiddleware, getFriends);
 
 // remove friend
 router.delete("/:friendId", authMiddleware, removeFriend);
+
+router.get("/me", authMiddleware, getMyFriends);
 
 export default router;

@@ -171,3 +171,75 @@ export const changeUsername = async (req, res) => {
     return res.status(500).json({ success: false, message: 'Something went wrong', error: process.env.NODE_ENV === 'development' ? error.message : undefined });
   }
 };
+
+
+
+// ─────────────────────────────────────────────
+// Get Users Who Are Not My Friends
+// GET /api/auth/users/not-friends
+// ─────────────────────────────────────────────
+export const getUsersWhoAreNotMyFriends = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const friendships = await prisma.friendship.findMany({
+      where: { userId },
+      select: { friendId: true },
+    });
+
+    const friendIds = friendships.map((f) => f.friendId);
+
+    const pendingRequests = await prisma.friendRequest.findMany({
+      where: {
+        OR: [
+          { senderId: userId, status: "PENDING" },
+          { receiverId: userId, status: "PENDING" },
+        ],
+      },
+      select: {
+        id: true,
+        senderId: true,
+        receiverId: true,
+        status: true,
+      },
+    });
+
+    const pendingUserIds = pendingRequests.map((r) =>
+      r.senderId === userId ? r.receiverId : r.senderId
+    );
+
+    const users = await prisma.user.findMany({
+      where: {
+        id: {
+          notIn: [userId, ...friendIds],
+        },
+      },
+      select: {
+        id: true,
+        username: true,
+        fullName: true,
+        city: true,
+        country: true,
+      },
+      take: 5,
+      orderBy: { createdAt: "desc" },
+    });
+
+    const result = users.map((u) => ({
+      ...u,
+      isPending: pendingUserIds.includes(u.id),
+    }));
+
+    return res.status(200).json({
+      success: true,
+      count: result.length,
+      users: result,
+    });
+  } catch (error) {
+    console.error("GET_NOT_FRIEND_USERS_ERROR:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Something went wrong",
+    });
+  }
+};
