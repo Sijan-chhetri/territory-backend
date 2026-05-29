@@ -907,3 +907,34 @@ export const getAllClanTerritories = async (req, res) => {
     });
   }
 };
+
+
+export const getMyClanStatus = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const member = await prisma.clanMember.findFirst({
+      where: {
+        userId,
+      },
+      select: {
+        clanId: true,
+        role: true,
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      isInClan: !!member,
+      clanId: member?.clanId ?? null,
+      role: member?.role ?? null,
+    });
+  } catch (error) {
+    console.log(error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch clan status",
+    });
+  }
+};
