@@ -16,7 +16,8 @@ import levelRoutes       from './modules/level/level.routes.js';
 import friendRoutes      from './modules/friends/friend.routes.js';
 import clanRoutes        from './modules/clan/clan.route.js';
 import notificationRoutes from "./modules/notification/notification.route.js"
-import leaderboardRoutes from "./modules/leaderboard/leaderboard.routes.js";
+import leaderboardRoutes from "./modules/leaderboard/User/leaderboard.routes.js";
+import clanleaderboardRoutes from "./modules/leaderboard/Clan/clanLeaderboard.route.js";
 
 const app = express();
 
@@ -43,6 +44,7 @@ app.use('/api/friends',     friendRoutes);
 app.use('/api/clans',       clanRoutes);
 app.use('/api/notification',       notificationRoutes);
 app.use("/api/leaderboard", leaderboardRoutes);
+app.use("/api/clan/leaderboard", clanleaderboardRoutes);
 
 const PORT = process.env.PORT || 3000;
 

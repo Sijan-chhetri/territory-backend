@@ -761,3 +761,149 @@ export const getClanTerritories = async (req, res) => {
     });
   }
 };
+
+
+
+/**
+ * |--------------------------------------------------------------------------
+ * | GET ALL CLAN TERRITORIES
+ * |--------------------------------------------------------------------------
+ */
+
+export const getAllClanTerritories = async (req, res) => {
+  try {
+    const territories = await prisma.$queryRaw`
+      SELECT
+        c.id AS "clanId",
+        c.name AS "clanName",
+        c.slug AS "clanSlug",
+        c.logo AS "clanLogo",
+        c.banner AS "clanBanner",
+
+        t.id AS "territoryId",
+        t."userId",
+        t."activityId",
+        t."landmassId",
+        t.name,
+        t."areaKm2",
+        t."capturedAt",
+        t."createdAt",
+        t."updatedAt",
+        t."routeEncoded",
+        t."routeSegmentsEncoded",
+
+        ST_AsGeoJSON(t.boundary)::json AS boundary,
+        ST_AsGeoJSON(t.center)::json AS center,
+
+        u.id AS "ownerId",
+        u.username AS "ownerUsername",
+        u."full_name" AS "ownerFullName",
+
+        cm.role AS "clanRole",
+        cm."joinedAt" AS "memberJoinedAt",
+
+        a.mode,
+        a."distanceKm",
+        a."durationSec",
+        a."avgPace",
+        a."avgSpeed",
+        a.calories,
+        a."startedAt",
+        a."endedAt",
+        a."include_in_clan" AS "includeInClan"
+
+      FROM clan_members cm
+
+      JOIN clans c
+        ON c.id = cm."clanId"
+
+      JOIN territories t
+        ON t."userId" = cm."userId"
+
+      JOIN users u
+        ON u.id = t."userId"
+
+      JOIN activities a
+        ON a.id = t."activityId"
+
+      WHERE t.boundary IS NOT NULL
+        AND NOT ST_IsEmpty(t.boundary)
+        AND a."include_in_clan" = true
+
+      ORDER BY c.name ASC, t."capturedAt" DESC;
+    `;
+
+    const features = territories.map((territory) => ({
+      type: "Feature",
+      id: territory.territoryId,
+      geometry: territory.boundary,
+
+      properties: {
+        clan: {
+          id: territory.clanId,
+          name: territory.clanName,
+          slug: territory.clanSlug,
+          logo: territory.clanLogo,
+          banner: territory.clanBanner,
+        },
+
+        territoryId: territory.territoryId,
+        userId: territory.userId,
+        activityId: territory.activityId,
+        landmassId: territory.landmassId,
+
+        name: territory.name,
+        areaKm2: Number(territory.areaKm2),
+
+        capturedAt: territory.capturedAt,
+        createdAt: territory.createdAt,
+        updatedAt: territory.updatedAt,
+
+        center: territory.center,
+        routeEncoded: territory.routeEncoded,
+        routeSegmentsEncoded: territory.routeSegmentsEncoded ?? [],
+
+        owner: {
+          id: territory.ownerId,
+          username: territory.ownerUsername,
+          fullName: territory.ownerFullName,
+        },
+
+        clanMember: {
+          role: territory.clanRole,
+          joinedAt: territory.memberJoinedAt,
+        },
+
+        activity: {
+          id: territory.activityId,
+          mode: territory.mode,
+          distanceKm: territory.distanceKm,
+          durationSec: territory.durationSec,
+          avgPace: territory.avgPace,
+          avgSpeed: territory.avgSpeed,
+          calories: territory.calories,
+          startedAt: territory.startedAt,
+          endedAt: territory.endedAt,
+          includeInClan: territory.includeInClan,
+        },
+      },
+    }));
+
+    return res.status(200).json({
+      success: true,
+      count: features.length,
+      geojson: {
+        type: "FeatureCollection",
+        features,
+      },
+    });
+  } catch (error) {
+    console.log("GET_ALL_CLAN_TERRITORIES_ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch all clan territories",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
+};
