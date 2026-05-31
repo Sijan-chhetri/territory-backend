@@ -15,7 +15,8 @@ import {
   getAllClanTerritories,
   getMyClanStatus,
   joinClanDirectly,
-  getClanDetails
+  getClanDetails,
+  leaveClan,
 } from "../clan/clan.controller.js";
 
 // import { getClanJoinRequests } from "../clan/clan.controller.js";
@@ -34,6 +35,7 @@ router.get("/:clanId/details", authMiddleware, getClanDetails);
 router.get("/:clanId/territories", authMiddleware, getClanTerritories);
 router.patch("/invite/:inviteId/reject",      authMiddleware, rejectClanInvite);
 router.get("/:clanId/join-requests", authMiddleware, getClanJoinRequests);
+router.delete("/leave", authMiddleware, leaveClan);
 router.get("/me/joined", authMiddleware, getMyJoinedClans);
 router.get("/me/status", authMiddleware, getMyClanStatus);
 

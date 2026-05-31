@@ -1239,3 +1239,59 @@ export const getClanDetails = async (req, res) => {
     });
   }
 };
+
+
+/**
+ * |--------------------------------------------------------------------------
+ * | LEAVE CLAN
+ * |--------------------------------------------------------------------------
+ */
+
+export const leaveClan = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const membership = await prisma.clanMember.findFirst({
+      where: {
+        userId,
+      },
+      include: {
+        clan: true,
+      },
+    });
+
+    if (!membership) {
+      return res.status(404).json({
+        success: false,
+        message: "You are not in any clan",
+      });
+    }
+
+    // Prevent captain from leaving
+    if (membership.clan.captainId === userId) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Clan captain cannot leave the clan. Transfer ownership or delete the clan first.",
+      });
+    }
+
+    await prisma.clanMember.delete({
+      where: {
+        id: membership.id,
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Successfully left the clan",
+    });
+  } catch (error) {
+    console.log("LEAVE_CLAN_ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to leave clan",
+    });
+  }
+};
