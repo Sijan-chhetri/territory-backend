@@ -1372,3 +1372,230 @@ export const getClanMembers = async (req, res) => {
     });
   }
 };
+
+
+/**
+ * |--------------------------------------------------------------------------
+ * | GET CLAN MEMBERS WITH ACTIVITIES AND TERRITORIES
+ * |--------------------------------------------------------------------------
+ */
+
+export const getClanMembersFull = async (req, res) => {
+  try {
+    const { clanId } = req.params;
+    const currentUserId = req.user.id;
+
+    const clan = await prisma.clan.findUnique({
+      where: {
+        id: clanId,
+      },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        logo: true,
+        banner: true,
+      },
+    });
+
+    if (!clan) {
+      return res.status(404).json({
+        success: false,
+        message: "Clan not found",
+      });
+    }
+
+    const currentMember = await prisma.clanMember.findFirst({
+      where: {
+        clanId,
+        userId: currentUserId,
+      },
+    });
+
+    if (!currentMember) {
+      return res.status(403).json({
+        success: false,
+        message: "Only clan members can view this data",
+      });
+    }
+
+    const members = await prisma.clanMember.findMany({
+      where: {
+        clanId,
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            username: true,
+            fullName: true,
+            email: true,
+          },
+        },
+      },
+      orderBy: {
+        joinedAt: "asc",
+      },
+    });
+
+    const memberUserIds = members.map((member) => member.userId);
+
+    if (memberUserIds.length === 0) {
+      return res.status(200).json({
+        success: true,
+        clan,
+        totalMembers: 0,
+        members: [],
+      });
+    }
+
+    const activities = await prisma.activity.findMany({
+      where: {
+        userId: {
+          in: memberUserIds,
+        },
+        includeInClan: true,
+      },
+      select: {
+        id: true,
+        userId: true,
+        mode: true,
+        distanceKm: true,
+        durationSec: true,
+        stopTime: true,
+        elapsedTime: true,
+        movingTime: true,
+        avgPace: true,
+        topPace: true,
+        avgSpeed: true,
+        topSpeed: true,
+        calories: true,
+        elevationGain: true,
+        startedAt: true,
+        endedAt: true,
+        routeEncoded: true,
+        kmSplits: true,
+        includeInClan: true,
+        notes: true,
+        createdAt: true,
+      },
+      orderBy: {
+        startedAt: "desc",
+      },
+    });
+
+    const territories = await prisma.$queryRaw`
+      SELECT
+        t.id,
+        t."userId",
+        t."activityId",
+        t."landmassId",
+        t.name,
+        t."areaKm2",
+        t."capturedAt",
+        t."createdAt",
+        t."updatedAt",
+        t."routeEncoded",
+        t."routeSegmentsEncoded",
+        ST_AsGeoJSON(t.boundary)::json AS boundary,
+        ST_AsGeoJSON(t.center)::json AS center
+      FROM territories t
+      LEFT JOIN activities a
+        ON a.id = t."activityId"
+      WHERE t."userId" IN (${Prisma.join(memberUserIds)})
+        AND t.boundary IS NOT NULL
+        AND NOT ST_IsEmpty(t.boundary)
+        AND (
+          a.id IS NULL
+          OR a."include_in_clan" = true
+        )
+      ORDER BY t."capturedAt" DESC;
+    `;
+
+    const activitiesByUserId = {};
+    const territoriesByUserId = {};
+
+    for (const activity of activities) {
+      if (!activitiesByUserId[activity.userId]) {
+        activitiesByUserId[activity.userId] = [];
+      }
+
+      activitiesByUserId[activity.userId].push(activity);
+    }
+
+    for (const territory of territories) {
+      if (!territoriesByUserId[territory.userId]) {
+        territoriesByUserId[territory.userId] = [];
+      }
+
+      territoriesByUserId[territory.userId].push({
+        id: territory.id,
+        userId: territory.userId,
+        activityId: territory.activityId,
+        landmassId: territory.landmassId,
+        name: territory.name,
+        areaKm2: Number(territory.areaKm2 || 0),
+        capturedAt: territory.capturedAt,
+        createdAt: territory.createdAt,
+        updatedAt: territory.updatedAt,
+        routeEncoded: territory.routeEncoded,
+        routeSegmentsEncoded: territory.routeSegmentsEncoded ?? [],
+        boundary: territory.boundary,
+        center: territory.center,
+      });
+    }
+
+    const formattedMembers = members.map((member) => {
+      const userActivities = activitiesByUserId[member.userId] || [];
+      const userTerritories = territoriesByUserId[member.userId] || [];
+
+      const totalDistanceKm = userActivities.reduce(
+        (sum, activity) => sum + Number(activity.distanceKm || 0),
+        0
+      );
+
+      const totalAreaKm2 = userTerritories.reduce(
+        (sum, territory) => sum + Number(territory.areaKm2 || 0),
+        0
+      );
+
+      return {
+        memberId: member.id,
+        role: member.role,
+        joinedAt: member.joinedAt,
+
+        user: {
+          id: member.user.id,
+          username: member.user.username,
+          fullName: member.user.fullName,
+          email: member.user.email,
+        },
+
+        stats: {
+          totalActivities: userActivities.length,
+          totalTerritories: userTerritories.length,
+          totalDistanceKm,
+          totalAreaKm2,
+        },
+
+        activities: userActivities,
+        territories: userTerritories,
+      };
+    });
+
+    return res.status(200).json({
+      success: true,
+      clan,
+      totalMembers: formattedMembers.length,
+      members: formattedMembers,
+    });
+  } catch (error) {
+    console.log("GET_CLAN_MEMBERS_FULL_ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch clan members full data",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
+};
