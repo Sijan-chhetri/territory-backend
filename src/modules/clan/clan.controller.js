@@ -938,3 +938,66 @@ export const getMyClanStatus = async (req, res) => {
     });
   }
 };
+
+
+
+/**
+ * |--------------------------------------------------------------------------
+ * | JOIN CLAN DIRECTLY
+ * |--------------------------------------------------------------------------
+ */
+
+export const joinClanDirectly = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { clanId } = req.params;
+
+    const clan = await prisma.clan.findUnique({
+      where: {
+        id: clanId,
+      },
+    });
+
+    if (!clan) {
+      return res.status(404).json({
+        success: false,
+        message: "Clan not found",
+      });
+    }
+
+    // Check if already in any clan
+    const existingMembership = await prisma.clanMember.findFirst({
+      where: {
+        userId,
+      },
+    });
+
+    if (existingMembership) {
+      return res.status(400).json({
+        success: false,
+        message: "User is already in a clan",
+      });
+    }
+
+    const member = await prisma.clanMember.create({
+      data: {
+        clanId,
+        userId,
+        role: "RUNNER",
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Joined clan successfully",
+      data: member,
+    });
+  } catch (error) {
+    console.log(error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to join clan",
+    });
+  }
+};
