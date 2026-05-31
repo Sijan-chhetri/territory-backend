@@ -175,7 +175,8 @@ export const finishActivity = async (req, res) => {
       coordinates,
       kmSplits: clientKmSplits,
       includeInClan,
-      notes
+      notes,
+      areaKm2
     } = req.body;
 
     const safeRouteEncoded = validateRouteEncoded(routeEncoded);
@@ -253,6 +254,15 @@ export const finishActivity = async (req, res) => {
       WHERE id = ${activity.id};
     `;
 
+
+    const frontendAreaKm2 =
+      areaKm2 !== undefined &&
+        areaKm2 !== null &&
+        !Number.isNaN(Number(areaKm2)) &&
+        Number(areaKm2) > 0
+        ? Number(areaKm2)
+        : null;
+
     // 3. Create raw territory from route buffer.
     // At this point, it is still full buffered route.
     // captureTerritory() will subtract enemy territory from this.
@@ -302,7 +312,7 @@ export const finishActivity = async (req, res) => {
           ${safeRouteEncoded},
           ${JSON.stringify(getRouteSegmentsFromEncoded(safeRouteEncoded))}::jsonb,
           route,
-          ST_Area(territory::geography) / 1000000,
+          COALESCE(${frontendAreaKm2}, ST_Area(territory::geography) / 1000000),
           NOW(),
           NOW(),
           NOW()
@@ -364,7 +374,7 @@ export const finishActivity = async (req, res) => {
         SELECT
           ST_MakeValid(ST_Union(t.boundary)) AS merged_boundary,
           ST_LineMerge(ST_Union(t."routeGeometry")) AS merged_route,
-          ST_Area(ST_Union(t.boundary)::geography) / 1000000 AS merged_area
+          COALESCE(${frontendAreaKm2}, ST_Area(ST_Union(t.boundary)::geography) / 1000000) AS merged_area
         FROM territories t
         WHERE t.id IN (SELECT id FROM all_ids)
           AND t.boundary IS NOT NULL
