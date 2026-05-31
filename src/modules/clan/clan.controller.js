@@ -1305,8 +1305,12 @@ export const leaveClan = async (req, res) => {
 
     const result = await prisma.$transaction(async (tx) => {
       const membership = await tx.clanMember.findFirst({
-        where: { userId },
-        include: { clan: true },
+        where: {
+          userId,
+        },
+        include: {
+          clan: true,
+        },
       });
 
       if (!membership) {
@@ -1320,69 +1324,64 @@ export const leaveClan = async (req, res) => {
       }
 
       const clanId = membership.clanId;
-      const isCaptain = membership.clan.captainId === userId;
+      const isLeader = membership.clan.captainId === userId;
 
-      if (!isCaptain) {
-        await tx.clanMember.delete({
-          where: { id: membership.id },
+      if (isLeader) {
+        const newLeader = await tx.clanMember.findFirst({
+          where: {
+            clanId,
+            userId: {
+              not: userId,
+            },
+          },
+          orderBy: {
+            createdAt: "asc",
+          },
         });
 
-        return {
-          status: 200,
-          body: {
-            success: true,
-            message: "Successfully left the clan",
+        if (!newLeader) {
+          return {
+            status: 400,
+            body: {
+              success: false,
+              message:
+                "You are the only member in this clan. Delete the clan instead of leaving.",
+            },
+          };
+        }
+
+        await tx.clan.update({
+          where: {
+            id: clanId,
           },
-        };
+          data: {
+            captainId: newLeader.userId,
+          },
+        });
+
+        await tx.clanMember.update({
+          where: {
+            id: newLeader.id,
+          },
+          data: {
+            role: "LEADER",
+          },
+        });
       }
-
-      const newCaptain = await tx.clanMember.findFirst({
-        where: {
-          clanId,
-          userId: {
-            not: userId,
-          },
-        },
-        orderBy: {
-          joinedAt: "asc",
-        },
-      });
-
-      if (!newCaptain) {
-        return {
-          status: 400,
-          body: {
-            success: false,
-            message:
-              "You are the only member in this clan. Delete the clan instead of leaving.",
-          },
-        };
-      }
-
-      await tx.clan.update({
-        where: { id: clanId },
-        data: {
-          captainId: newCaptain.userId,
-        },
-      });
-
-      await tx.clanMember.update({
-        where: { id: newCaptain.id },
-        data: {
-          role: "CAPTAIN",
-        },
-      });
 
       await tx.clanMember.delete({
-        where: { id: membership.id },
+        where: {
+          id: membership.id,
+        },
       });
 
       return {
         status: 200,
         body: {
           success: true,
-          message: "You left the clan. A new captain has been promoted.",
-          promotedCaptainId: newCaptain.userId,
+          message: isLeader
+            ? "You left the clan. A new leader has been promoted."
+            : "Successfully left the clan",
         },
       };
     });

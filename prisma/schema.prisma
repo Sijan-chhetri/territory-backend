@@ -442,6 +442,7 @@ enum FriendRequestStatus {
 enum ClanRole {
   LEADER
   RUNNER
+  CAPTAIN
 }
 
 enum ClanJoinRequestStatus {
