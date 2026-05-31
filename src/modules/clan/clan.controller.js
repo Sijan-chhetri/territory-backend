@@ -1295,3 +1295,80 @@ export const leaveClan = async (req, res) => {
     });
   }
 };
+
+
+/**
+ * |--------------------------------------------------------------------------
+ * | GET CLAN MEMBERS
+ * |--------------------------------------------------------------------------
+ */
+
+export const getClanMembers = async (req, res) => {
+  try {
+    const { clanId } = req.params;
+
+    const clan = await prisma.clan.findUnique({
+      where: {
+        id: clanId,
+      },
+    });
+
+    if (!clan) {
+      return res.status(404).json({
+        success: false,
+        message: "Clan not found",
+      });
+    }
+
+    const members = await prisma.clanMember.findMany({
+      where: {
+        clanId,
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            username: true,
+            fullName: true,
+            email: true,
+            // profilePicture: true,
+          },
+        },
+      },
+      orderBy: [
+        {
+          role: "asc",
+        },
+        {
+          joinedAt: "asc",
+        },
+      ],
+    });
+
+    return res.status(200).json({
+      success: true,
+      clanId,
+      totalMembers: members.length,
+      members: members.map((member) => ({
+        memberId: member.id,
+        role: member.role,
+        joinedAt: member.joinedAt,
+
+        user: {
+          id: member.user.id,
+          username: member.user.username,
+          fullName: member.user.fullName,
+          email: member.user.email,
+          profilePicture: member.user.profilePicture,
+        },
+      })),
+    });
+  } catch (error) {
+    console.log("GET_CLAN_MEMBERS_ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch clan members",
+    });
+  }
+};
