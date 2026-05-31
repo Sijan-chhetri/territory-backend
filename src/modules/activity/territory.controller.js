@@ -326,6 +326,249 @@ async function updateRouteEncodedFromGeometry(territoryId) {
 
 
 
+//previous capture territory
+
+// export const captureTerritory = async ({ userId, activityId, newTerritoryId }) => {
+//   const result = await prisma.$transaction(
+//     async (tx) => {
+//       console.log('\n===================================');
+//       console.log('CAPTURE TERRITORY START');
+//       console.log('userId:', userId);
+//       console.log('activityId:', activityId);
+//       console.log('newTerritoryId:', newTerritoryId);
+//       console.log('===================================\n');
+
+//       // 1. Find captured parts from enemy territories
+//       const capturedParts = await tx.$queryRaw`
+//         WITH current_territory AS (
+//           SELECT
+//             id,
+//             boundary AS user_movement_boundary
+//           FROM territories
+//           WHERE id = ${newTerritoryId}
+//           LIMIT 1
+//         ),
+
+//         captured_parts AS (
+//           SELECT
+//             enemy.id AS "enemyTerritoryId",
+//             enemy."userId" AS "enemyUserId",
+
+//             ST_Multi(
+//               ST_CollectionExtract(
+//                 ST_MakeValid(
+//                   ST_Intersection(
+//                     enemy.boundary,
+//                     current_territory.user_movement_boundary
+//                   )
+//                 ),
+//                 3
+//               )
+//             ) AS captured_part
+
+//           FROM territories enemy
+//           CROSS JOIN current_territory
+//           WHERE enemy."userId" != ${userId}
+//             AND enemy.id != ${newTerritoryId}
+//             AND enemy.boundary IS NOT NULL
+//             AND NOT ST_IsEmpty(enemy.boundary)
+//             AND ST_Intersects(
+//               enemy.boundary,
+//               current_territory.user_movement_boundary
+//             )
+//         ),
+
+//         valid_captured_parts AS (
+//           SELECT
+//             "enemyTerritoryId",
+//             "enemyUserId",
+//             captured_part,
+//             ST_Area(captured_part::geography) / 1000000 AS "capturedAreaKm2"
+//           FROM captured_parts
+//           WHERE captured_part IS NOT NULL
+//             AND NOT ST_IsEmpty(captured_part)
+//             AND ST_Area(captured_part::geography) > 1
+//         )
+
+//         SELECT
+//           "enemyTerritoryId",
+//           "enemyUserId",
+//           "capturedAreaKm2"
+//         FROM valid_captured_parts;
+//       `;
+
+//       // 2. Save capture events
+//       for (const part of capturedParts) {
+//         const affectedAreaKm2 = Number(part.capturedAreaKm2 || 0);
+
+//         if (affectedAreaKm2 <= 0.000001) continue;
+
+//         await tx.territoryEvent.create({
+//           data: {
+//             territoryId: newTerritoryId,
+//             userId,
+//             opponentUserId: part.enemyUserId,
+//             activityId,
+//             type: "CAPTURE",
+//             affectedAreaKm2,
+//           },
+//         });
+
+//         await createNotification({
+//           userId: part.enemyUserId,
+
+//           title: "Territory Captured",
+
+//           message:
+//             "Another player captured part of your territory.",
+
+//           type: "TERRITORY_CAPTURED",
+
+//           territoryId: part.enemyTerritoryId,
+
+//           activityId,
+//         });
+
+//       }
+
+//       // 3. Remove captured parts from enemy territories
+//       await tx.$executeRaw`
+//         WITH current_territory AS (
+//           SELECT
+//             boundary AS user_movement_boundary
+//           FROM territories
+//           WHERE id = ${newTerritoryId}
+//           LIMIT 1
+//         ),
+
+//         captured_parts AS (
+//           SELECT
+//             enemy.id AS enemy_territory_id,
+
+//             ST_Multi(
+//               ST_CollectionExtract(
+//                 ST_MakeValid(
+//                   ST_Intersection(
+//                     enemy.boundary,
+//                     current_territory.user_movement_boundary
+//                   )
+//                 ),
+//                 3
+//               )
+//             ) AS captured_part
+
+//           FROM territories enemy
+//           CROSS JOIN current_territory
+//           WHERE enemy."userId" != ${userId}
+//             AND enemy.id != ${newTerritoryId}
+//             AND enemy.boundary IS NOT NULL
+//             AND NOT ST_IsEmpty(enemy.boundary)
+//             AND ST_Intersects(
+//               enemy.boundary,
+//               current_territory.user_movement_boundary
+//             )
+//         ),
+
+//         updated_enemies AS (
+//           UPDATE territories enemy
+//           SET
+//             boundary = ST_Multi(
+//               ST_CollectionExtract(
+//                 ST_MakeValid(
+//                   ST_Difference(
+//                     enemy.boundary,
+//                     captured_parts.captured_part
+//                   )
+//                 ),
+//                 3
+//               )
+//             ),
+//             "updatedAt" = NOW()
+//           FROM captured_parts
+//           WHERE enemy.id = captured_parts.enemy_territory_id
+//             AND captured_parts.captured_part IS NOT NULL
+//             AND NOT ST_IsEmpty(captured_parts.captured_part)
+//           RETURNING enemy.id
+//         )
+
+//         SELECT * FROM updated_enemies;
+//       `;
+
+//       // 4. Recalculate only affected enemy territories
+//       await tx.$executeRaw`
+//         UPDATE territories
+//         SET
+//           "areaKm2" = ST_Area(boundary::geography) / 1000000,
+//           center = ST_PointOnSurface(boundary),
+//           "updatedAt" = NOW()
+//         WHERE "userId" != ${userId}
+//           AND boundary IS NOT NULL
+//           AND NOT ST_IsEmpty(boundary)
+//           AND ST_Intersects(
+//             boundary,
+//             (
+//               SELECT boundary
+//               FROM territories
+//               WHERE id = ${newTerritoryId}
+//               LIMIT 1
+//             )
+//           );
+//       `;
+
+//       // 5. Delete empty or tiny territories
+//       await tx.$executeRaw`
+//         DELETE FROM territories
+//         WHERE boundary IS NULL
+//            OR ST_IsEmpty(boundary)
+//            OR ST_Area(boundary::geography) <= 1;
+//       `;
+
+//       // 6. Update new territory area and center
+//       const updatedNewTerritory = await tx.$queryRaw`
+//         UPDATE territories
+//         SET
+//           boundary = ST_Multi(
+//             ST_CollectionExtract(
+//               ST_MakeValid(boundary),
+//               3
+//             )
+//           ),
+//           center = ST_PointOnSurface(boundary),
+//           "areaKm2" = ST_Area(boundary::geography) / 1000000,
+//           "updatedAt" = NOW()
+//         WHERE id = ${newTerritoryId}
+//           AND boundary IS NOT NULL
+//           AND NOT ST_IsEmpty(boundary)
+//         RETURNING id, "areaKm2";
+//       `;
+
+//       if (!updatedNewTerritory || updatedNewTerritory.length === 0) {
+//         return {
+//           captured: false,
+//           areaKm2: 0,
+//           capturedCount: 0,
+//         };
+//       }
+
+//       return {
+//         captured: capturedParts.length > 0,
+//         areaKm2: Number(updatedNewTerritory[0].areaKm2 || 0),
+//         capturedCount: capturedParts.length,
+//       };
+//     },
+//     {
+//       maxWait: 10000,
+//       timeout: 30000,
+//     }
+//   );
+
+//   // Run this after the transaction finishes
+//   await updateRouteEncodedFromGeometry(newTerritoryId);
+
+//   return result;
+// };
+
+
 export const captureTerritory = async ({ userId, activityId, newTerritoryId }) => {
   const result = await prisma.$transaction(
     async (tx) => {
@@ -431,66 +674,45 @@ export const captureTerritory = async ({ userId, activityId, newTerritoryId }) =
 
       // 3. Remove captured parts from enemy territories
       await tx.$executeRaw`
-        WITH current_territory AS (
-          SELECT
-            boundary AS user_movement_boundary
-          FROM territories
-          WHERE id = ${newTerritoryId}
-          LIMIT 1
-        ),
-
-        captured_parts AS (
-          SELECT
-            enemy.id AS enemy_territory_id,
-
-            ST_Multi(
-              ST_CollectionExtract(
-                ST_MakeValid(
-                  ST_Intersection(
-                    enemy.boundary,
-                    current_territory.user_movement_boundary
-                  )
-                ),
-                3
-              )
-            ) AS captured_part
-
-          FROM territories enemy
-          CROSS JOIN current_territory
-          WHERE enemy."userId" != ${userId}
-            AND enemy.id != ${newTerritoryId}
-            AND enemy.boundary IS NOT NULL
-            AND NOT ST_IsEmpty(enemy.boundary)
-            AND ST_Intersects(
+  WITH current_territory AS (
+    SELECT boundary AS user_movement_boundary
+    FROM territories
+    WHERE id = ${newTerritoryId}
+    LIMIT 1
+  ),
+  updated_enemies AS (
+    UPDATE territories enemy
+    SET
+      boundary = ST_Multi(
+        ST_CollectionExtract(
+          ST_MakeValid(
+            ST_Difference(
               enemy.boundary,
               current_territory.user_movement_boundary
             )
-        ),
-
-        updated_enemies AS (
-          UPDATE territories enemy
-          SET
-            boundary = ST_Multi(
-              ST_CollectionExtract(
-                ST_MakeValid(
-                  ST_Difference(
-                    enemy.boundary,
-                    captured_parts.captured_part
-                  )
-                ),
-                3
-              )
-            ),
-            "updatedAt" = NOW()
-          FROM captured_parts
-          WHERE enemy.id = captured_parts.enemy_territory_id
-            AND captured_parts.captured_part IS NOT NULL
-            AND NOT ST_IsEmpty(captured_parts.captured_part)
-          RETURNING enemy.id
+          ),
+          3
         )
-
-        SELECT * FROM updated_enemies;
-      `;
+      ),
+      "areaKm2" = ST_Area(
+        ST_MakeValid(
+          ST_Difference(
+            enemy.boundary,
+            current_territory.user_movement_boundary
+          )
+        )::geography
+      ) / 1000000,
+      "updatedAt" = NOW()
+    FROM current_territory
+    WHERE enemy."userId" != ${userId}
+      AND enemy.id != ${newTerritoryId}
+      AND enemy.boundary IS NOT NULL
+      AND NOT ST_IsEmpty(enemy.boundary)
+      AND ST_Intersects(enemy.boundary, current_territory.user_movement_boundary)
+    RETURNING enemy.id
+  )
+  SELECT * FROM updated_enemies;
+`;
 
       // 4. Recalculate only affected enemy territories
       await tx.$executeRaw`
