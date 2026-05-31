@@ -1247,55 +1247,157 @@ export const getClanDetails = async (req, res) => {
  * |--------------------------------------------------------------------------
  */
 
+// export const leaveClan = async (req, res) => {
+//   try {
+//     const userId = req.user.id;
+
+//     const membership = await prisma.clanMember.findFirst({
+//       where: {
+//         userId,
+//       },
+//       include: {
+//         clan: true,
+//       },
+//     });
+
+//     if (!membership) {
+//       return res.status(404).json({
+//         success: false,
+//         message: "You are not in any clan",
+//       });
+//     }
+
+//     // Prevent captain from leaving
+//     if (membership.clan.captainId === userId) {
+//       return res.status(400).json({
+//         success: false,
+//         message:
+//           "Clan captain cannot leave the clan. Transfer ownership or delete the clan first.",
+//       });
+//     }
+
+//     await prisma.clanMember.delete({
+//       where: {
+//         id: membership.id,
+//       },
+//     });
+
+//     return res.status(200).json({
+//       success: true,
+//       message: "Successfully left the clan",
+//     });
+//   } catch (error) {
+//     console.log("LEAVE_CLAN_ERROR:", error);
+
+//     return res.status(500).json({
+//       success: false,
+//       message: "Failed to leave clan",
+//     });
+//   }
+// };
+
+
+
+
 export const leaveClan = async (req, res) => {
   try {
     const userId = req.user.id;
 
-    const membership = await prisma.clanMember.findFirst({
-      where: {
-        userId,
-      },
-      include: {
-        clan: true,
-      },
-    });
-
-    if (!membership) {
-      return res.status(404).json({
-        success: false,
-        message: "You are not in any clan",
+    const result = await prisma.$transaction(async (tx) => {
+      const membership = await tx.clanMember.findFirst({
+        where: { userId },
+        include: { clan: true },
       });
-    }
 
-    // Prevent captain from leaving
-    if (membership.clan.captainId === userId) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Clan captain cannot leave the clan. Transfer ownership or delete the clan first.",
+      if (!membership) {
+        return {
+          status: 404,
+          body: {
+            success: false,
+            message: "You are not in any clan",
+          },
+        };
+      }
+
+      const clanId = membership.clanId;
+      const isCaptain = membership.clan.captainId === userId;
+
+      if (!isCaptain) {
+        await tx.clanMember.delete({
+          where: { id: membership.id },
+        });
+
+        return {
+          status: 200,
+          body: {
+            success: true,
+            message: "Successfully left the clan",
+          },
+        };
+      }
+
+      const newCaptain = await tx.clanMember.findFirst({
+        where: {
+          clanId,
+          userId: {
+            not: userId,
+          },
+        },
+        orderBy: {
+          joinedAt: "asc",
+        },
       });
-    }
 
-    await prisma.clanMember.delete({
-      where: {
-        id: membership.id,
-      },
+      if (!newCaptain) {
+        return {
+          status: 400,
+          body: {
+            success: false,
+            message:
+              "You are the only member in this clan. Delete the clan instead of leaving.",
+          },
+        };
+      }
+
+      await tx.clan.update({
+        where: { id: clanId },
+        data: {
+          captainId: newCaptain.userId,
+        },
+      });
+
+      await tx.clanMember.update({
+        where: { id: newCaptain.id },
+        data: {
+          role: "CAPTAIN",
+        },
+      });
+
+      await tx.clanMember.delete({
+        where: { id: membership.id },
+      });
+
+      return {
+        status: 200,
+        body: {
+          success: true,
+          message: "You left the clan. A new captain has been promoted.",
+          promotedCaptainId: newCaptain.userId,
+        },
+      };
     });
 
-    return res.status(200).json({
-      success: true,
-      message: "Successfully left the clan",
-    });
+    return res.status(result.status).json(result.body);
   } catch (error) {
     console.log("LEAVE_CLAN_ERROR:", error);
 
     return res.status(500).json({
       success: false,
       message: "Failed to leave clan",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 };
-
 
 /**
  * |--------------------------------------------------------------------------
