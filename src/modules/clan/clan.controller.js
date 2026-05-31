@@ -1335,7 +1335,7 @@ export const leaveClan = async (req, res) => {
             },
           },
           orderBy: {
-            createdAt: "asc",
+            joinedAt: "asc",
           },
         });
 
