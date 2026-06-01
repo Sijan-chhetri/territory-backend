@@ -793,6 +793,7 @@ async function updateRouteEncodedFromGeometry(territoryId) {
 export const captureTerritory = async ({ userId, activityId, newTerritoryId }) => {
   const result = await prisma.$transaction(
     async (tx) => {
+      // 1. Find captured parts from enemy territories
       const capturedParts = await tx.$queryRaw`
         WITH current_territory AS (
           SELECT
@@ -826,13 +827,8 @@ export const captureTerritory = async ({ userId, activityId, newTerritoryId }) =
           CROSS JOIN current_territory
           WHERE enemy."userId" != ${userId}
             AND enemy.id != ${newTerritoryId}
-
-            -- IMPORTANT:
-            -- clan activity captures only clan territories
-            -- personal activity captures only personal territories
             AND COALESCE(enemy_activity."include_in_clan", false)
                 = current_territory."currentIncludeInClan"
-
             AND enemy.boundary IS NOT NULL
             AND NOT ST_IsEmpty(enemy.boundary)
             AND ST_Intersects(
@@ -860,6 +856,7 @@ export const captureTerritory = async ({ userId, activityId, newTerritoryId }) =
         FROM valid_captured_parts;
       `;
 
+      // 2. Save capture events
       for (const part of capturedParts) {
         const affectedAreaKm2 = Number(part.capturedAreaKm2 || 0);
         if (affectedAreaKm2 <= 0.000001) continue;
@@ -885,6 +882,7 @@ export const captureTerritory = async ({ userId, activityId, newTerritoryId }) =
         });
       }
 
+      // 3. Remove captured parts from enemy territories
       await tx.$executeRaw`
         WITH current_territory AS (
           SELECT
@@ -918,16 +916,12 @@ export const captureTerritory = async ({ userId, activityId, newTerritoryId }) =
               )::geography
             ) / 1000000,
             "updatedAt" = NOW()
-          FROM current_territory
-          JOIN activities enemy_activity
-            ON enemy_activity.id = enemy."activityId"
-          WHERE enemy."userId" != ${userId}
+          FROM activities enemy_activity, current_territory
+          WHERE enemy_activity.id = enemy."activityId"
+            AND enemy."userId" != ${userId}
             AND enemy.id != ${newTerritoryId}
-
-            -- same lane only
             AND COALESCE(enemy_activity."include_in_clan", false)
                 = current_territory."currentIncludeInClan"
-
             AND enemy.boundary IS NOT NULL
             AND NOT ST_IsEmpty(enemy.boundary)
             AND ST_Intersects(
@@ -939,36 +933,37 @@ export const captureTerritory = async ({ userId, activityId, newTerritoryId }) =
         SELECT * FROM updated_enemies;
       `;
 
+      // 4. Recalculate affected enemy territories in the same lane
       await tx.$executeRaw`
-  WITH current_territory AS (
-    SELECT
-      t.boundary AS user_movement_boundary,
-      COALESCE(a."include_in_clan", false) AS "currentIncludeInClan"
-    FROM territories t
-    JOIN activities a ON a.id = t."activityId"
-    WHERE t.id = ${newTerritoryId}
-    LIMIT 1
-  )
-  UPDATE territories enemy
-  SET
-    "areaKm2" = ST_Area(enemy.boundary::geography) / 1000000,
-    center = ST_PointOnSurface(enemy.boundary),
-    "updatedAt" = NOW()
-  FROM current_territory
-  JOIN activities enemy_activity
-    ON enemy_activity.id = enemy."activityId"
-  WHERE enemy."userId" != ${userId}
-    AND enemy.id != ${newTerritoryId}
-    AND COALESCE(enemy_activity."include_in_clan", false)
-        = current_territory."currentIncludeInClan"
-    AND enemy.boundary IS NOT NULL
-    AND NOT ST_IsEmpty(enemy.boundary)
-    AND ST_Intersects(
-      enemy.boundary,
-      current_territory.user_movement_boundary
-    );
-`;
+        WITH current_territory AS (
+          SELECT
+            t.boundary AS user_movement_boundary,
+            COALESCE(a."include_in_clan", false) AS "currentIncludeInClan"
+          FROM territories t
+          JOIN activities a ON a.id = t."activityId"
+          WHERE t.id = ${newTerritoryId}
+          LIMIT 1
+        )
+        UPDATE territories enemy
+        SET
+          "areaKm2" = ST_Area(enemy.boundary::geography) / 1000000,
+          center = ST_PointOnSurface(enemy.boundary),
+          "updatedAt" = NOW()
+        FROM activities enemy_activity, current_territory
+        WHERE enemy_activity.id = enemy."activityId"
+          AND enemy."userId" != ${userId}
+          AND enemy.id != ${newTerritoryId}
+          AND COALESCE(enemy_activity."include_in_clan", false)
+              = current_territory."currentIncludeInClan"
+          AND enemy.boundary IS NOT NULL
+          AND NOT ST_IsEmpty(enemy.boundary)
+          AND ST_Intersects(
+            enemy.boundary,
+            current_territory.user_movement_boundary
+          );
+      `;
 
+      // 5. Delete empty or tiny territories
       await tx.$executeRaw`
         DELETE FROM territories
         WHERE boundary IS NULL
@@ -976,6 +971,7 @@ export const captureTerritory = async ({ userId, activityId, newTerritoryId }) =
            OR ST_Area(boundary::geography) <= 1;
       `;
 
+      // 6. Update new territory area and center
       const updatedNewTerritory = await tx.$queryRaw`
         UPDATE territories
         SET
@@ -1007,6 +1003,7 @@ export const captureTerritory = async ({ userId, activityId, newTerritoryId }) =
   );
 
   await updateRouteEncodedFromGeometry(newTerritoryId);
+
   return result;
 };
 
