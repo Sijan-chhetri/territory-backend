@@ -9,16 +9,28 @@ datasource db {
   extensions = [postgis, uuid_ossp(map: "uuid-ossp", schema: "public")]
 }
 
+enum AuthProvider {
+  EMAIL
+  GOOGLE
+  APPLE
+}
+
 model User {
   id                      String            @id @default(uuid())
   email                   String            @unique
   username                String            @unique
-  password                String
+  password                String?
   fullName                String?           @map("full_name")
   country                 String?
   city                    String?
+
+  authProvider            AuthProvider      @default(EMAIL) @map("auth_provider")
+  googleId                String?           @unique @map("google_id")
+  appleId                 String?           @unique @map("apple_id")
+
   createdAt               DateTime          @default(now()) @map("created_at")
   updatedAt               DateTime          @updatedAt @map("updated_at")
+
   receivedFriendRequests  FriendRequest[]   @relation("FriendRequestReceiver")
   sentFriendRequests      FriendRequest[]   @relation("FriendRequestSender")
   friendOf                Friendship[]      @relation("FriendshipFriend")
@@ -39,6 +51,8 @@ model User {
 
   @@index([email])
   @@index([username])
+  @@index([googleId])
+  @@index([appleId])
   @@map("users")
 }
 

@@ -5,6 +5,10 @@ import validator from 'validator';
 import { JWT_SECRET } from '../../config/jwt.js';
 
 
+import { OAuth2Client } from "google-auth-library";
+import appleSignin from "apple-signin-auth";
+
+
 // ─────────────────────────────────────────────
 // Generate Unique Username
 // ─────────────────────────────────────────────
@@ -19,6 +23,17 @@ async function generateUsername(fullName) {
     username = `${base}${count}`;
     count++;
   }
+}
+
+
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
+function generateJwt(user) {
+  return jwt.sign(
+    { id: user.id, email: user.email },
+    JWT_SECRET,
+    { expiresIn: "30d" }
+  );
 }
 
 
@@ -331,6 +346,157 @@ export const getUserDetailById = async (req, res) => {
       message: "Something went wrong",
       error:
         process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
+};
+
+
+
+export const googleAuth = async (req, res) => {
+  try {
+    const { idToken } = req.body;
+
+    if (!idToken) {
+      return res.status(400).json({
+        success: false,
+        message: "Google idToken is required",
+      });
+    }
+
+    const ticket = await googleClient.verifyIdToken({
+      idToken,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+
+    const payload = ticket.getPayload();
+
+    const googleId = payload.sub;
+    const email = payload.email?.toLowerCase();
+    const fullName = payload.name || "Google User";
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: "Google account email not found",
+      });
+    }
+
+    let user = await prisma.user.findFirst({
+      where: {
+        OR: [{ googleId }, { email }],
+      },
+    });
+
+    if (!user) {
+      const username = await generateUsername(fullName);
+
+      user = await prisma.user.create({
+        data: {
+          email,
+          fullName,
+          username,
+          googleId,
+          authProvider: "GOOGLE",
+        },
+      });
+    } else if (!user.googleId) {
+      user = await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          googleId,
+          authProvider: "GOOGLE",
+        },
+      });
+    }
+
+    const token = generateJwt(user);
+    const { password, ...safeUser } = user;
+
+    return res.status(200).json({
+      success: true,
+      message: "Google login successful",
+      token,
+      user: safeUser,
+    });
+  } catch (error) {
+    console.error("GOOGLE_AUTH_ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Google authentication failed",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
+};
+
+
+export const appleAuth = async (req, res) => {
+  try {
+    const { identityToken, fullName } = req.body;
+
+    if (!identityToken) {
+      return res.status(400).json({
+        success: false,
+        message: "Apple identityToken is required",
+      });
+    }
+
+    const appleUser = await appleSignin.verifyIdToken(identityToken, {
+      audience: process.env.APPLE_CLIENT_ID,
+      ignoreExpiration: false,
+    });
+
+    const appleId = appleUser.sub;
+    const email = appleUser.email?.toLowerCase();
+
+    let user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { appleId },
+          ...(email ? [{ email }] : []),
+        ],
+      },
+    });
+
+    if (!user) {
+      const name = fullName || "Apple User";
+      const username = await generateUsername(name);
+
+      user = await prisma.user.create({
+        data: {
+          email: email || `${appleId}@apple.private`,
+          fullName: name,
+          username,
+          appleId,
+          authProvider: "APPLE",
+        },
+      });
+    } else if (!user.appleId) {
+      user = await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          appleId,
+          authProvider: "APPLE",
+        },
+      });
+    }
+
+    const token = generateJwt(user);
+    const { password, ...safeUser } = user;
+
+    return res.status(200).json({
+      success: true,
+      message: "Apple login successful",
+      token,
+      user: safeUser,
+    });
+  } catch (error) {
+    console.error("APPLE_AUTH_ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Apple authentication failed",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 };
