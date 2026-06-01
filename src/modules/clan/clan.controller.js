@@ -94,7 +94,7 @@ export const createClan = async (req, res) => {
   try {
     const userId = req.user.id;
 
-    const {
+    let {
       name,
       slug,
       description,
@@ -103,42 +103,73 @@ export const createClan = async (req, res) => {
       isPrivate,
     } = req.body;
 
-    const existingClan = await prisma.clan.findFirst({
-      where: {
-        OR: [
-          { name },
-          { slug }
-        ]
-      }
-    });
-
-    if (existingClan) {
+    if (!name || !name.trim()) {
       return res.status(400).json({
         success: false,
-        message: "Clan already exists"
+        message: "Clan name is required",
+      });
+    }
+
+    // Generate slug automatically if not provided
+    const generateSlug = (text) => {
+      return text
+        .toString()
+        .toLowerCase()
+        .trim()
+        .replace(/[^a-z0-9\s-]/g, "")
+        .replace(/\s+/g, "-")
+        .replace(/-+/g, "-");
+    };
+
+    let baseSlug = slug && slug.trim() ? generateSlug(slug) : generateSlug(name);
+    let finalSlug = baseSlug;
+    let counter = 1;
+
+    // Make slug unique
+    while (
+      await prisma.clan.findUnique({
+        where: { slug: finalSlug },
+      })
+    ) {
+      finalSlug = `${baseSlug}-${counter}`;
+      counter++;
+    }
+
+    const existingClanByName = await prisma.clan.findFirst({
+      where: {
+        name: {
+          equals: name.trim(),
+          mode: "insensitive",
+        },
+      },
+    });
+
+    if (existingClanByName) {
+      return res.status(400).json({
+        success: false,
+        message: "Clan name already exists",
       });
     }
 
     const clan = await prisma.$transaction(async (tx) => {
-
       const createdClan = await tx.clan.create({
         data: {
-          name,
-          slug,
-          description,
-          logo,
-          banner,
-          isPrivate,
+          name: name.trim(),
+          slug: finalSlug,
+          description: description?.trim() || "",
+          logo: logo || null,
+          banner: banner || null,
+          isPrivate: isPrivate ?? false,
           captainId: userId,
-        }
+        },
       });
 
       await tx.clanMember.create({
         data: {
           clanId: createdClan.id,
           userId,
-          role: "LEADER"
-        }
+          role: "LEADER",
+        },
       });
 
       return createdClan;
@@ -147,15 +178,14 @@ export const createClan = async (req, res) => {
     return res.status(201).json({
       success: true,
       message: "Clan created successfully",
-      data: clan
+      data: clan,
     });
-
   } catch (error) {
-    console.log(error);
+    console.log("CREATE_CLAN_ERROR:", error);
 
     return res.status(500).json({
       success: false,
-      message: "Failed to create clan"
+      message: "Failed to create clan",
     });
   }
 };
