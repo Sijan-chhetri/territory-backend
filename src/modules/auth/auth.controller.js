@@ -243,3 +243,94 @@ export const getUsersWhoAreNotMyFriends = async (req, res) => {
     });
   }
 };
+
+
+
+// ─────────────────────────────────────────────
+// Get User Detail By UserId + Leaderboard Rank
+// GET /api/auth/user/:userId
+// Rank is based on total activity distance
+// ─────────────────────────────────────────────
+export const getUserDetailById = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: "User id is required",
+      });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        username: true,
+        fullName: true,
+        email: true,
+        city: true,
+        country: true,
+        createdAt: true,
+      },
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // User total distance
+    const userActivityStats = await prisma.activity.aggregate({
+      where: { userId },
+      _sum: {
+        distanceKm: true,
+      },
+      _count: {
+        id: true,
+      },
+    });
+
+    const totalDistanceKm = Number(userActivityStats._sum.distanceKm || 0);
+
+    // All users ranked by total distance
+    const leaderboard = await prisma.activity.groupBy({
+      by: ["userId"],
+      _sum: {
+        distanceKm: true,
+      },
+      orderBy: {
+        _sum: {
+          distanceKm: "desc",
+        },
+      },
+    });
+
+    const rankIndex = leaderboard.findIndex((item) => item.userId === userId);
+
+    const rank = rankIndex === -1 ? null : rankIndex + 1;
+
+    return res.status(200).json({
+      success: true,
+      user: {
+        ...user,
+        stats: {
+          totalDistanceKm,
+          totalActivities: userActivityStats._count.id,
+          leaderboardRank: rank,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("GET_USER_DETAIL_BY_ID_ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Something went wrong",
+      error:
+        process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
+};
