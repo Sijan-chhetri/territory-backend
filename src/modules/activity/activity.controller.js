@@ -504,7 +504,358 @@ export const getMyActivities = async (req, res) => {
 // ─────────────────────────────────────────────
 // Finish Activity
 // POST /api/activities/finish
+// latest previous code
 // ─────────────────────────────────────────────
+
+// export const finishActivity = async (req, res) => {
+//   try {
+//     const userId = req.user.id;
+
+//     const {
+//       mode,
+//       distanceKm,
+//       durationSec,
+//       stopTime,
+//       elapsedTime,
+//       movingTime,
+//       avgPace,
+//       topPace,
+//       avgSpeed,
+//       topSpeed,
+//       calories,
+//       elevationGain,
+//       startedAt,
+//       endedAt,
+//       routeEncoded,
+//       coordinates,
+//       kmSplits: clientKmSplits,
+//       includeInClan,
+//       notes,
+//       areaKm2
+//     } = req.body;
+
+//     const safeRouteEncoded = validateRouteEncoded(routeEncoded);
+
+//     let resolvedCoords = normalizeCoordinates(coordinates);
+
+//     if ((!resolvedCoords || resolvedCoords.length < 2) && safeRouteEncoded) {
+//       let decoded;
+
+//       try {
+//         decoded = polyline.decode(safeRouteEncoded);
+//       } catch (error) {
+//         return res.status(400).json({
+//           success: false,
+//           message: 'Invalid routeEncoded. Could not decode polyline.',
+//           error:
+//             process.env.NODE_ENV === 'development'
+//               ? error.message
+//               : undefined,
+//         });
+//       }
+
+//       resolvedCoords = decoded.map(([lat, lng]) => ({ lat, lng }));
+//       resolvedCoords = normalizeCoordinates(resolvedCoords);
+//     }
+
+//     if (!resolvedCoords || resolvedCoords.length < 2) {
+//       return res.status(400).json({
+//         success: false,
+//         message: 'Not enough GPS points — provide coordinates or routeEncoded',
+//       });
+//     }
+
+//     const routeGeoJson = buildLineGeoJsonFromCoords(resolvedCoords);
+//     const routeGeoJsonString = JSON.stringify(routeGeoJson);
+
+//     const kmSplits =
+//       clientKmSplits?.length > 0
+//         ? clientKmSplits
+//         : computeKmSplits(resolvedCoords);
+
+//     // 1. Save original activity.
+//     // Important: activity route is NEVER subtracted.
+//     const activity = await prisma.activity.create({
+//       data: {
+//         userId,
+//         mode,
+//         distanceKm,
+//         durationSec,
+//         stopTime,
+//         elapsedTime,
+//         movingTime,
+//         avgPace,
+//         topPace,
+//         avgSpeed,
+//         topSpeed,
+//         calories,
+//         elevationGain,
+//         startedAt: new Date(startedAt),
+//         endedAt: new Date(endedAt),
+//         routeEncoded: safeRouteEncoded,
+//         kmSplits,
+//         includeInClan: includeInClan ?? false,
+//         notes: notes ?? null,
+//       },
+//     });
+
+//     // 2. Save activity routeGeometry safely.
+//     await prisma.$executeRaw`
+//       UPDATE activities
+//       SET "routeGeometry" = ST_SetSRID(
+//         ST_GeomFromGeoJSON(${routeGeoJsonString}),
+//         4326
+//       )
+//       WHERE id = ${activity.id};
+//     `;
+
+
+//     const frontendAreaKm2 =
+//       areaKm2 !== undefined &&
+//         areaKm2 !== null &&
+//         !Number.isNaN(Number(areaKm2)) &&
+//         Number(areaKm2) > 0
+//         ? Number(areaKm2)
+//         : null;
+
+//     // 3. Create raw territory from route buffer.
+//     // At this point, it is still full buffered route.
+//     // captureTerritory() will subtract enemy territory from this.
+//     const territoryResult = await prisma.$queryRaw`
+//       WITH new_route AS (
+//         SELECT ST_SetSRID(
+//           ST_GeomFromGeoJSON(${routeGeoJsonString}),
+//           4326
+//         ) AS route
+//       ),
+//       new_area AS (
+//   SELECT
+//     ST_MakeValid(
+//       ST_SnapToGrid(
+//         ST_Buffer(
+//           route::geography,
+//           5,
+//           'endcap=flat join=round quad_segs=2'
+//         )::geometry,
+//         0.0000001
+//       )
+//     ) AS territory,
+//     route
+//   FROM new_route
+// ),
+//       inserted AS (
+//         INSERT INTO territories (
+//           id,
+//           "userId",
+//           "activityId",
+//           boundary,
+//           center,
+//           "routeEncoded",
+//           "routeSegmentsEncoded",
+//           "routeGeometry",
+//           "areaKm2",
+//           "capturedAt",
+//           "createdAt",
+//           "updatedAt"
+//         )
+//         SELECT
+//           gen_random_uuid(),
+//           ${userId},
+//           ${activity.id},
+//           territory,
+//           ST_PointOnSurface(territory),
+//           ${safeRouteEncoded},
+//           ${JSON.stringify(getRouteSegmentsFromEncoded(safeRouteEncoded))}::jsonb,
+//           route,
+//           COALESCE(${frontendAreaKm2}, ST_Area(territory::geography) / 1000000),
+//           NOW(),
+//           NOW(),
+//           NOW()
+//         FROM new_area
+//         WHERE territory IS NOT NULL
+//           AND NOT ST_IsEmpty(territory)
+//         RETURNING id
+//       )
+//       SELECT id FROM inserted;
+//     `;
+
+//     if (!territoryResult || territoryResult.length === 0) {
+//       return res.status(201).json({
+//         success: true,
+//         message: 'Activity completed, but no territory was created.',
+//         activity,
+//         territory: null,
+//         captureEvents: [],
+//       });
+//     }
+
+//     const territoryId = territoryResult[0].id;
+
+//     // 4. Subtract other users' existing territories from this new territory.
+//     // This affects Territory only. Activity route stays original.
+//     await captureTerritory({
+//       userId,
+//       activityId: activity.id,
+//       newTerritoryId: territoryId,
+//     });
+
+//     // 5. Merge own territories that touch or overlap.
+//     // This merges territory boundary. It does not corrupt activity route.
+//     await prisma.$queryRaw`
+//       WITH touching AS (
+//         SELECT id
+//         FROM territories
+//         WHERE "userId" = ${userId}
+//           AND id != ${territoryId}
+//           AND boundary IS NOT NULL
+//           AND NOT ST_IsEmpty(boundary)
+//           AND (
+//             ST_Intersects(
+//               boundary,
+//               (SELECT boundary FROM territories WHERE id = ${territoryId})
+//             )
+//             OR ST_Touches(
+//               boundary,
+//               (SELECT boundary FROM territories WHERE id = ${territoryId})
+//             )
+//           )
+//       ),
+//       all_ids AS (
+//         SELECT ${territoryId}::text AS id
+//         UNION ALL
+//         SELECT id::text FROM touching
+//       ),
+//       merged AS (
+//         SELECT
+//           ST_MakeValid(ST_Union(t.boundary)) AS merged_boundary,
+//           ST_LineMerge(ST_Union(t."routeGeometry")) AS merged_route,
+//           COALESCE(${frontendAreaKm2}, ST_Area(ST_Union(t.boundary)::geography) / 1000000) AS merged_area
+//         FROM territories t
+//         WHERE t.id IN (SELECT id FROM all_ids)
+//           AND t.boundary IS NOT NULL
+//           AND NOT ST_IsEmpty(t.boundary)
+//       )
+//       UPDATE territories
+//       SET
+//         boundary = ST_Multi((SELECT merged_boundary FROM merged)),
+//         center = ST_PointOnSurface((SELECT merged_boundary FROM merged)),
+//         "routeGeometry" = (SELECT merged_route FROM merged),
+//         "areaKm2" = (SELECT merged_area FROM merged),
+//         "updatedAt" = NOW()
+//       WHERE id = ${territoryId}
+//       RETURNING id;
+//     `;
+
+//     // 6. Delete old own territories that were merged into the new one.
+//     await prisma.$executeRaw`
+//       DELETE FROM territories
+//       WHERE "userId" = ${userId}
+//         AND id != ${territoryId}
+//         AND (
+//           ST_Intersects(
+//             boundary,
+//             (SELECT boundary FROM territories WHERE id = ${territoryId})
+//           )
+//           OR ST_Touches(
+//             boundary,
+//             (SELECT boundary FROM territories WHERE id = ${territoryId})
+//           )
+//         );
+//     `;
+
+//     // 7. Fetch final territory.
+//     const finalTerritory = await prisma.$queryRaw`
+//       SELECT
+//         id,
+//         "userId",
+//         "activityId",
+//         "areaKm2",
+//         "capturedAt",
+//         "createdAt",
+//         "updatedAt",
+//         "routeEncoded",
+//         "routeSegmentsEncoded",
+//         ST_AsGeoJSON(boundary)::json AS boundary,
+//         ST_AsGeoJSON(center)::json AS center,
+//         ST_AsGeoJSON("routeGeometry")::json AS route
+//       FROM territories
+//       WHERE id = ${territoryId}
+//       LIMIT 1;
+//     `;
+
+//     const recentEvents = await prisma.territoryEvent.findMany({
+//       where: { activityId: activity.id },
+//       orderBy: { createdAt: 'desc' },
+//     });
+
+//     // XP
+//     const MIN_DISTANCE_KM = 0.1;
+//     const XP_PER_KM = 50;
+
+//     const xpEarned = distanceKm > 0 ? Math.round(distanceKm * XP_PER_KM) : 0;
+
+//     if (xpEarned > 0) {
+//       await addXP({
+//         userId,
+//         amount: xpEarned,
+//         type: 'ACTIVITY',
+//         description: `${mode} — ${distanceKm} km`,
+//         activityId: activity.id,
+//       });
+//     }
+
+//     await prisma.userProgress.upsert({
+//       where: { userId },
+//       create: {
+//         userId,
+//         totalDistanceKm: distanceKm,
+//         activitiesCount: distanceKm >= MIN_DISTANCE_KM ? 1 : 0,
+//       },
+//       update: {
+//         totalDistanceKm: { increment: distanceKm },
+//         activitiesCount:
+//           distanceKm >= MIN_DISTANCE_KM ? { increment: 1 } : undefined,
+//       },
+//     });
+
+//     const levelResult = await checkLevelUp(userId);
+//     const newBadges = await checkBadges(userId);
+
+//     const progress = await prisma.userProgress.findUnique({
+//       where: { userId },
+//     });
+
+//     return res.status(201).json({
+//       success: true,
+//       message: 'Activity completed successfully',
+//       activity,
+//       territory: finalTerritory[0] || null,
+//       captureEvents: recentEvents,
+//       progression: {
+//         xpEarned,
+//         leveledUp: levelResult?.leveledUp ?? false,
+//         level: levelResult?.level ?? progress?.level ?? 0,
+//         newBadges,
+//         progress: {
+//           currentXp: progress?.currentXp,
+//           totalXp: progress?.totalXp,
+//           xpToNextLevel: progress?.xpToNextLevel,
+//           level: progress?.level,
+//           totalDistanceKm: progress?.totalDistanceKm,
+//           activitiesCount: progress?.activitiesCount,
+//         },
+//       },
+//     });
+//   } catch (error) {
+//     console.error('FINISH_ACTIVITY ERROR:', error);
+
+//     return res.status(500).json({
+//       success: false,
+//       message: 'Server error',
+//       error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+//     });
+//   }
+// };
 
 export const finishActivity = async (req, res) => {
   try {
@@ -701,66 +1052,91 @@ export const finishActivity = async (req, res) => {
     // 5. Merge own territories that touch or overlap.
     // This merges territory boundary. It does not corrupt activity route.
     await prisma.$queryRaw`
-      WITH touching AS (
-        SELECT id
-        FROM territories
-        WHERE "userId" = ${userId}
-          AND id != ${territoryId}
-          AND boundary IS NOT NULL
-          AND NOT ST_IsEmpty(boundary)
-          AND (
-            ST_Intersects(
-              boundary,
-              (SELECT boundary FROM territories WHERE id = ${territoryId})
-            )
-            OR ST_Touches(
-              boundary,
-              (SELECT boundary FROM territories WHERE id = ${territoryId})
-            )
-          )
-      ),
-      all_ids AS (
-        SELECT ${territoryId}::text AS id
-        UNION ALL
-        SELECT id::text FROM touching
-      ),
-      merged AS (
-        SELECT
-          ST_MakeValid(ST_Union(t.boundary)) AS merged_boundary,
-          ST_LineMerge(ST_Union(t."routeGeometry")) AS merged_route,
-          COALESCE(${frontendAreaKm2}, ST_Area(ST_Union(t.boundary)::geography) / 1000000) AS merged_area
-        FROM territories t
-        WHERE t.id IN (SELECT id FROM all_ids)
-          AND t.boundary IS NOT NULL
-          AND NOT ST_IsEmpty(t.boundary)
+  WITH current_activity AS (
+    SELECT COALESCE(a."include_in_clan", false) AS "currentIncludeInClan"
+    FROM activities a
+    WHERE a.id = ${activity.id}
+    LIMIT 1
+  ),
+  touching AS (
+    SELECT t.id
+    FROM territories t
+    JOIN activities ta ON ta.id = t."activityId"
+    CROSS JOIN current_activity
+    WHERE t."userId" = ${userId}
+      AND t.id != ${territoryId}
+      AND COALESCE(ta."include_in_clan", false)
+          = current_activity."currentIncludeInClan"
+      AND t.boundary IS NOT NULL
+      AND NOT ST_IsEmpty(t.boundary)
+      AND (
+        ST_Intersects(
+          t.boundary,
+          (SELECT boundary FROM territories WHERE id = ${territoryId})
+        )
+        OR ST_Touches(
+          t.boundary,
+          (SELECT boundary FROM territories WHERE id = ${territoryId})
+        )
       )
-      UPDATE territories
-      SET
-        boundary = ST_Multi((SELECT merged_boundary FROM merged)),
-        center = ST_PointOnSurface((SELECT merged_boundary FROM merged)),
-        "routeGeometry" = (SELECT merged_route FROM merged),
-        "areaKm2" = (SELECT merged_area FROM merged),
-        "updatedAt" = NOW()
-      WHERE id = ${territoryId}
-      RETURNING id;
-    `;
+  ),
+  all_ids AS (
+    SELECT ${territoryId}::text AS id
+    UNION ALL
+    SELECT id::text FROM touching
+  ),
+  merged AS (
+    SELECT
+      ST_MakeValid(ST_Union(t.boundary)) AS merged_boundary,
+      ST_LineMerge(ST_Union(t."routeGeometry")) AS merged_route,
+      COALESCE(${frontendAreaKm2}, ST_Area(ST_Union(t.boundary)::geography) / 1000000) AS merged_area
+    FROM territories t
+    WHERE t.id IN (SELECT id FROM all_ids)
+      AND t.boundary IS NOT NULL
+      AND NOT ST_IsEmpty(t.boundary)
+  )
+  UPDATE territories
+  SET
+    boundary = ST_Multi((SELECT merged_boundary FROM merged)),
+    center = ST_PointOnSurface((SELECT merged_boundary FROM merged)),
+    "routeGeometry" = (SELECT merged_route FROM merged),
+    "areaKm2" = (SELECT merged_area FROM merged),
+    "updatedAt" = NOW()
+  WHERE id = ${territoryId}
+  RETURNING id;
+`;
 
     // 6. Delete old own territories that were merged into the new one.
+    // Only delete territories from the same lane:
+    // clan activity deletes merged clan territories only
+    // personal activity deletes merged personal territories only
     await prisma.$executeRaw`
-      DELETE FROM territories
-      WHERE "userId" = ${userId}
-        AND id != ${territoryId}
-        AND (
-          ST_Intersects(
-            boundary,
-            (SELECT boundary FROM territories WHERE id = ${territoryId})
-          )
-          OR ST_Touches(
-            boundary,
-            (SELECT boundary FROM territories WHERE id = ${territoryId})
-          )
-        );
-    `;
+  WITH current_activity AS (
+    SELECT COALESCE(a."include_in_clan", false) AS "currentIncludeInClan"
+    FROM activities a
+    WHERE a.id = ${activity.id}
+    LIMIT 1
+  )
+  DELETE FROM territories t
+  USING activities ta, current_activity
+  WHERE ta.id = t."activityId"
+    AND t."userId" = ${userId}
+    AND t.id != ${territoryId}
+    AND COALESCE(ta."include_in_clan", false)
+        = current_activity."currentIncludeInClan"
+    AND t.boundary IS NOT NULL
+    AND NOT ST_IsEmpty(t.boundary)
+    AND (
+      ST_Intersects(
+        t.boundary,
+        (SELECT boundary FROM territories WHERE id = ${territoryId})
+      )
+      OR ST_Touches(
+        t.boundary,
+        (SELECT boundary FROM territories WHERE id = ${territoryId})
+      )
+    );
+`;
 
     // 7. Fetch final territory.
     const finalTerritory = await prisma.$queryRaw`
@@ -855,6 +1231,8 @@ export const finishActivity = async (req, res) => {
     });
   }
 };
+
+
 
 // ─────────────────────────────────────────────
 // Get Activity Detail
