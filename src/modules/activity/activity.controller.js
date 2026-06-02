@@ -1017,7 +1017,7 @@ export const finishActivity = async (req, res) => {
           ${safeRouteEncoded},
           ${JSON.stringify(getRouteSegmentsFromEncoded(safeRouteEncoded))}::jsonb,
           route,
-          COALESCE(${frontendAreaKm2}, ST_Area(territory::geography) / 1000000),
+          COALESCE(${frontendAreaKm2}, 0),
           NOW(),
           NOW(),
           NOW()
@@ -1054,7 +1054,7 @@ export const finishActivity = async (req, res) => {
 
 
 
-    
+
 //     await prisma.$queryRaw`
 //   WITH current_activity AS (
 //     SELECT COALESCE(a."include_in_clan", false) AS "currentIncludeInClan"
@@ -1116,6 +1116,7 @@ await prisma.$queryRaw`
     SELECT
       t.id,
       t.boundary,
+      t."areaKm2" AS current_area,
       COALESCE(a."include_in_clan", false) AS "currentIncludeInClan"
     FROM territories t
     JOIN activities a ON a.id = t."activityId"
@@ -1130,17 +1131,22 @@ await prisma.$queryRaw`
     CROSS JOIN current_territory ct
     WHERE t."userId" = ${userId}
       AND t.id != ${territoryId}
-
-      -- IMPORTANT: only merge same lane
       AND COALESCE(ta."include_in_clan", false)
           = ct."currentIncludeInClan"
-
       AND t.boundary IS NOT NULL
       AND NOT ST_IsEmpty(t.boundary)
       AND (
         ST_Intersects(t.boundary, ct.boundary)
         OR ST_Touches(t.boundary, ct.boundary)
       )
+  ),
+
+  old_union AS (
+    SELECT ST_Union(t.boundary) AS old_boundary
+    FROM territories t
+    WHERE t.id IN (SELECT id FROM touching)
+      AND t.boundary IS NOT NULL
+      AND NOT ST_IsEmpty(t.boundary)
   ),
 
   all_ids AS (
@@ -1158,12 +1164,45 @@ await prisma.$queryRaw`
         )
       ) AS merged_boundary,
 
-      ST_LineMerge(ST_Union(t."routeGeometry")) AS merged_route
+      ST_LineMerge(ST_Union(t."routeGeometry")) AS merged_route,
+
+      COALESCE(
+        (
+          SELECT SUM(old_t."areaKm2")
+          FROM territories old_t
+          WHERE old_t.id IN (SELECT id FROM touching)
+        ),
+        0
+      )
+      +
+      (
+        COALESCE(${frontendAreaKm2}, 0)
+        *
+        COALESCE(
+          (
+            ST_Area(
+              ST_Difference(
+                ct.boundary,
+                COALESCE(
+                  ou.old_boundary,
+                  ST_GeomFromText('POLYGON EMPTY', 4326)
+                )
+              )::geography
+            )
+            /
+            NULLIF(ST_Area(ct.boundary::geography), 0)
+          ),
+          1
+        )
+      ) AS merged_area
 
     FROM territories t
+    CROSS JOIN current_territory ct
+    LEFT JOIN old_union ou ON true
     WHERE t.id IN (SELECT id FROM all_ids)
       AND t.boundary IS NOT NULL
       AND NOT ST_IsEmpty(t.boundary)
+    GROUP BY ct.boundary, ou.old_boundary
   )
 
   UPDATE territories t
@@ -1171,7 +1210,7 @@ await prisma.$queryRaw`
     boundary = merged.merged_boundary,
     center = ST_PointOnSurface(merged.merged_boundary),
     "routeGeometry" = merged.merged_route,
-    "areaKm2" = ST_Area(merged.merged_boundary::geography) / 1000000,
+    "areaKm2" = merged.merged_area,
     "updatedAt" = NOW()
   FROM merged
   WHERE t.id = ${territoryId}
