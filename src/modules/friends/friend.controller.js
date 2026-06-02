@@ -308,6 +308,7 @@ export const rejectFriendRequest = async (req, res) => {
 
 export const searchUsers = async (req, res) => {
   try {
+    const userId = req.user.id;
     const { q } = req.query;
 
     if (!q) {
@@ -319,33 +320,77 @@ export const searchUsers = async (req, res) => {
 
     const users = await prisma.user.findMany({
       where: {
-        username: {
-          contains: q,
-          mode: "insensitive",
+        id: {
+          not: userId,
         },
+        OR: [
+          {
+            username: {
+              contains: q,
+              mode: "insensitive",
+            },
+          },
+          {
+            fullName: {
+              contains: q,
+              mode: "insensitive",
+            },
+          },
+        ],
       },
       select: {
         id: true,
         username: true,
         fullName: true,
       },
-      take: 10,
+      take: 20,
     });
 
-    if (users.length === 0) {
-      return res.status(200).json({
-        success: true,
-        message: "No users found",
-        data: [],
-      });
-    }
+    const results = await Promise.all(
+      users.map(async (user) => {
+        const friendship = await prisma.friendship.findFirst({
+          where: {
+            userId,
+            friendId: user.id,
+          },
+        });
+
+        const sentRequest = await prisma.friendRequest.findFirst({
+          where: {
+            senderId: userId,
+            receiverId: user.id,
+            status: "PENDING",
+          },
+        });
+
+        const receivedRequest = await prisma.friendRequest.findFirst({
+          where: {
+            senderId: user.id,
+            receiverId: userId,
+            status: "PENDING",
+          },
+        });
+
+        return {
+          ...user,
+
+          isFriend: !!friendship,
+
+          requestSent: !!sentRequest,
+          sentRequestId: sentRequest?.id || null,
+
+          requestReceived: !!receivedRequest,
+          receivedRequestId: receivedRequest?.id || null,
+        };
+      })
+    );
 
     return res.status(200).json({
       success: true,
-      data: users,
+      data: results,
     });
   } catch (error) {
-    console.log(error);
+    console.error("SEARCH_USERS_ERROR:", error);
 
     return res.status(500).json({
       success: false,
@@ -475,6 +520,126 @@ export const getMyFriends = async (req, res) => {
     });
   } catch (error) {
     console.error("GET_MY_FRIENDS_ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+};
+
+
+/**
+ * ============================================================================
+ * CANCEL SENT FRIEND REQUEST
+ * ============================================================================
+ */
+
+export const cancelFriendRequest = async (req, res) => {
+  try {
+    const senderId = req.user.id;
+    const { requestId } = req.params;
+
+    const request = await prisma.friendRequest.findUnique({
+      where: { id: requestId },
+    });
+
+    if (!request) {
+      return res.status(404).json({
+        success: false,
+        message: "Friend request not found",
+      });
+    }
+
+    if (request.senderId !== senderId) {
+      return res.status(403).json({
+        success: false,
+        message: "Unauthorized. You can only cancel your own sent request.",
+      });
+    }
+
+    if (request.status !== "PENDING") {
+      return res.status(400).json({
+        success: false,
+        message: "Only pending requests can be cancelled",
+      });
+    }
+
+    await prisma.friendRequest.delete({
+      where: { id: requestId },
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Friend request cancelled successfully",
+    });
+  } catch (error) {
+    console.error("CANCEL_FRIEND_REQUEST_ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+};
+
+
+
+export const searchFriendsOnly = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { q } = req.query;
+
+    if (!q?.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Search query is required",
+      });
+    }
+
+    const friends = await prisma.friendship.findMany({
+      where: {
+        userId,
+        friend: {
+          OR: [
+            {
+              username: {
+                contains: q.trim(),
+                mode: "insensitive",
+              },
+            },
+            {
+              fullName: {
+                contains: q.trim(),
+                mode: "insensitive",
+              },
+            },
+          ],
+        },
+      },
+      include: {
+        friend: {
+          select: {
+            id: true,
+            username: true,
+            fullName: true,
+            // profileImage: true, // optional
+          },
+        },
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+      take: 50,
+    });
+
+    return res.status(200).json({
+      success: true,
+      count: friends.length,
+      data: friends.map((item) => item.friend),
+    });
+  } catch (error) {
+    console.error("SEARCH_FRIENDS_ONLY_ERROR:", error);
 
     return res.status(500).json({
       success: false,

@@ -10,6 +10,7 @@ import {
   rejectFriendRequest,
   cancelFriendRequest,
   searchUsers,
+  searchFriendsOnly,
   getFriends,
   getMyFriends,
   removeFriend,
@@ -65,5 +66,7 @@ router.get("/", authMiddleware, getFriends);
 router.delete("/:friendId", authMiddleware, removeFriend);
 
 router.get("/me", authMiddleware, getMyFriends);
+
+router.get("/search/friend", authMiddleware, searchFriendsOnly);
 
 export default router;
