@@ -647,3 +647,48 @@ export const searchFriendsOnly = async (req, res) => {
     });
   }
 };
+
+
+/**
+ * ============================================================================
+ * GET SENT FRIEND REQUESTS
+ * ============================================================================
+ */
+
+export const getSentFriendRequests = async (req, res) => {
+  try {
+    const senderId = req.user.id;
+
+    const requests = await prisma.friendRequest.findMany({
+      where: {
+        senderId,
+        status: "PENDING",
+      },
+      include: {
+        receiver: {
+          select: {
+            id: true,
+            username: true,
+            fullName: true,
+          },
+        },
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      count: requests.length,
+      data: requests,
+    });
+  } catch (error) {
+    console.error("GET_SENT_FRIEND_REQUESTS_ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+};

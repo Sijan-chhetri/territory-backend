@@ -8,6 +8,7 @@ import {
   getPendingRequests,
   acceptFriendRequest,
   rejectFriendRequest,
+  getSentFriendRequests,
   cancelFriendRequest,
   searchUsers,
   searchFriendsOnly,
@@ -42,6 +43,9 @@ router.get("/get/requests", authMiddleware, getFriendRequests);
 
 // pending requests only
 router.get("/requests/pending", authMiddleware, getPendingRequests);
+
+// sent requests by me
+router.get("/requests/sent", authMiddleware, getSentFriendRequests);
 
 // accept request
 router.patch("/requests/:requestId/accept", authMiddleware, acceptFriendRequest);
