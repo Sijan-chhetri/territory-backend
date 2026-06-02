@@ -1051,59 +1051,133 @@ export const finishActivity = async (req, res) => {
 
     // 5. Merge own territories that touch or overlap.
     // This merges territory boundary. It does not corrupt activity route.
-    await prisma.$queryRaw`
-  WITH current_activity AS (
-    SELECT COALESCE(a."include_in_clan", false) AS "currentIncludeInClan"
-    FROM activities a
-    WHERE a.id = ${activity.id}
+
+
+
+    
+//     await prisma.$queryRaw`
+//   WITH current_activity AS (
+//     SELECT COALESCE(a."include_in_clan", false) AS "currentIncludeInClan"
+//     FROM activities a
+//     WHERE a.id = ${activity.id}
+//     LIMIT 1
+//   ),
+//   touching AS (
+//     SELECT t.id
+//     FROM territories t
+//     JOIN activities ta ON ta.id = t."activityId"
+//     CROSS JOIN current_activity
+//     WHERE t."userId" = ${userId}
+//       AND t.id != ${territoryId}
+//       AND COALESCE(ta."include_in_clan", false)
+//           = current_activity."currentIncludeInClan"
+//       AND t.boundary IS NOT NULL
+//       AND NOT ST_IsEmpty(t.boundary)
+//       AND (
+//         ST_Intersects(
+//           t.boundary,
+//           (SELECT boundary FROM territories WHERE id = ${territoryId})
+//         )
+//         OR ST_Touches(
+//           t.boundary,
+//           (SELECT boundary FROM territories WHERE id = ${territoryId})
+//         )
+//       )
+//   ),
+//   all_ids AS (
+//     SELECT ${territoryId}::text AS id
+//     UNION ALL
+//     SELECT id::text FROM touching
+//   ),
+//   merged AS (
+//     SELECT
+//       ST_MakeValid(ST_Union(t.boundary)) AS merged_boundary,
+//       ST_LineMerge(ST_Union(t."routeGeometry")) AS merged_route,
+//       COALESCE(${frontendAreaKm2}, ST_Area(ST_Union(t.boundary)::geography) / 1000000) AS merged_area
+//     FROM territories t
+//     WHERE t.id IN (SELECT id FROM all_ids)
+//       AND t.boundary IS NOT NULL
+//       AND NOT ST_IsEmpty(t.boundary)
+//   )
+//   UPDATE territories
+//   SET
+//     boundary = ST_Multi((SELECT merged_boundary FROM merged)),
+//     center = ST_PointOnSurface((SELECT merged_boundary FROM merged)),
+//     "routeGeometry" = (SELECT merged_route FROM merged),
+//     "areaKm2" = (SELECT merged_area FROM merged),
+//     "updatedAt" = NOW()
+//   WHERE id = ${territoryId}
+//   RETURNING id;
+// `;
+
+
+await prisma.$queryRaw`
+  WITH current_territory AS (
+    SELECT
+      t.id,
+      t.boundary,
+      COALESCE(a."include_in_clan", false) AS "currentIncludeInClan"
+    FROM territories t
+    JOIN activities a ON a.id = t."activityId"
+    WHERE t.id = ${territoryId}
     LIMIT 1
   ),
+
   touching AS (
     SELECT t.id
     FROM territories t
     JOIN activities ta ON ta.id = t."activityId"
-    CROSS JOIN current_activity
+    CROSS JOIN current_territory ct
     WHERE t."userId" = ${userId}
       AND t.id != ${territoryId}
+
+      -- IMPORTANT: only merge same lane
       AND COALESCE(ta."include_in_clan", false)
-          = current_activity."currentIncludeInClan"
+          = ct."currentIncludeInClan"
+
       AND t.boundary IS NOT NULL
       AND NOT ST_IsEmpty(t.boundary)
       AND (
-        ST_Intersects(
-          t.boundary,
-          (SELECT boundary FROM territories WHERE id = ${territoryId})
-        )
-        OR ST_Touches(
-          t.boundary,
-          (SELECT boundary FROM territories WHERE id = ${territoryId})
-        )
+        ST_Intersects(t.boundary, ct.boundary)
+        OR ST_Touches(t.boundary, ct.boundary)
       )
   ),
+
   all_ids AS (
     SELECT ${territoryId}::text AS id
     UNION ALL
     SELECT id::text FROM touching
   ),
+
   merged AS (
     SELECT
-      ST_MakeValid(ST_Union(t.boundary)) AS merged_boundary,
-      ST_LineMerge(ST_Union(t."routeGeometry")) AS merged_route,
-      COALESCE(${frontendAreaKm2}, ST_Area(ST_Union(t.boundary)::geography) / 1000000) AS merged_area
+      ST_Multi(
+        ST_CollectionExtract(
+          ST_MakeValid(ST_UnaryUnion(ST_Collect(t.boundary))),
+          3
+        )
+      ) AS merged_boundary,
+
+      ST_LineMerge(ST_Union(t."routeGeometry")) AS merged_route
+
     FROM territories t
     WHERE t.id IN (SELECT id FROM all_ids)
       AND t.boundary IS NOT NULL
       AND NOT ST_IsEmpty(t.boundary)
   )
-  UPDATE territories
+
+  UPDATE territories t
   SET
-    boundary = ST_Multi((SELECT merged_boundary FROM merged)),
-    center = ST_PointOnSurface((SELECT merged_boundary FROM merged)),
-    "routeGeometry" = (SELECT merged_route FROM merged),
-    "areaKm2" = (SELECT merged_area FROM merged),
+    boundary = merged.merged_boundary,
+    center = ST_PointOnSurface(merged.merged_boundary),
+    "routeGeometry" = merged.merged_route,
+    "areaKm2" = ST_Area(merged.merged_boundary::geography) / 1000000,
     "updatedAt" = NOW()
-  WHERE id = ${territoryId}
-  RETURNING id;
+  FROM merged
+  WHERE t.id = ${territoryId}
+    AND merged.merged_boundary IS NOT NULL
+    AND NOT ST_IsEmpty(merged.merged_boundary)
+  RETURNING t.id;
 `;
 
     // 6. Delete old own territories that were merged into the new one.
