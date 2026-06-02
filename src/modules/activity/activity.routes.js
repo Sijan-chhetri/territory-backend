@@ -9,7 +9,8 @@ import {
   getTodayStats,
   getMyTodayActivities,
   getMyFriendsActivities,
-  getWeeklyActivityStats
+  getWeeklyActivityStats,
+  getPersonalRecords,
 } from './activity.controller.js';
 
 const router = Router();
@@ -30,5 +31,8 @@ router.get('/friends', authMiddleware, getMyFriendsActivities);
 router.get('/:id', authMiddleware, getActivityDetail);
 
 router.get('/stats/weekly', authMiddleware, getWeeklyActivityStats);
+
+
+router.get('/stats/personal-records', authMiddleware, getPersonalRecords);
 
 export default router;

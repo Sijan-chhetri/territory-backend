@@ -1869,3 +1869,202 @@ export const getWeeklyActivityStats = async (req, res) => {
     });
   }
 };
+
+
+// ─────────────────────────────────────────────
+// Get Personal Records
+// GET /api/activities/stats/personal-records
+// ─────────────────────────────────────────────
+
+export const getPersonalRecords = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const activities = await prisma.activity.findMany({
+      where: {
+        userId,
+        distanceKm: {
+          gt: 0,
+        },
+      },
+      orderBy: {
+        startedAt: 'desc',
+      },
+      select: {
+        id: true,
+        mode: true,
+        distanceKm: true,
+        durationSec: true,
+        movingTime: true,
+        avgPace: true,
+        avgSpeed: true,
+        topSpeed: true,
+        kmSplits: true,
+        startedAt: true,
+        endedAt: true,
+      },
+    });
+
+    if (activities.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: 'No activities found',
+        records: null,
+      });
+    }
+
+    const formatDuration = (seconds) => {
+      if (seconds == null) return null;
+
+      const sec = Number(seconds);
+      const h = Math.floor(sec / 3600);
+      const m = Math.floor((sec % 3600) / 60);
+      const s = sec % 60;
+
+      if (h > 0) {
+        return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+      }
+
+      return `${m}:${String(s).padStart(2, '0')}`;
+    };
+
+    const normalizeSplits = (kmSplits) => {
+      if (!Array.isArray(kmSplits)) return [];
+
+      return kmSplits
+        .map((split) => ({
+          km: Number(split.km),
+          timeSec: Number(split.timeSec ?? split.pace),
+        }))
+        .filter(
+          (split) =>
+            Number.isFinite(split.km) &&
+            Number.isFinite(split.timeSec) &&
+            split.timeSec > 0
+        )
+        .sort((a, b) => a.km - b.km);
+    };
+
+    const findFastestWindow = (splits, targetKm) => {
+      if (!splits || splits.length < targetKm) return null;
+
+      let best = null;
+
+      for (let i = 0; i <= splits.length - targetKm; i++) {
+        const window = splits.slice(i, i + targetKm);
+
+        const totalTimeSec = window.reduce(
+          (sum, split) => sum + Number(split.timeSec ?? 0),
+          0
+        );
+
+        if (!best || totalTimeSec < best.totalTimeSec) {
+          best = {
+            fromKm: window[0].km,
+            toKm: window[window.length - 1].km,
+            totalTimeSec,
+            paceSecPerKm: Math.round(totalTimeSec / targetKm),
+          };
+        }
+      }
+
+      return best;
+    };
+
+    const longestActivity = activities.reduce((best, current) => {
+      return Number(current.distanceKm ?? 0) > Number(best.distanceKm ?? 0)
+        ? current
+        : best;
+    }, activities[0]);
+
+    const highestSpeedActivity = activities.reduce((best, current) => {
+      return Number(current.topSpeed ?? 0) > Number(best.topSpeed ?? 0)
+        ? current
+        : best;
+    }, activities[0]);
+
+    const findFastestRecord = (targetKm) => {
+      let bestRecord = null;
+
+      for (const activity of activities) {
+        const splits = normalizeSplits(activity.kmSplits);
+
+        if (splits.length < targetKm) continue;
+
+        const bestWindow = findFastestWindow(splits, targetKm);
+
+        if (!bestWindow) continue;
+
+        if (
+          !bestRecord ||
+          bestWindow.totalTimeSec < bestRecord.timeSec
+        ) {
+          bestRecord = {
+            activityId: activity.id,
+            mode: activity.mode,
+            distanceKm: targetKm,
+            timeSec: bestWindow.totalTimeSec,
+            timeFormatted: formatDuration(bestWindow.totalTimeSec),
+            paceSecPerKm: bestWindow.paceSecPerKm,
+            paceFormatted: formatPace(bestWindow.paceSecPerKm),
+            fromKm: bestWindow.fromKm,
+            toKm: bestWindow.toKm,
+            actualActivityDistanceKm: Number(activity.distanceKm ?? 0),
+            startedAt: activity.startedAt,
+            endedAt: activity.endedAt,
+          };
+        }
+      }
+
+      return bestRecord;
+    };
+
+    const fastest1Km = findFastestRecord(1);
+    const fastest5Km = findFastestRecord(5);
+    const fastest10Km = findFastestRecord(10);
+    const fastest20Km = findFastestRecord(20);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Personal records loaded',
+      records: {
+        longestActivity: {
+          activityId: longestActivity.id,
+          mode: longestActivity.mode,
+          distanceKm: Number(longestActivity.distanceKm ?? 0),
+          durationSec: longestActivity.durationSec,
+          durationFormatted: formatDuration(longestActivity.durationSec),
+          movingTimeSec: longestActivity.movingTime,
+          movingTimeFormatted: formatDuration(longestActivity.movingTime),
+          startedAt: longestActivity.startedAt,
+          endedAt: longestActivity.endedAt,
+        },
+
+        fastest1Km,
+        fastest5Km,
+        fastest10Km,
+        fastest20Km,
+
+        highestSpeed: {
+          activityId: highestSpeedActivity.id,
+          mode: highestSpeedActivity.mode,
+          topSpeed: Number(highestSpeedActivity.topSpeed ?? 0),
+          distanceKm: Number(highestSpeedActivity.distanceKm ?? 0),
+          startedAt: highestSpeedActivity.startedAt,
+          endedAt: highestSpeedActivity.endedAt,
+        },
+      },
+    });
+  } catch (error) {
+    console.error('GET_PERSONAL_RECORDS ERROR:', error);
+
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch personal records',
+      error:
+        process.env.NODE_ENV === 'development'
+          ? error.message
+          : undefined,
+    });
+  }
+};
