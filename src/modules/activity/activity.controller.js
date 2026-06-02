@@ -1741,3 +1741,131 @@ export const getMyFriendsActivities = async (req, res) => {
     });
   }
 };
+
+
+
+// ─────────────────────────────────────────────
+// Get Weekly Run Stats
+// GET /api/activities/stats/weekly?weekStart=2026-06-01
+// If weekStart is not sent, current week is used
+// ─────────────────────────────────────────────
+
+export const getWeeklyActivityStats = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    let weekStart;
+
+    if (req.query.weekStart) {
+      weekStart = new Date(req.query.weekStart);
+    } else {
+      const today = new Date();
+      const day = today.getDay();
+      const diff = day === 0 ? -6 : 1 - day;
+
+      weekStart = new Date(today);
+      weekStart.setDate(today.getDate() + diff);
+    }
+
+    weekStart.setHours(0, 0, 0, 0);
+
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekStart.getDate() + 6);
+    weekEnd.setHours(23, 59, 59, 999);
+
+    const activities = await prisma.activity.findMany({
+      where: {
+        userId,
+        startedAt: {
+          gte: weekStart,
+          lte: weekEnd,
+        },
+      },
+      orderBy: {
+        startedAt: 'asc',
+      },
+      select: {
+        id: true,
+        mode: true,
+        distanceKm: true,
+        durationSec: true,
+        movingTime: true,
+        startedAt: true,
+        endedAt: true,
+      },
+    });
+
+    const totalDistanceKm = activities.reduce(
+      (sum, activity) => sum + Number(activity.distanceKm ?? 0),
+      0
+    );
+
+    const totalDurationSec = activities.reduce(
+      (sum, activity) => sum + Number(activity.durationSec ?? 0),
+      0
+    );
+
+    const totalMovingTimeSec = activities.reduce(
+      (sum, activity) => sum + Number(activity.movingTime ?? 0),
+      0
+    );
+
+    // Count one active day only once
+    const activeDaySet = new Set();
+
+    activities.forEach((activity) => {
+      const dateKey = new Date(activity.startedAt).toISOString().slice(0, 10);
+      activeDaySet.add(dateKey);
+    });
+
+    const activeDays = [...activeDaySet].sort();
+
+    // Streak inside selected week based on startedAt
+    let currentStreak = 0;
+    let maxStreak = 0;
+
+    for (let i = 0; i < 7; i++) {
+      const day = new Date(weekStart);
+      day.setDate(weekStart.getDate() + i);
+
+      const dateKey = day.toISOString().slice(0, 10);
+
+      if (activeDaySet.has(dateKey)) {
+        currentStreak++;
+        maxStreak = Math.max(maxStreak, currentStreak);
+      } else {
+        currentStreak = 0;
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Weekly activity stats loaded',
+      week: {
+        start: weekStart,
+        end: weekEnd,
+      },
+      stats: {
+        totalActivities: activities.length,
+        totalActiveDays: activeDays.length,
+        streak: maxStreak,
+        totalDistanceKm,
+        totalDurationSec,
+        totalMovingTimeSec,
+      },
+      activeDays,
+      activities,
+    });
+  } catch (error) {
+    console.error('GET_WEEKLY_ACTIVITY_STATS ERROR:', error);
+
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch weekly activity stats',
+      error:
+        process.env.NODE_ENV === 'development'
+          ? error.message
+          : undefined,
+    });
+  }
+};

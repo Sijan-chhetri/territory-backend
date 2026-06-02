@@ -9,6 +9,7 @@ import {
   getTodayStats,
   getMyTodayActivities,
   getMyFriendsActivities,
+  getWeeklyActivityStats
 } from './activity.controller.js';
 
 const router = Router();
@@ -27,5 +28,7 @@ router.get('/friends', authMiddleware, getMyFriendsActivities);
 
 // dynamic route always last
 router.get('/:id', authMiddleware, getActivityDetail);
+
+router.get('/stats/weekly', authMiddleware, getWeeklyActivityStats);
 
 export default router;
