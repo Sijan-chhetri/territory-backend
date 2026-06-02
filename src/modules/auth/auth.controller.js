@@ -85,29 +85,80 @@ export const register = async (req, res) => {
 // ─────────────────────────────────────────────
 export const login = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, fcmToken } = req.body;
 
     if (!email || !password) {
-      return res.status(400).json({ success: false, message: 'Email and password are required' });
-    }
-    if (!validator.isEmail(email)) {
-      return res.status(400).json({ success: false, message: 'Invalid email format' });
+      return res.status(400).json({
+        success: false,
+        message: "Email and password are required",
+      });
     }
 
-    const user = await prisma.user.findUnique({ where: { email: email.toLowerCase() } });
-    if (!user) return res.status(401).json({ success: false, message: 'Invalid credentials' });
+    if (!validator.isEmail(email)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid email format",
+      });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { email: email.toLowerCase() },
+    });
+
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid credentials",
+      });
+    }
 
     const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) return res.status(401).json({ success: false, message: 'Invalid credentials' });
 
-    const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '30d' });
-    const { password: _, ...safeUser } = user;
+    if (!isMatch) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid credentials",
+      });
+    }
 
-    return res.status(200).json({ success: true, message: 'Login successful', token, user: safeUser });
+    let updatedUser = user;
 
+    // Save FCM token after successful login
+    if (fcmToken && fcmToken.trim() !== "") {
+      updatedUser = await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          fcmToken: fcmToken.trim(),
+        },
+      });
+    }
+
+    const token = jwt.sign(
+      {
+        id: updatedUser.id,
+        email: updatedUser.email,
+      },
+      JWT_SECRET,
+      { expiresIn: "30d" }
+    );
+
+    const { password: _, ...safeUser } = updatedUser;
+
+    return res.status(200).json({
+      success: true,
+      message: "Login successful",
+      token,
+      user: safeUser,
+    });
   } catch (error) {
-    console.error('LOGIN ERROR:', error);
-    return res.status(500).json({ success: false, message: 'Something went wrong', error: process.env.NODE_ENV === 'development' ? error.message : undefined });
+    console.error("LOGIN ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Something went wrong",
+      error:
+        process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
   }
 };
 
@@ -354,7 +405,8 @@ export const getUserDetailById = async (req, res) => {
 
 export const googleAuth = async (req, res) => {
   try {
-    const { idToken } = req.body;
+    const { idToken, fcmToken } = req.body;
+    console.log("fcm token from the google login, ", fcmToken)
 
     if (!idToken) {
       return res.status(400).json({
@@ -397,16 +449,27 @@ export const googleAuth = async (req, res) => {
           username,
           googleId,
           authProvider: "GOOGLE",
+          fcmToken: fcmToken?.trim() || null,
         },
       });
-    } else if (!user.googleId) {
-      user = await prisma.user.update({
-        where: { id: user.id },
-        data: {
-          googleId,
-          authProvider: "GOOGLE",
-        },
-      });
+    } else {
+      const updateData = {};
+
+      if (!user.googleId) {
+        updateData.googleId = googleId;
+        updateData.authProvider = "GOOGLE";
+      }
+
+      if (fcmToken?.trim()) {
+        updateData.fcmToken = fcmToken.trim();
+      }
+
+      if (Object.keys(updateData).length > 0) {
+        user = await prisma.user.update({
+          where: { id: user.id },
+          data: updateData,
+        });
+      }
     }
 
     const token = generateJwt(user);
@@ -432,7 +495,7 @@ export const googleAuth = async (req, res) => {
 
 export const appleAuth = async (req, res) => {
   try {
-    const { identityToken, fullName } = req.body;
+    const { identityToken, fullName, fcmToken } = req.body;
 
     if (!identityToken) {
       return res.status(400).json({
@@ -451,10 +514,7 @@ export const appleAuth = async (req, res) => {
 
     let user = await prisma.user.findFirst({
       where: {
-        OR: [
-          { appleId },
-          ...(email ? [{ email }] : []),
-        ],
+        OR: [{ appleId }, ...(email ? [{ email }] : [])],
       },
     });
 
@@ -469,16 +529,27 @@ export const appleAuth = async (req, res) => {
           username,
           appleId,
           authProvider: "APPLE",
+          fcmToken: fcmToken?.trim() || null,
         },
       });
-    } else if (!user.appleId) {
-      user = await prisma.user.update({
-        where: { id: user.id },
-        data: {
-          appleId,
-          authProvider: "APPLE",
-        },
-      });
+    } else {
+      const updateData = {};
+
+      if (!user.appleId) {
+        updateData.appleId = appleId;
+        updateData.authProvider = "APPLE";
+      }
+
+      if (fcmToken?.trim()) {
+        updateData.fcmToken = fcmToken.trim();
+      }
+
+      if (Object.keys(updateData).length > 0) {
+        user = await prisma.user.update({
+          where: { id: user.id },
+          data: updateData,
+        });
+      }
     }
 
     const token = generateJwt(user);
