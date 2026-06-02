@@ -8,6 +8,7 @@ import {
   getPendingRequests,
   acceptFriendRequest,
   rejectFriendRequest,
+  cancelFriendRequest,
   searchUsers,
   getFriends,
   getMyFriends,
@@ -46,6 +47,10 @@ router.patch("/requests/:requestId/accept", authMiddleware, acceptFriendRequest)
 
 // reject request
 router.patch("/requests/:requestId/reject", authMiddleware, rejectFriendRequest);
+
+// cancel request
+// cancel sent request
+router.delete("/requests/:requestId/cancel", authMiddleware, cancelFriendRequest);
 
 /**
  * ============================================================================

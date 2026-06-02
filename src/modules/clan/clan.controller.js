@@ -1830,3 +1830,58 @@ export const getClanMembersFull = async (req, res) => {
     });
   }
 };
+
+
+/**
+ * ============================================================================
+ * CANCEL SENT FRIEND REQUEST
+ * ============================================================================
+ */
+
+export const cancelFriendRequest = async (req, res) => {
+  try {
+    const senderId = req.user.id;
+    const { requestId } = req.params;
+
+    const request = await prisma.friendRequest.findUnique({
+      where: { id: requestId },
+    });
+
+    if (!request) {
+      return res.status(404).json({
+        success: false,
+        message: "Friend request not found",
+      });
+    }
+
+    if (request.senderId !== senderId) {
+      return res.status(403).json({
+        success: false,
+        message: "Unauthorized. You can only cancel your own sent request.",
+      });
+    }
+
+    if (request.status !== "PENDING") {
+      return res.status(400).json({
+        success: false,
+        message: "Only pending requests can be cancelled",
+      });
+    }
+
+    await prisma.friendRequest.delete({
+      where: { id: requestId },
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Friend request cancelled successfully",
+    });
+  } catch (error) {
+    console.error("CANCEL_FRIEND_REQUEST_ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+};
