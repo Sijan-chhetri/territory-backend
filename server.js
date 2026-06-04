@@ -5,20 +5,20 @@ import helmet from "helmet";
 import morgan from "morgan";
 import http from "http";
 
-import { initSocket } from "./config/socket.js";
+import { initSocket } from "./src/config/socket.js";
 
-import authRoutes from "./modules/auth/auth.routes.js";
-import activityRoutes from "./modules/activity/activity.routes.js";
-import territoryRoutes from "./modules/activity/territory.routes.js";
-import progressionRoutes from "./modules/progression/progression.routes.js";
-import xpRoutes from "./modules/xp/xp.routes.js";
-import badgeRoutes from "./modules/badge/badge.routes.js";
-import levelRoutes from "./modules/level/level.routes.js";
-import friendRoutes from "./modules/friends/friend.routes.js";
-import clanRoutes from "./modules/clan/clan.route.js";
-import notificationRoutes from "./modules/notification/notification.route.js";
-import leaderboardRoutes from "./modules/leaderboard/User/leaderboard.routes.js";
-import clanleaderboardRoutes from "./modules/leaderboard/Clan/clanLeaderboard.route.js";
+import authRoutes from "./src/modules/auth/auth.routes.js";
+import activityRoutes from "./src/modules/activity/activity.routes.js";
+import territoryRoutes from "./src/modules/activity/territory.routes.js";
+import progressionRoutes from "./src/modules/progression/progression.routes.js";
+import xpRoutes from "./src/modules/xp/xp.routes.js";
+import badgeRoutes from "./src/modules/badge/badge.routes.js";
+import levelRoutes from "./src/modules/level/level.routes.js";
+import friendRoutes from "./src/modules/friends/friend.routes.js";
+import clanRoutes from "./src/modules/clan/clan.route.js";
+import notificationRoutes from "./src/modules/notification/notification.route.js";
+import leaderboardRoutes from "./src/modules/leaderboard/User/leaderboard.routes.js";
+import clanleaderboardRoutes from "./src/modules/leaderboard/Clan/clanLeaderboard.route.js";
 
 const app = express();
 
