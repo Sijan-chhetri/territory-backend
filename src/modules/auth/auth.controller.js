@@ -26,7 +26,15 @@ async function generateUsername(fullName) {
 }
 
 
-const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+// const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
+const googleClient = new OAuth2Client();
+
+const allowedGoogleClientIds = [
+  process.env.GOOGLE_IOS_CLIENT_ID,
+  process.env.GOOGLE_ANDROID_CLIENT_ID,
+  process.env.GOOGLE_WEB_CLIENT_ID,
+].filter(Boolean);
 
 function generateJwt(user) {
   return jwt.sign(
@@ -406,7 +414,6 @@ export const getUserDetailById = async (req, res) => {
 export const googleAuth = async (req, res) => {
   try {
     const { idToken, fcmToken } = req.body;
-    console.log("fcm token from the google login, ", fcmToken)
 
     if (!idToken) {
       return res.status(400).json({
@@ -415,9 +422,16 @@ export const googleAuth = async (req, res) => {
       });
     }
 
+    if (allowedGoogleClientIds.length === 0) {
+      return res.status(500).json({
+        success: false,
+        message: "Google client IDs are not configured",
+      });
+    }
+
     const ticket = await googleClient.verifyIdToken({
       idToken,
-      audience: process.env.GOOGLE_CLIENT_ID,
+      audience: allowedGoogleClientIds,
     });
 
     const payload = ticket.getPayload();
@@ -487,7 +501,8 @@ export const googleAuth = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Google authentication failed",
-      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+      error:
+        process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 };
@@ -571,3 +586,4 @@ export const appleAuth = async (req, res) => {
     });
   }
 };
+
