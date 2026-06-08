@@ -2188,6 +2188,11 @@ export const getLifetimeActivityStats = async (req, res) => {
   try {
     const userId = req.user.id;
 
+    const round = (value, decimals = 2) => {
+      const number = Number(value ?? 0);
+      return Number(number.toFixed(decimals));
+    };
+
     const activities = await prisma.activity.findMany({
       where: {
         userId,
@@ -2208,34 +2213,50 @@ export const getLifetimeActivityStats = async (req, res) => {
       },
     });
 
-    const totalDistanceKm = activities.reduce(
-      (sum, activity) => sum + Number(activity.distanceKm ?? 0),
+    const formattedActivities = activities.map((activity) => {
+      const movingTimeSec = Math.max(0, Number(activity.movingTime ?? 0));
+
+      return {
+        id: activity.id,
+        mode: activity.mode,
+        distanceKm: round(activity.distanceKm, 3),
+        durationSec: Number(activity.durationSec ?? 0),
+        movingTimeSec,
+        calories: round(activity.calories, 0),
+        elevationGainM: round(activity.elevationGain, 1),
+        startedAt: activity.startedAt,
+        endedAt: activity.endedAt,
+      };
+    });
+
+    const totalDistanceKm = formattedActivities.reduce(
+      (sum, activity) => sum + activity.distanceKm,
       0
     );
 
-    const totalDurationSec = activities.reduce(
-      (sum, activity) => sum + Number(activity.durationSec ?? 0),
+    const totalDurationSec = formattedActivities.reduce(
+      (sum, activity) => sum + activity.durationSec,
       0
     );
 
-    const totalMovingTimeSec = activities.reduce(
-      (sum, activity) => sum + Number(activity.movingTime ?? 0),
+    const totalMovingTimeSec = formattedActivities.reduce(
+      (sum, activity) => sum + activity.movingTimeSec,
       0
     );
 
-    const totalCalories = activities.reduce(
-      (sum, activity) => sum + Number(activity.calories ?? 0),
+    const totalCalories = formattedActivities.reduce(
+      (sum, activity) => sum + activity.calories,
       0
     );
 
-    const totalElevationGain = activities.reduce(
-      (sum, activity) => sum + Number(activity.elevationGain ?? 0),
+    const totalElevationGainM = formattedActivities.reduce(
+      (sum, activity) => sum + activity.elevationGainM,
       0
     );
 
     const activeDaySet = new Set();
 
-    activities.forEach((activity) => {
+    formattedActivities.forEach((activity) => {
       if (activity.startedAt) {
         const dateKey = new Date(activity.startedAt)
           .toISOString()
@@ -2248,64 +2269,96 @@ export const getLifetimeActivityStats = async (req, res) => {
     const activeDays = [...activeDaySet].sort();
 
     let longestRun = null;
-    let fastestActivity = null;
+    let fastestRun = null;
 
-    activities.forEach((activity) => {
+    formattedActivities.forEach((activity) => {
       const distance = Number(activity.distanceKm ?? 0);
-      const movingTime = Number(activity.movingTime ?? activity.durationSec ?? 0);
+      const movingTimeSec = Number(activity.movingTimeSec ?? 0);
 
-      if (!longestRun || distance > Number(longestRun.distanceKm ?? 0)) {
+      if (!longestRun || distance > longestRun.distanceKm) {
         longestRun = activity;
       }
 
-      if (distance > 0 && movingTime > 0) {
-        const pace = movingTime / 60 / distance;
+      if (distance > 0 && movingTimeSec > 0) {
+        const paceMinPerKm = movingTimeSec / 60 / distance;
 
-        if (
-          !fastestActivity ||
-          pace < fastestActivity.avgPaceMinPerKm
-        ) {
-          fastestActivity = {
+        if (!fastestRun || paceMinPerKm < fastestRun.paceMinPerKm) {
+          fastestRun = {
             ...activity,
-            avgPaceMinPerKm: pace,
+            paceMinPerKm: round(paceMinPerKm, 2),
           };
         }
       }
     });
 
-    const avgDistancePerActivity =
-      activities.length > 0 ? totalDistanceKm / activities.length : 0;
+    const firstActivity =
+      formattedActivities.length > 0
+        ? formattedActivities[0].startedAt
+        : null;
 
-    const avgDistancePerActiveDay =
-      activeDays.length > 0 ? totalDistanceKm / activeDays.length : 0;
-
-    const avgPaceMinPerKm =
-      totalDistanceKm > 0
-        ? totalMovingTimeSec / 60 / totalDistanceKm
-        : 0;
+    const latestActivity =
+      formattedActivities.length > 0
+        ? formattedActivities[formattedActivities.length - 1].startedAt
+        : null;
 
     return res.status(200).json({
       success: true,
       message: 'Lifetime activity stats loaded',
-      stats: {
-        totalActivities: activities.length,
-        totalActiveDays: activeDays.length,
 
-        totalDistanceKm,
-        totalDurationSec,
-        totalMovingTimeSec,
-        totalCalories,
-        totalElevationGain,
-
-        avgDistancePerActivity,
-        avgDistancePerActiveDay,
-        avgPaceMinPerKm,
-
-        longestRun,
-        fastestActivity,
+      summary: {
+        activities: formattedActivities.length,
+        activeDays: activeDays.length,
+        distanceKm: round(totalDistanceKm, 3),
+        durationSec: totalDurationSec,
+        movingTimeSec: totalMovingTimeSec,
+        calories: round(totalCalories, 0),
+        elevationGainM: round(totalElevationGainM, 1),
       },
+
+      averages: {
+        distancePerActivityKm:
+          formattedActivities.length > 0
+            ? round(totalDistanceKm / formattedActivities.length, 3)
+            : 0,
+
+        distancePerActiveDayKm:
+          activeDays.length > 0
+            ? round(totalDistanceKm / activeDays.length, 3)
+            : 0,
+
+        paceMinPerKm:
+          totalDistanceKm > 0 && totalMovingTimeSec > 0
+            ? round(totalMovingTimeSec / 60 / totalDistanceKm, 2)
+            : 0,
+      },
+
+      records: {
+        longestRun: longestRun
+          ? {
+              id: longestRun.id,
+              distanceKm: longestRun.distanceKm,
+              date: longestRun.startedAt,
+            }
+          : null,
+
+        fastestRun: fastestRun
+          ? {
+              id: fastestRun.id,
+              paceMinPerKm: fastestRun.paceMinPerKm,
+              distanceKm: fastestRun.distanceKm,
+              date: fastestRun.startedAt,
+            }
+          : null,
+      },
+
+      activityPeriod: {
+        firstActivity,
+        latestActivity,
+      },
+
       activeDays,
-      activities,
+
+      activities: formattedActivities,
     });
   } catch (error) {
     console.error('GET_LIFETIME_ACTIVITY_STATS ERROR:', error);
