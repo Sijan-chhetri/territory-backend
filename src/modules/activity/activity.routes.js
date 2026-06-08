@@ -12,6 +12,7 @@ import {
   getWeeklyActivityStats,
   getPersonalRecords,
   getLifetimeActivityStats,
+  getActivityGraphStats,
 } from './activity.controller.js';
 
 const router = Router();
@@ -21,6 +22,8 @@ router.post('/finish', authMiddleware, finishActivity);
 router.get('/my', authMiddleware, getMyActivities);
 
 router.get('/my/today', authMiddleware, getMyTodayActivities);
+
+router.get('/stats/graph', authMiddleware, getActivityGraphStats);
 
 router.get('/stats/total', authMiddleware, getMyTotalStats);
 router.get('/stats/today', authMiddleware, getTodayStats);

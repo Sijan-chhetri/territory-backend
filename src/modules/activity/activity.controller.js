@@ -2373,3 +2373,198 @@ export const getLifetimeActivityStats = async (req, res) => {
     });
   }
 };
+
+
+export const getActivityGraphStats = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const round = (value, decimals = 2) => {
+      const number = Number(value ?? 0);
+      return Number(number.toFixed(decimals));
+    };
+
+    const now = new Date();
+
+    const startOfToday = new Date(now);
+    startOfToday.setHours(0, 0, 0, 0);
+
+    const startOfWeek = new Date(now);
+    const day = startOfWeek.getDay();
+    startOfWeek.setDate(startOfWeek.getDate() - day);
+    startOfWeek.setHours(0, 0, 0, 0);
+
+    const startOfYear = new Date(now.getFullYear(), 0, 1);
+
+    const activities = await prisma.activity.findMany({
+      where: {
+        userId,
+        startedAt: {
+          gte: startOfYear,
+        },
+      },
+      orderBy: {
+        startedAt: 'asc',
+      },
+      select: {
+        id: true,
+        mode: true,
+        distanceKm: true,
+        durationSec: true,
+        movingTime: true,
+        stopTime: true,
+        avgPace: true,
+        topPace: true,
+        avgSpeed: true,
+        topSpeed: true,
+        calories: true,
+        elevationGain: true,
+        startedAt: true,
+      },
+    });
+
+    const emptyStats = () => ({
+      activities: 0,
+      distanceKm: 0,
+      durationSec: 0,
+      movingTimeSec: 0,
+      stopTimeSec: 0,
+      calories: 0,
+      elevationGainM: 0,
+      avgPace: 0,
+      avgSpeed: 0,
+      topPace: 0,
+      topSpeed: 0,
+    });
+
+    const addActivityToStats = (stats, activity) => {
+      stats.activities += 1;
+      stats.distanceKm += Number(activity.distanceKm ?? 0);
+      stats.durationSec += Number(activity.durationSec ?? 0);
+      stats.movingTimeSec += Math.max(0, Number(activity.movingTime ?? 0));
+      stats.stopTimeSec += Math.max(0, Number(activity.stopTime ?? 0));
+      stats.calories += Number(activity.calories ?? 0);
+      stats.elevationGainM += Number(activity.elevationGain ?? 0);
+
+      stats.avgPace += Number(activity.avgPace ?? 0);
+      stats.avgSpeed += Number(activity.avgSpeed ?? 0);
+
+      stats.topPace = Math.max(stats.topPace, Number(activity.topPace ?? 0));
+      stats.topSpeed = Math.max(stats.topSpeed, Number(activity.topSpeed ?? 0));
+    };
+
+    const finalizeStats = (stats) => ({
+      activities: stats.activities,
+      distanceKm: round(stats.distanceKm, 3),
+      durationSec: stats.durationSec,
+      movingTimeSec: stats.movingTimeSec,
+      stopTimeSec: stats.stopTimeSec,
+      calories: round(stats.calories, 0),
+      elevationGainM: round(stats.elevationGainM, 1),
+
+      avgPace:
+        stats.activities > 0
+          ? round(stats.avgPace / stats.activities, 2)
+          : 0,
+
+      avgSpeed:
+        stats.activities > 0
+          ? round(stats.avgSpeed / stats.activities, 2)
+          : 0,
+
+      topPace: round(stats.topPace, 2),
+      topSpeed: round(stats.topSpeed, 2),
+    });
+
+    const daily = Array.from({ length: 24 }, (_, hour) => ({
+      label: `${hour}:00`,
+      hour,
+      stats: emptyStats(),
+    }));
+
+    const weeklyLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+    const weekly = weeklyLabels.map((label, index) => ({
+      label,
+      dayIndex: index,
+      stats: emptyStats(),
+    }));
+
+    const monthlyLabels = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+
+    const monthly = monthlyLabels.map((label, index) => ({
+      label,
+      monthIndex: index,
+      stats: emptyStats(),
+    }));
+
+    activities.forEach((activity) => {
+      const activityDate = new Date(activity.startedAt);
+
+      if (activityDate >= startOfToday) {
+        const hour = activityDate.getHours();
+        addActivityToStats(daily[hour].stats, activity);
+      }
+
+      if (activityDate >= startOfWeek) {
+        const dayIndex = activityDate.getDay();
+        addActivityToStats(weekly[dayIndex].stats, activity);
+      }
+
+      const monthIndex = activityDate.getMonth();
+      addActivityToStats(monthly[monthIndex].stats, activity);
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Activity graph stats loaded',
+
+      filters: {
+        daily: {
+          start: startOfToday,
+          end: now,
+        },
+        weekly: {
+          start: startOfWeek,
+          end: now,
+        },
+        monthly: {
+          year: now.getFullYear(),
+          start: startOfYear,
+          end: now,
+        },
+      },
+
+      graph: {
+        daily: daily.map((item) => ({
+          ...item,
+          stats: finalizeStats(item.stats),
+        })),
+
+        weekly: weekly.map((item) => ({
+          ...item,
+          stats: finalizeStats(item.stats),
+        })),
+
+        monthly: monthly.map((item) => ({
+          ...item,
+          stats: finalizeStats(item.stats),
+        })),
+      },
+    });
+  } catch (error) {
+    console.error('GET_ACTIVITY_GRAPH_STATS ERROR:', error);
+
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch activity graph stats',
+      error:
+        process.env.NODE_ENV === 'development'
+          ? error.message
+          : undefined,
+    });
+  }
+};
