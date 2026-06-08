@@ -177,15 +177,61 @@ export const login = async (req, res) => {
 // ─────────────────────────────────────────────
 export const getMe = async (req, res) => {
   try {
-    const user = await prisma.user.findUnique({ where: { id: req.user.id } });
-    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+    const user = await prisma.user.findUnique({
+      where: {
+        id: req.user.id,
+      },
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+      });
+    }
+
+    const territoryStats = await prisma.territory.aggregate({
+      where: {
+        userId: req.user.id,
+        activity: {
+          includeInClan: false,
+        },
+      },
+      _sum: {
+        areaKm2: true,
+      },
+      _count: {
+        id: true,
+      },
+    });
 
     const { password: _, ...safeUser } = user;
-    return res.status(200).json({ success: true, user: safeUser });
 
+    return res.status(200).json({
+      success: true,
+
+      user: {
+        ...safeUser,
+
+        stats: {
+          totalTerritories: territoryStats._count.id,
+          totalAreaKm2: Number(
+            territoryStats._sum.areaKm2 ?? 0
+          ),
+        },
+      },
+    });
   } catch (error) {
     console.error('GET_ME ERROR:', error);
-    return res.status(500).json({ success: false, message: 'Something went wrong', error: process.env.NODE_ENV === 'development' ? error.message : undefined });
+
+    return res.status(500).json({
+      success: false,
+      message: 'Something went wrong',
+      error:
+        process.env.NODE_ENV === 'development'
+          ? error.message
+          : undefined,
+    });
   }
 };
 
