@@ -32,6 +32,9 @@ router.get('/:id', authMiddleware, getActivityDetail);
 
 router.get('/stats/weekly', authMiddleware, getWeeklyActivityStats);
 
+// lifetime stats 
+router.get('/stats/lifetime', authMiddleware, getLifetimeActivityStats);
+
 
 router.get('/stats/personal-records', authMiddleware, getPersonalRecords);
 

@@ -2181,3 +2181,142 @@ export const getPersonalRecords = async (req, res) => {
     });
   }
 };
+
+
+
+export const getLifetimeActivityStats = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const activities = await prisma.activity.findMany({
+      where: {
+        userId,
+      },
+      orderBy: {
+        startedAt: 'asc',
+      },
+      select: {
+        id: true,
+        mode: true,
+        distanceKm: true,
+        durationSec: true,
+        movingTime: true,
+        calories: true,
+        elevationGain: true,
+        startedAt: true,
+        endedAt: true,
+      },
+    });
+
+    const totalDistanceKm = activities.reduce(
+      (sum, activity) => sum + Number(activity.distanceKm ?? 0),
+      0
+    );
+
+    const totalDurationSec = activities.reduce(
+      (sum, activity) => sum + Number(activity.durationSec ?? 0),
+      0
+    );
+
+    const totalMovingTimeSec = activities.reduce(
+      (sum, activity) => sum + Number(activity.movingTime ?? 0),
+      0
+    );
+
+    const totalCalories = activities.reduce(
+      (sum, activity) => sum + Number(activity.calories ?? 0),
+      0
+    );
+
+    const totalElevationGain = activities.reduce(
+      (sum, activity) => sum + Number(activity.elevationGain ?? 0),
+      0
+    );
+
+    const activeDaySet = new Set();
+
+    activities.forEach((activity) => {
+      if (activity.startedAt) {
+        const dateKey = new Date(activity.startedAt)
+          .toISOString()
+          .slice(0, 10);
+
+        activeDaySet.add(dateKey);
+      }
+    });
+
+    const activeDays = [...activeDaySet].sort();
+
+    let longestRun = null;
+    let fastestActivity = null;
+
+    activities.forEach((activity) => {
+      const distance = Number(activity.distanceKm ?? 0);
+      const movingTime = Number(activity.movingTime ?? activity.durationSec ?? 0);
+
+      if (!longestRun || distance > Number(longestRun.distanceKm ?? 0)) {
+        longestRun = activity;
+      }
+
+      if (distance > 0 && movingTime > 0) {
+        const pace = movingTime / 60 / distance;
+
+        if (
+          !fastestActivity ||
+          pace < fastestActivity.avgPaceMinPerKm
+        ) {
+          fastestActivity = {
+            ...activity,
+            avgPaceMinPerKm: pace,
+          };
+        }
+      }
+    });
+
+    const avgDistancePerActivity =
+      activities.length > 0 ? totalDistanceKm / activities.length : 0;
+
+    const avgDistancePerActiveDay =
+      activeDays.length > 0 ? totalDistanceKm / activeDays.length : 0;
+
+    const avgPaceMinPerKm =
+      totalDistanceKm > 0
+        ? totalMovingTimeSec / 60 / totalDistanceKm
+        : 0;
+
+    return res.status(200).json({
+      success: true,
+      message: 'Lifetime activity stats loaded',
+      stats: {
+        totalActivities: activities.length,
+        totalActiveDays: activeDays.length,
+
+        totalDistanceKm,
+        totalDurationSec,
+        totalMovingTimeSec,
+        totalCalories,
+        totalElevationGain,
+
+        avgDistancePerActivity,
+        avgDistancePerActiveDay,
+        avgPaceMinPerKm,
+
+        longestRun,
+        fastestActivity,
+      },
+      activeDays,
+      activities,
+    });
+  } catch (error) {
+    console.error('GET_LIFETIME_ACTIVITY_STATS ERROR:', error);
+
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch lifetime activity stats',
+      error:
+        process.env.NODE_ENV === 'development'
+          ? error.message
+          : undefined,
+    });
+  }
+};
