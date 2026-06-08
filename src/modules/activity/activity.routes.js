@@ -11,6 +11,7 @@ import {
   getMyFriendsActivities,
   getWeeklyActivityStats,
   getPersonalRecords,
+  getLifetimeActivityStats,
 } from './activity.controller.js';
 
 const router = Router();
