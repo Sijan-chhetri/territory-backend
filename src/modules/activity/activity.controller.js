@@ -983,18 +983,24 @@ export const finishActivity = async (req, res) => {
       ),
       new_area AS (
   SELECT
-    ST_MakeValid(
-      ST_SnapToGrid(
-        ST_Buffer(
-          route::geography,
-          5,
-          'endcap=flat join=round quad_segs=2'
-        )::geometry,
-        0.0000001
+    ST_Multi(
+      ST_CollectionExtract(
+        ST_MakeValid(
+          ST_MakePolygon(
+            ST_AddPoint(route, ST_StartPoint(route))
+          )
+        ),
+        3
       )
     ) AS territory,
     route
   FROM new_route
+  WHERE ST_NPoints(route) >= 4
+    AND ST_DWithin(
+      ST_StartPoint(route)::geography,
+      ST_EndPoint(route)::geography,
+      25
+    )
 ),
       inserted AS (
         INSERT INTO territories (
