@@ -857,6 +857,9 @@ export const getMyActivities = async (req, res) => {
 //   }
 // };
 
+
+
+
 export const finishActivity = async (req, res) => {
   try {
     const userId = req.user.id;

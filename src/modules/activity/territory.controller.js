@@ -1014,17 +1014,28 @@ async function updateRouteEncodedFromGeometry(territoryId) {
 export const captureTerritory = async ({ userId, activityId, newTerritoryId }) => {
   const result = await prisma.$transaction(
     async (tx) => {
+      /**
+       * 10m capture zone from the actual walked route.
+       * This avoids using the whole polygon too aggressively.
+       */
       const capturedParts = await tx.$queryRaw`
         WITH current_territory AS (
           SELECT
             t.id,
-            t.boundary AS user_movement_boundary,
-            COALESCE(a."include_in_clan", false) AS "currentIncludeInClan"
+            t.boundary,
+            t."routeGeometry",
+            COALESCE(a."include_in_clan", false) AS "currentIncludeInClan",
+            ST_Buffer(
+              t."routeGeometry"::geography,
+              10,
+              'endcap=round join=round quad_segs=4'
+            )::geometry AS capture_zone
           FROM territories t
           JOIN activities a ON a.id = t."activityId"
           WHERE t.id = ${newTerritoryId}
           LIMIT 1
         ),
+
         captured_parts AS (
           SELECT
             enemy.id AS "enemyTerritoryId",
@@ -1032,22 +1043,23 @@ export const captureTerritory = async ({ userId, activityId, newTerritoryId }) =
             ST_Multi(
               ST_CollectionExtract(
                 ST_MakeValid(
-                  ST_Intersection(enemy.boundary, current_territory.user_movement_boundary)
+                  ST_Intersection(enemy.boundary, ct.capture_zone)
                 ),
                 3
               )
             ) AS captured_part
           FROM territories enemy
           JOIN activities enemy_activity ON enemy_activity.id = enemy."activityId"
-          CROSS JOIN current_territory
+          CROSS JOIN current_territory ct
           WHERE enemy."userId" != ${userId}
             AND enemy.id != ${newTerritoryId}
             AND COALESCE(enemy_activity."include_in_clan", false)
-                = current_territory."currentIncludeInClan"
+                = ct."currentIncludeInClan"
             AND enemy.boundary IS NOT NULL
             AND NOT ST_IsEmpty(enemy.boundary)
-            AND ST_Intersects(enemy.boundary, current_territory.user_movement_boundary)
+            AND ST_Intersects(enemy.boundary, ct.capture_zone)
         )
+
         SELECT
           "enemyTerritoryId",
           "enemyUserId",
@@ -1083,38 +1095,48 @@ export const captureTerritory = async ({ userId, activityId, newTerritoryId }) =
         });
       }
 
+      /**
+       * 1. Remove captured 10m route-zone from enemies.
+       */
       await tx.$executeRaw`
         WITH current_territory AS (
           SELECT
-            t.boundary AS user_movement_boundary,
-            COALESCE(a."include_in_clan", false) AS "currentIncludeInClan"
+            t."routeGeometry",
+            COALESCE(a."include_in_clan", false) AS "currentIncludeInClan",
+            ST_Buffer(
+              t."routeGeometry"::geography,
+              10,
+              'endcap=round join=round quad_segs=4'
+            )::geometry AS capture_zone
           FROM territories t
           JOIN activities a ON a.id = t."activityId"
           WHERE t.id = ${newTerritoryId}
           LIMIT 1
         ),
+
         enemy_diff AS (
           SELECT
             enemy.id,
             ST_Multi(
               ST_CollectionExtract(
                 ST_MakeValid(
-                  ST_Difference(enemy.boundary, current_territory.user_movement_boundary)
+                  ST_Difference(enemy.boundary, ct.capture_zone)
                 ),
                 3
               )
             ) AS new_boundary
           FROM territories enemy
           JOIN activities enemy_activity ON enemy_activity.id = enemy."activityId"
-          CROSS JOIN current_territory
+          CROSS JOIN current_territory ct
           WHERE enemy."userId" != ${userId}
             AND enemy.id != ${newTerritoryId}
             AND COALESCE(enemy_activity."include_in_clan", false)
-                = current_territory."currentIncludeInClan"
+                = ct."currentIncludeInClan"
             AND enemy.boundary IS NOT NULL
             AND NOT ST_IsEmpty(enemy.boundary)
-            AND ST_Intersects(enemy.boundary, current_territory.user_movement_boundary)
+            AND ST_Intersects(enemy.boundary, ct.capture_zone)
         )
+
         UPDATE territories enemy
         SET
           boundary = enemy_diff.new_boundary,
@@ -1127,6 +1149,69 @@ export const captureTerritory = async ({ userId, activityId, newTerritoryId }) =
           AND NOT ST_IsEmpty(enemy_diff.new_boundary);
       `;
 
+      /**
+       * 2. New user's territory should only be remaining part,
+       * after subtracting enemy territories that overlap the new route polygon.
+       */
+      await tx.$executeRaw`
+        WITH current_territory AS (
+          SELECT
+            t.id,
+            t.boundary,
+            COALESCE(a."include_in_clan", false) AS "currentIncludeInClan"
+          FROM territories t
+          JOIN activities a ON a.id = t."activityId"
+          WHERE t.id = ${newTerritoryId}
+          LIMIT 1
+        ),
+
+        enemy_union AS (
+          SELECT
+            ST_UnaryUnion(ST_Collect(enemy.boundary)) AS enemy_boundary
+          FROM territories enemy
+          JOIN activities enemy_activity ON enemy_activity.id = enemy."activityId"
+          CROSS JOIN current_territory ct
+          WHERE enemy."userId" != ${userId}
+            AND enemy.id != ${newTerritoryId}
+            AND COALESCE(enemy_activity."include_in_clan", false)
+                = ct."currentIncludeInClan"
+            AND enemy.boundary IS NOT NULL
+            AND NOT ST_IsEmpty(enemy.boundary)
+            AND ST_Intersects(enemy.boundary, ct.boundary)
+        ),
+
+        final_new AS (
+          SELECT
+            ST_Multi(
+              ST_CollectionExtract(
+                ST_MakeValid(
+                  ST_Difference(
+                    ct.boundary,
+                    COALESCE(
+                      eu.enemy_boundary,
+                      ST_GeomFromText('POLYGON EMPTY', 4326)
+                    )
+                  )
+                ),
+                3
+              )
+            ) AS new_boundary
+          FROM current_territory ct
+          LEFT JOIN enemy_union eu ON true
+        )
+
+        UPDATE territories t
+        SET
+          boundary = final_new.new_boundary,
+          center = ST_PointOnSurface(final_new.new_boundary),
+          "areaKm2" = ST_Area(final_new.new_boundary::geography) / 1000000,
+          "updatedAt" = NOW()
+        FROM final_new
+        WHERE t.id = ${newTerritoryId}
+          AND final_new.new_boundary IS NOT NULL
+          AND NOT ST_IsEmpty(final_new.new_boundary);
+      `;
+
       await tx.$executeRaw`
         DELETE FROM territories
         WHERE boundary IS NULL
@@ -1136,29 +1221,10 @@ export const captureTerritory = async ({ userId, activityId, newTerritoryId }) =
       `;
 
       const updatedNewTerritory = await tx.$queryRaw`
-        WITH fixed AS (
-          SELECT
-            id,
-            ST_Multi(
-              ST_CollectionExtract(
-                ST_MakeValid(boundary),
-                3
-              )
-            ) AS fixed_boundary
-          FROM territories
-          WHERE id = ${newTerritoryId}
-        )
-        UPDATE territories t
-        SET
-          boundary = fixed.fixed_boundary,
-          center = ST_PointOnSurface(fixed.fixed_boundary),
-          "areaKm2" = ST_Area(fixed.fixed_boundary::geography) / 1000000,
-          "updatedAt" = NOW()
-        FROM fixed
-        WHERE t.id = fixed.id
-          AND fixed.fixed_boundary IS NOT NULL
-          AND NOT ST_IsEmpty(fixed.fixed_boundary)
-        RETURNING t.id, t."areaKm2";
+        SELECT id, "areaKm2"
+        FROM territories
+        WHERE id = ${newTerritoryId}
+        LIMIT 1;
       `;
 
       return {
@@ -1173,11 +1239,8 @@ export const captureTerritory = async ({ userId, activityId, newTerritoryId }) =
     }
   );
 
-  // Important: do NOT call updateRouteEncodedFromGeometry here.
-  // routeEncoded must stay as original movement path.
   return result;
 };
-
 
 // ─────────────────────────────────────────────
 // Color palette
@@ -1377,41 +1440,45 @@ WHERE t.boundary IS NOT NULL
   )
       ),
       clipped AS (
-        SELECT
-          r.id,
-          r."userId",
-          r."activityId",
-          r.name,
-          r."areaKm2",
-          r."capturedAt",
-          r."createdAt",
-          r."updatedAt",
-          r.username,
-          r."fullName",
-          r."routeEncoded",
-          r."routeSegmentsEncoded",
-          ST_Multi(
-  ST_CollectionExtract(
-    ST_MakeValid(
-      COALESCE(
-        (
-          SELECT ST_Difference(
-            r.boundary,
-            ST_Union(newer.boundary)
+  SELECT
+    r.id,
+    r."userId",
+    r."activityId",
+    r.name,
+    r."areaKm2",
+    r."capturedAt",
+    r."createdAt",
+    r."updatedAt",
+    r.username,
+    r."fullName",
+    r."routeEncoded",
+    r."routeSegmentsEncoded",
+
+    ST_Multi(
+      ST_CollectionExtract(
+        ST_MakeValid(
+          ST_Difference(
+            ST_MakeValid(r.boundary),
+            COALESCE(
+              (
+                SELECT ST_MakeValid(ST_UnaryUnion(ST_Collect(newer.boundary)))
+                FROM ranked newer
+                WHERE newer.rn < r.rn
+                  AND newer.boundary IS NOT NULL
+                  AND NOT ST_IsEmpty(newer.boundary)
+                  AND ST_Intersects(r.boundary, newer.boundary)
+              ),
+              ST_GeomFromText('POLYGON EMPTY', 4326)
+            )
           )
-          FROM ranked newer
-          WHERE newer.rn < r.rn
-            AND ST_Intersects(r.boundary, newer.boundary)
         ),
-        r.boundary
+        3
       )
-    ),
-    3
-  )
-) AS clipped_boundary,
-          ST_AsGeoJSON(r.center)::json AS center
-        FROM ranked r
-      )
+    ) AS clipped_boundary,
+
+    ST_AsGeoJSON(r.center)::json AS center
+  FROM ranked r
+)
       SELECT
         id,
         "userId",
@@ -1430,6 +1497,7 @@ WHERE t.boundary IS NOT NULL
       FROM clipped
       WHERE clipped_boundary IS NOT NULL
         AND NOT ST_IsEmpty(clipped_boundary)
+        AND GeometryType(clipped_boundary) IN ('POLYGON', 'MULTIPOLYGON')
       ORDER BY "updatedAt" DESC;
     `;
 
