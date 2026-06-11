@@ -1485,7 +1485,17 @@ export const finishActivity = async (req, res) => {
       ST_CollectionExtract(
         ST_MakeValid(
           ST_MakePolygon(
-            ST_AddPoint(route, ST_StartPoint(route))
+            ST_AddPoint(
+              ST_LineSubstring(
+                route,
+                0,
+                ST_LineLocatePoint(
+                  route,
+                  ST_StartPoint(route)
+                )
+              ),
+              ST_StartPoint(route)
+            )
           )
         ),
         3
@@ -1494,7 +1504,7 @@ export const finishActivity = async (req, res) => {
     route
   FROM new_route
   WHERE ST_NPoints(route) >= 4
-  AND ST_Length(route::geography) >= 500
+    AND ST_Length(route::geography) >= 500
     AND ST_DWithin(
       ST_StartPoint(route)::geography,
       ST_EndPoint(route)::geography,
