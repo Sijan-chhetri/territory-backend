@@ -261,6 +261,9 @@ model Activity {
   /// * | RELATIONS
   /// * |--------------------------------------------------------------------------
   userId         String
+
+  clientActivityId String?
+
   /// *
   /// * |--------------------------------------------------------------------------
   /// * | ACTIVITY DATA
@@ -295,6 +298,7 @@ model Activity {
   xptransactions XPTransaction[]
 
   @@index([userId])
+  @@unique([userId, clientActivityId])
   @@map("activities")
 }
 

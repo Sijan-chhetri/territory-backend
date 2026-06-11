@@ -1362,7 +1362,10 @@ export const finishActivity = async (req, res) => {
   try {
     const userId = req.user.id;
 
+    
+
     const {
+      clientActivityId,
       mode,
       distanceKm,
       durationSec,
@@ -1384,6 +1387,25 @@ export const finishActivity = async (req, res) => {
       notes,
       areaKm2
     } = req.body;
+
+
+    if (clientActivityId) {
+      const existingActivity = await prisma.activity.findFirst({
+        where: {
+          userId,
+          clientActivityId,
+        },
+      });
+
+      if (existingActivity) {
+        return res.status(200).json({
+          success: true,
+          duplicate: true,
+          message: 'Activity already synced',
+          activity: existingActivity,
+        });
+      }
+    }
 
     const safeRouteEncoded = validateRouteEncoded(routeEncoded);
 
@@ -1428,6 +1450,7 @@ export const finishActivity = async (req, res) => {
     // Important: activity route is NEVER subtracted.
     const activity = await prisma.activity.create({
       data: {
+        clientActivityId,
         userId,
         mode,
         distanceKm,
@@ -1573,63 +1596,63 @@ export const finishActivity = async (req, res) => {
 
 
 
-//     await prisma.$queryRaw`
-//   WITH current_activity AS (
-//     SELECT COALESCE(a."include_in_clan", false) AS "currentIncludeInClan"
-//     FROM activities a
-//     WHERE a.id = ${activity.id}
-//     LIMIT 1
-//   ),
-//   touching AS (
-//     SELECT t.id
-//     FROM territories t
-//     JOIN activities ta ON ta.id = t."activityId"
-//     CROSS JOIN current_activity
-//     WHERE t."userId" = ${userId}
-//       AND t.id != ${territoryId}
-//       AND COALESCE(ta."include_in_clan", false)
-//           = current_activity."currentIncludeInClan"
-//       AND t.boundary IS NOT NULL
-//       AND NOT ST_IsEmpty(t.boundary)
-//       AND (
-//         ST_Intersects(
-//           t.boundary,
-//           (SELECT boundary FROM territories WHERE id = ${territoryId})
-//         )
-//         OR ST_Touches(
-//           t.boundary,
-//           (SELECT boundary FROM territories WHERE id = ${territoryId})
-//         )
-//       )
-//   ),
-//   all_ids AS (
-//     SELECT ${territoryId}::text AS id
-//     UNION ALL
-//     SELECT id::text FROM touching
-//   ),
-//   merged AS (
-//     SELECT
-//       ST_MakeValid(ST_Union(t.boundary)) AS merged_boundary,
-//       ST_LineMerge(ST_Union(t."routeGeometry")) AS merged_route,
-//       COALESCE(${frontendAreaKm2}, ST_Area(ST_Union(t.boundary)::geography) / 1000000) AS merged_area
-//     FROM territories t
-//     WHERE t.id IN (SELECT id FROM all_ids)
-//       AND t.boundary IS NOT NULL
-//       AND NOT ST_IsEmpty(t.boundary)
-//   )
-//   UPDATE territories
-//   SET
-//     boundary = ST_Multi((SELECT merged_boundary FROM merged)),
-//     center = ST_PointOnSurface((SELECT merged_boundary FROM merged)),
-//     "routeGeometry" = (SELECT merged_route FROM merged),
-//     "areaKm2" = (SELECT merged_area FROM merged),
-//     "updatedAt" = NOW()
-//   WHERE id = ${territoryId}
-//   RETURNING id;
-// `;
+    //     await prisma.$queryRaw`
+    //   WITH current_activity AS (
+    //     SELECT COALESCE(a."include_in_clan", false) AS "currentIncludeInClan"
+    //     FROM activities a
+    //     WHERE a.id = ${activity.id}
+    //     LIMIT 1
+    //   ),
+    //   touching AS (
+    //     SELECT t.id
+    //     FROM territories t
+    //     JOIN activities ta ON ta.id = t."activityId"
+    //     CROSS JOIN current_activity
+    //     WHERE t."userId" = ${userId}
+    //       AND t.id != ${territoryId}
+    //       AND COALESCE(ta."include_in_clan", false)
+    //           = current_activity."currentIncludeInClan"
+    //       AND t.boundary IS NOT NULL
+    //       AND NOT ST_IsEmpty(t.boundary)
+    //       AND (
+    //         ST_Intersects(
+    //           t.boundary,
+    //           (SELECT boundary FROM territories WHERE id = ${territoryId})
+    //         )
+    //         OR ST_Touches(
+    //           t.boundary,
+    //           (SELECT boundary FROM territories WHERE id = ${territoryId})
+    //         )
+    //       )
+    //   ),
+    //   all_ids AS (
+    //     SELECT ${territoryId}::text AS id
+    //     UNION ALL
+    //     SELECT id::text FROM touching
+    //   ),
+    //   merged AS (
+    //     SELECT
+    //       ST_MakeValid(ST_Union(t.boundary)) AS merged_boundary,
+    //       ST_LineMerge(ST_Union(t."routeGeometry")) AS merged_route,
+    //       COALESCE(${frontendAreaKm2}, ST_Area(ST_Union(t.boundary)::geography) / 1000000) AS merged_area
+    //     FROM territories t
+    //     WHERE t.id IN (SELECT id FROM all_ids)
+    //       AND t.boundary IS NOT NULL
+    //       AND NOT ST_IsEmpty(t.boundary)
+    //   )
+    //   UPDATE territories
+    //   SET
+    //     boundary = ST_Multi((SELECT merged_boundary FROM merged)),
+    //     center = ST_PointOnSurface((SELECT merged_boundary FROM merged)),
+    //     "routeGeometry" = (SELECT merged_route FROM merged),
+    //     "areaKm2" = (SELECT merged_area FROM merged),
+    //     "updatedAt" = NOW()
+    //   WHERE id = ${territoryId}
+    //   RETURNING id;
+    // `;
 
 
-await prisma.$queryRaw`
+    await prisma.$queryRaw`
   WITH current_territory AS (
     SELECT
       t.id,
@@ -2853,19 +2876,19 @@ export const getLifetimeActivityStats = async (req, res) => {
       records: {
         longestRun: longestRun
           ? {
-              id: longestRun.id,
-              distanceKm: longestRun.distanceKm,
-              date: longestRun.startedAt,
-            }
+            id: longestRun.id,
+            distanceKm: longestRun.distanceKm,
+            date: longestRun.startedAt,
+          }
           : null,
 
         fastestRun: fastestRun
           ? {
-              id: fastestRun.id,
-              paceMinPerKm: fastestRun.paceMinPerKm,
-              distanceKm: fastestRun.distanceKm,
-              date: fastestRun.startedAt,
-            }
+            id: fastestRun.id,
+            paceMinPerKm: fastestRun.paceMinPerKm,
+            distanceKm: fastestRun.distanceKm,
+            date: fastestRun.startedAt,
+          }
           : null,
       },
 
