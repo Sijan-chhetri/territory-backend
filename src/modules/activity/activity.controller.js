@@ -1508,17 +1508,7 @@ export const finishActivity = async (req, res) => {
       ST_CollectionExtract(
         ST_MakeValid(
           ST_MakePolygon(
-            ST_AddPoint(
-              ST_LineSubstring(
-                route,
-                0,
-                ST_LineLocatePoint(
-                  route,
-                  ST_StartPoint(route)
-                )
-              ),
-              ST_StartPoint(route)
-            )
+            ST_AddPoint(route, ST_StartPoint(route))
           )
         ),
         3
