@@ -18,14 +18,17 @@ router.get('/user/me', authMiddleware, getMe);
 router.put('/user/profile', authMiddleware, updateProfile);
 router.patch('/user/username', authMiddleware, changeUsername);
 router.get("/users/not-friends", authMiddleware, getUsersWhoAreNotMyFriends);
-router.get("/user/:userId", authMiddleware, getUserDetailById);
-
 
 router.get("/user/setup-status", authMiddleware, checkUserSetupStatus);
 
 router.put("/user/setup", authMiddleware, setupUserInfo);
 
 router.get("/user/weight", authMiddleware, getUserWeight);
+
+router.get("/user/:userId", authMiddleware, getUserDetailById);
+
+
+
 
 
 export default router;
