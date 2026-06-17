@@ -1,7 +1,9 @@
 import { Router } from 'express';
 import authMiddleware from '../../middlewares/auth.js';
 import { register, login, getMe, updateProfile, changeUsername,getUsersWhoAreNotMyFriends,getUserDetailById,googleAuth,
-  appleAuth,
+  appleAuth,checkUserSetupStatus,
+setupUserInfo,
+getUserWeight,
  } from './auth.controller.js';
 
 const router = Router();
@@ -18,6 +20,12 @@ router.patch('/user/username', authMiddleware, changeUsername);
 router.get("/users/not-friends", authMiddleware, getUsersWhoAreNotMyFriends);
 router.get("/user/:userId", authMiddleware, getUserDetailById);
 
+
+router.get("/user/setup-status", authMiddleware, checkUserSetupStatus);
+
+router.put("/user/setup", authMiddleware, setupUserInfo);
+
+router.get("/user/weight", authMiddleware, getUserWeight);
 
 
 export default router;

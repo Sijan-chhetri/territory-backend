@@ -24,6 +24,8 @@ model User {
   country                 String?
   city                    String?
 
+  weight    Float?  
+
   authProvider            AuthProvider      @default(EMAIL) @map("auth_provider")
   googleId                String?           @unique @map("google_id")
   appleId                 String?           @unique @map("apple_id")

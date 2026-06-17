@@ -633,3 +633,161 @@ export const appleAuth = async (req, res) => {
   }
 };
 
+
+
+// ─────────────────────────────────────────────
+// Check User Setup Status
+// GET /api/auth/user/setup-status
+// Returns true if weight, country, or city is missing
+// ─────────────────────────────────────────────
+export const checkUserSetupStatus = async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: {
+        weight: true,
+        country: true,
+        city: true,
+      },
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    const isMissing =
+      user.weight === null ||
+      user.weight === undefined ||
+      !user.country ||
+      user.country.trim() === "" ||
+      !user.city ||
+      user.city.trim() === "";
+
+    return res.status(200).json({
+      success: true,
+      isSetupRequired: isMissing,
+    });
+  } catch (error) {
+    console.error("CHECK_USER_SETUP_STATUS_ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Something went wrong",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
+};
+
+
+// ─────────────────────────────────────────────
+// Setup User Weight, Country, City
+// PUT /api/auth/user/setup
+// ─────────────────────────────────────────────
+export const setupUserInfo = async (req, res) => {
+  try {
+    const { weight, country, city } = req.body;
+
+    if (weight === undefined || weight === null || country === undefined || city === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: "Weight, country, and city are required",
+      });
+    }
+
+    const parsedWeight = Number(weight);
+
+    if (Number.isNaN(parsedWeight) || parsedWeight <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Weight must be a valid number greater than 0",
+      });
+    }
+
+    if (!country || country.trim() === "") {
+      return res.status(400).json({
+        success: false,
+        message: "Country is required",
+      });
+    }
+
+    if (!city || city.trim() === "") {
+      return res.status(400).json({
+        success: false,
+        message: "City is required",
+      });
+    }
+
+    const updatedUser = await prisma.user.update({
+      where: { id: req.user.id },
+      data: {
+        weight: parsedWeight,
+        country: country.trim(),
+        city: city.trim(),
+      },
+      select: {
+        id: true,
+        email: true,
+        username: true,
+        fullName: true,
+        weight: true,
+        country: true,
+        city: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "User setup completed successfully",
+      user: updatedUser,
+    });
+  } catch (error) {
+    console.error("SETUP_USER_INFO_ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Something went wrong",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
+};
+
+
+// ─────────────────────────────────────────────
+// Get User Weight Only
+// GET /api/auth/user/weight
+// ─────────────────────────────────────────────
+export const getUserWeight = async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: {
+        weight: true,
+      },
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      weight: user.weight,
+    });
+  } catch (error) {
+    console.error("GET_USER_WEIGHT_ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Something went wrong",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
+};
