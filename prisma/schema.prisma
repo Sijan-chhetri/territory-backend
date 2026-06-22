@@ -71,6 +71,11 @@ model Clan {
   banner             String?
   isPrivate          Boolean                  @default(false)
   maxMembers         Int                      @default(50)
+
+  country            String?
+  imageUrl           String?                  @map("image_url")
+
+
   /// *
   /// * |--------------------------------------------------------------------------
   /// * | CAPTAIN

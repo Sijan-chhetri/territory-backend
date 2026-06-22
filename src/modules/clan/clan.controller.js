@@ -100,6 +100,8 @@ export const createClan = async (req, res) => {
       description,
       logo,
       banner,
+      country,
+      imageUrl,
       isPrivate,
     } = req.body;
 
@@ -107,6 +109,14 @@ export const createClan = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Clan name is required",
+      });
+    }
+
+
+    if (!country || !country.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Country is required",
       });
     }
 
@@ -159,6 +169,8 @@ export const createClan = async (req, res) => {
           description: description?.trim() || "",
           logo: logo || null,
           banner: banner || null,
+          country: country.trim(),
+          imageUrl: imageUrl?.trim() || null,
           isPrivate: isPrivate ?? false,
           captainId: userId,
         },
