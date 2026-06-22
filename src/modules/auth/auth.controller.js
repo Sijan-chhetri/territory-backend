@@ -242,7 +242,7 @@ export const getMe = async (req, res) => {
 // ─────────────────────────────────────────────
 export const updateProfile = async (req, res) => {
   try {
-    const { full_name, country, city } = req.body;
+    const { full_name, country, city, weight } = req.body;
 
     const updated = await prisma.user.update({
       where: { id: req.user.id },
@@ -250,6 +250,7 @@ export const updateProfile = async (req, res) => {
         ...(full_name !== undefined && { fullName: full_name }),
         ...(country !== undefined && { country }),
         ...(city !== undefined && { city }),
+        ...(weight !== undefined && { weight }),
       },
     });
 
