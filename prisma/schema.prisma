@@ -54,6 +54,8 @@ model User {
   progress                UserProgress?
   xpTransactions          XPTransaction[]
   clanMessages ClanMessage[]
+  createdClubWars ClubWar[] @relation("CreatedClubWars")
+
 
   @@index([email])
   @@index([username])
@@ -112,6 +114,12 @@ model Clan {
   captain            User                     @relation("ClanCaptain", fields: [captainId], references: [id], onDelete: Cascade)
 
   messages ClanMessage[]
+  challengerWars ClubWar[] @relation("ChallengerClanWars")
+  opponentWars   ClubWar[] @relation("OpponentClanWars")
+  wonWars        ClubWar[] @relation("WinnerClanWars")
+
+  warStats       ClubWarParticipant[]
+
 
   @@index([name])
   @@index([rank])
@@ -473,6 +481,95 @@ model ClanMessage {
   @@index([clanId])
   @@index([senderId])
   @@index([createdAt])
+}
+
+
+model ClubWar {
+  id              String        @id @default(uuid())
+
+  type            ClubWarType
+  status          ClubWarStatus @default(PENDING)
+
+  seasonName      String?
+  startsAt        DateTime
+  endsAt          DateTime
+
+  challengerClanId String?
+  opponentClanId   String?
+
+  challengerClan   Clan? @relation("ChallengerClanWars", fields: [challengerClanId], references: [id])
+  opponentClan     Clan? @relation("OpponentClanWars", fields: [opponentClanId], references: [id])
+
+  winnerClanId     String?
+  winnerClan       Clan? @relation("WinnerClanWars", fields: [winnerClanId], references: [id])
+
+
+  createdByUserId String?
+  createdByUser   User? @relation("CreatedClubWars", fields: [createdByUserId], references: [id])
+
+  acceptedAt       DateTime?
+  declinedAt       DateTime?
+  cancelledAt      DateTime?
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  participants     ClubWarParticipant[]
+
+  @@index([status])
+  @@index([type])
+  @@index([startsAt, endsAt])
+}
+
+
+model ClubWarParticipant {
+  id              String @id @default(uuid())
+
+  warId           String
+  clanId          String
+
+  war             ClubWar @relation(fields: [warId], references: [id], onDelete: Cascade)
+  clan            Clan    @relation(fields: [clanId], references: [id])
+
+  memberCount     Int    @default(0)
+  activeMembers   Int    @default(0)
+
+  totalDistanceKm Float  @default(0)
+  avgDistanceKm   Float  @default(0)
+
+  activeScore     Float  @default(0)
+  distanceScore   Float  @default(0)
+  finalScore      Float  @default(0)
+
+  result          ClubWarResult?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([warId, clanId])
+  @@index([clanId])
+}
+
+
+
+
+enum ClubWarType {
+  AUTOMATIC
+  MANUAL
+}
+
+enum ClubWarStatus {
+  PENDING
+  ACTIVE
+  COMPLETED
+  CANCELLED
+  DECLINED
+}
+
+enum ClubWarResult {
+  WIN
+  LOSE
+  DRAW
 }
 
 enum ActivityMode {
