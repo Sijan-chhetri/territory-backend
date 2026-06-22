@@ -1362,7 +1362,7 @@ export const finishActivity = async (req, res) => {
   try {
     const userId = req.user.id;
 
-    
+
 
     const {
       clientActivityId,
@@ -1482,6 +1482,73 @@ export const finishActivity = async (req, res) => {
       )
       WHERE id = ${activity.id};
     `;
+
+
+
+    // XP
+    const MIN_DISTANCE_KM = 0.1;
+    const XP_PER_KM = 50;
+
+    const xpEarned = distanceKm > 0 ? Math.round(distanceKm * XP_PER_KM) : 0;
+
+    // Skip territory capture for specific modes
+    const shouldCaptureTerritory =
+      mode === 'WALK' || mode === 'RUN';
+
+    if (!shouldCaptureTerritory) {
+      if (xpEarned > 0) {
+        await addXP({
+          userId,
+          amount: xpEarned,
+          type: 'ACTIVITY',
+          description: `${mode} — ${distanceKm} km`,
+          activityId: activity.id,
+        });
+      }
+
+      await prisma.userProgress.upsert({
+        where: { userId },
+        create: {
+          userId,
+          totalDistanceKm: distanceKm,
+          activitiesCount: distanceKm >= MIN_DISTANCE_KM ? 1 : 0,
+        },
+        update: {
+          totalDistanceKm: { increment: distanceKm },
+          activitiesCount:
+            distanceKm >= MIN_DISTANCE_KM ? { increment: 1 } : undefined,
+        },
+      });
+
+      const levelResult = await checkLevelUp(userId);
+      const newBadges = await checkBadges(userId);
+
+      const progress = await prisma.userProgress.findUnique({
+        where: { userId },
+      });
+
+      return res.status(201).json({
+        success: true,
+        message: 'Activity completed successfully',
+        activity,
+        territory: null,
+        captureEvents: [],
+        progression: {
+          xpEarned,
+          leveledUp: levelResult?.leveledUp ?? false,
+          level: levelResult?.level ?? progress?.level ?? 0,
+          newBadges,
+          progress: {
+            currentXp: progress?.currentXp,
+            totalXp: progress?.totalXp,
+            xpToNextLevel: progress?.xpToNextLevel,
+            level: progress?.level,
+            totalDistanceKm: progress?.totalDistanceKm,
+            activitiesCount: progress?.activitiesCount,
+          },
+        },
+      });
+    }
 
 
     const frontendAreaKm2 =
@@ -1808,10 +1875,10 @@ export const finishActivity = async (req, res) => {
     });
 
     // XP
-    const MIN_DISTANCE_KM = 0.1;
-    const XP_PER_KM = 50;
+    // const MIN_DISTANCE_KM = 0.1;
+    // const XP_PER_KM = 50;
 
-    const xpEarned = distanceKm > 0 ? Math.round(distanceKm * XP_PER_KM) : 0;
+    // const xpEarned = distanceKm > 0 ? Math.round(distanceKm * XP_PER_KM) : 0;
 
     if (xpEarned > 0) {
       await addXP({
