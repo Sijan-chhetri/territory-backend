@@ -52,7 +52,7 @@ app.use("/api/leaderboard", leaderboardRoutes);
 app.use("/api/clan/leaderboard", clanleaderboardRoutes);
 app.use('/api/clan-chat', clanChatRoutes);
 
-app.unsubscribe('/api/club-wars',clubWarRoutes)
+app.use('/api/club-wars',clubWarRoutes)
 
 const PORT = process.env.PORT || 3000;
 
