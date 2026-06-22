@@ -19,6 +19,7 @@ import clanRoutes from "./src/modules/clan/clan.route.js";
 import notificationRoutes from "./src/modules/notification/notification.route.js";
 import leaderboardRoutes from "./src/modules/leaderboard/User/leaderboard.routes.js";
 import clanleaderboardRoutes from "./src/modules/leaderboard/Clan/clanLeaderboard.route.js";
+import clanChatRoutes from "./src/modules/clanChat/clanChatRoutes.js"
 
 const app = express();
 
@@ -47,6 +48,7 @@ app.use("/api/clans", clanRoutes);
 app.use("/api/notification", notificationRoutes);
 app.use("/api/leaderboard", leaderboardRoutes);
 app.use("/api/clan/leaderboard", clanleaderboardRoutes);
+app.use('/api/clan-chat', clanChatRoutes);
 
 const PORT = process.env.PORT || 3000;
 

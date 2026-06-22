@@ -53,6 +53,7 @@ model User {
   badges                  UserBadge[]
   progress                UserProgress?
   xpTransactions          XPTransaction[]
+  clanMessages ClanMessage[]
 
   @@index([email])
   @@index([username])
@@ -104,6 +105,8 @@ model Clan {
   members            ClanMember[]
   territories        ClanTerritory[]
   captain            User                     @relation("ClanCaptain", fields: [captainId], references: [id], onDelete: Cascade)
+
+  messages ClanMessage[]
 
   @@index([name])
   @@index([rank])
@@ -447,6 +450,24 @@ model UserBadge {
   @@unique([userId, badgeId])
   @@index([userId])
   @@map("user_badges")
+}
+
+
+
+model ClanMessage {
+  id        String   @id @default(uuid())
+  clanId    String
+  senderId  String
+  message   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  clan      Clan     @relation(fields: [clanId], references: [id], onDelete: Cascade)
+  sender    User     @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([clanId])
+  @@index([senderId])
+  @@index([createdAt])
 }
 
 enum ActivityMode {
