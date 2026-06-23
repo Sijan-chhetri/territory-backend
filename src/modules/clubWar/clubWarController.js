@@ -83,11 +83,37 @@ const calculateParticipantStats = async ({ warId, clanId, startsAt, endsAt }) =>
   };
 };
 
-
 export const createManualClubWar = async (req, res) => {
   try {
     const userId = req.user.id;
     const { opponentClanId, startsAt, endsAt } = req.body;
+
+    if (!opponentClanId || !startsAt || !endsAt) {
+      return res.status(400).json({
+        success: false,
+        message: "opponentClanId, startsAt and endsAt are required",
+      });
+    }
+
+    const requestedStartsAt = new Date(startsAt);
+    const requestedEndsAt = new Date(endsAt);
+
+    if (
+      Number.isNaN(requestedStartsAt.getTime()) ||
+      Number.isNaN(requestedEndsAt.getTime())
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid startsAt or endsAt date",
+      });
+    }
+
+    if (requestedStartsAt >= requestedEndsAt) {
+      return res.status(400).json({
+        success: false,
+        message: "War start time must be before end time",
+      });
+    }
 
     const myClanMember = await getUserClan(userId);
 
@@ -107,20 +133,57 @@ export const createManualClubWar = async (req, res) => {
       });
     }
 
-    const existingWar = await prisma.clubWar.findFirst({
+    const opponentClan = await prisma.clan.findUnique({
       where: {
-        status: { in: ["PENDING", "ACTIVE"] },
-        OR: [
-          { challengerClanId, opponentClanId },
-          { challengerClanId: opponentClanId, opponentClanId: challengerClanId },
-        ],
+        id: opponentClanId,
+      },
+      select: {
+        id: true,
       },
     });
 
-    if (existingWar) {
+    if (!opponentClan) {
+      return res.status(404).json({
+        success: false,
+        message: "Opponent clan not found",
+      });
+    }
+
+    const overlappingWar = await prisma.clubWar.findFirst({
+      where: {
+        status: {
+          in: ["PENDING", "ACTIVE"],
+        },
+
+        startsAt: {
+          lt: requestedEndsAt,
+        },
+
+        endsAt: {
+          gt: requestedStartsAt,
+        },
+
+        participants: {
+          some: {
+            clanId: {
+              in: [challengerClanId, opponentClanId],
+            },
+          },
+        },
+      },
+      include: {
+        challengerClan: true,
+        opponentClan: true,
+        participants: true,
+      },
+    });
+
+    if (overlappingWar) {
       return res.status(400).json({
         success: false,
-        message: "A pending or active war already exists between these clans",
+        message:
+          "One of these clans already has a pending or active war during this time period",
+        overlappingWar,
       });
     }
 
@@ -131,8 +194,8 @@ export const createManualClubWar = async (req, res) => {
         challengerClanId,
         opponentClanId,
         createdByUserId: userId,
-        startsAt: new Date(startsAt),
-        endsAt: new Date(endsAt),
+        startsAt: requestedStartsAt,
+        endsAt: requestedEndsAt,
         participants: {
           create: [
             { clanId: challengerClanId },
@@ -217,8 +280,6 @@ export const acceptClubWar = async (req, res) => {
     });
   }
 };
-
-
 
 export const declineClubWar = async (req, res) => {
   try {
