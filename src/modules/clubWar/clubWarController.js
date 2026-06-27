@@ -35,7 +35,7 @@ const calculateParticipantStats = async ({ warId, clanId, startsAt, endsAt }) =>
   const activities = await prisma.activity.findMany({
     where: {
       userId: { in: memberIds },
-      include_in_clan: true,
+      includeInClan: true,
       distanceKm: { gte: 1 },
       startedAt: {
         gte: startsAt,

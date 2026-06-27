@@ -4,4 +4,5 @@ node_modules
 
 /src/generated/prisma
 src/config/firebase_service.json
+/src/scripts/*
 firebase_service.json
