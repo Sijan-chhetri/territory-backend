@@ -1897,3 +1897,87 @@ export const cancelFriendRequest = async (req, res) => {
     });
   }
 };
+
+
+/**
+ * |--------------------------------------------------------------------------
+ * | CHECK IF CURRENT USER IS A CLAN LEADER
+ * |--------------------------------------------------------------------------
+ * | GET /api/clans/check-leader
+ * |--------------------------------------------------------------------------
+ */
+
+export const checkIfClanLeader = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const membership = await prisma.clanMember.findFirst({
+      where: {
+        userId,
+      },
+      select: {
+        id: true,
+        clanId: true,
+        role: true,
+        joinedAt: true,
+
+        clan: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            captainId: true,
+            logo: true,
+            banner: true,
+          },
+        },
+      },
+    });
+
+    // User is not in any clan
+    if (!membership) {
+      return res.status(200).json({
+        success: true,
+        isInClan: false,
+        isLeader: false,
+        isCaptain: false,
+        role: null,
+        clan: null,
+      });
+    }
+
+    const isCaptain = membership.clan.captainId === userId;
+
+    const isLeader =
+      isCaptain ||
+      membership.role === "LEADER" ||
+      membership.role === "CAPTAIN";
+
+    return res.status(200).json({
+      success: true,
+      isInClan: true,
+      isLeader,
+      isCaptain,
+      role: membership.role,
+
+      clan: {
+        id: membership.clan.id,
+        name: membership.clan.name,
+        slug: membership.clan.slug,
+        logo: membership.clan.logo,
+        banner: membership.clan.banner,
+      },
+    });
+  } catch (error) {
+    console.error("CHECK_IF_CLAN_LEADER_ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to check clan leader status",
+      error:
+        process.env.NODE_ENV === "development"
+          ? error.message
+          : undefined,
+    });
+  }
+};
