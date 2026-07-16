@@ -5,20 +5,18 @@ import nodemailer from "nodemailer";
 const emailTransporter = nodemailer.createTransport({
   host: "smtp.gmail.com",
   port: 587,
-  secure: true,
+  secure: false,
+  requireTLS: true,
 
   auth: {
     user: process.env.GMAIL_USER,
     pass: process.env.GMAIL_APP_PASSWORD,
   },
 
-  family: 4,
-
-  connectionTimeout: 15000,
-  greetingTimeout: 15000,
+  connectionTimeout: 20000,
+  greetingTimeout: 20000,
   socketTimeout: 30000,
 });
-
 
 
 

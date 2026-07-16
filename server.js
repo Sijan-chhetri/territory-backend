@@ -52,10 +52,7 @@ emailTransporter
     console.log("GMAIL_TRANSPORTER_READY");
   })
   .catch((error) => {
-    console.error(
-      "GMAIL_TRANSPORTER_VERIFY_ERROR:",
-      error
-    );
+    console.error("GMAIL_TRANSPORTER_VERIFY_ERROR:", error);
   });
 
 app.get("/", (_, res) => {
