@@ -605,9 +605,16 @@ export const googleAuth = async (req, res) => {
 
     const payload = ticket.getPayload();
 
+    if (!payload?.sub) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid Google account information",
+      });
+    }
+
     const googleId = payload.sub;
-    const email = payload.email?.toLowerCase();
-    const fullName = payload.name || "Google User";
+    const email = payload.email?.toLowerCase().trim();
+    const fullName = payload.name?.trim() || "Google User";
 
     if (!email) {
       return res.status(400).json({
@@ -616,32 +623,20 @@ export const googleAuth = async (req, res) => {
       });
     }
 
-    let user = await prisma.user.findFirst({
+    /**
+     * |--------------------------------------------------------------------------
+     * | CHECK EXISTING GOOGLE ACCOUNT
+     * |--------------------------------------------------------------------------
+     */
+
+    let user = await prisma.user.findUnique({
       where: {
-        OR: [{ googleId }, { email }],
+        googleId,
       },
     });
 
-    if (!user) {
-      const username = await generateUsername(fullName);
-
-      user = await prisma.user.create({
-        data: {
-          email,
-          fullName,
-          username,
-          googleId,
-          authProvider: "GOOGLE",
-          fcmToken: fcmToken?.trim() || null,
-        },
-      });
-    } else {
+    if (user) {
       const updateData = {};
-
-      if (!user.googleId) {
-        updateData.googleId = googleId;
-        updateData.authProvider = "GOOGLE";
-      }
 
       if (fcmToken?.trim()) {
         updateData.fcmToken = fcmToken.trim();
@@ -649,18 +644,74 @@ export const googleAuth = async (req, res) => {
 
       if (Object.keys(updateData).length > 0) {
         user = await prisma.user.update({
-          where: { id: user.id },
+          where: {
+            id: user.id,
+          },
           data: updateData,
         });
       }
+
+      const token = generateJwt(user);
+      const { password, ...safeUser } = user;
+
+      return res.status(200).json({
+        success: true,
+        message: "Google login successful",
+        token,
+        user: safeUser,
+      });
     }
+
+    /**
+     * |--------------------------------------------------------------------------
+     * | CHECK IF EMAIL IS ALREADY REGISTERED
+     * |--------------------------------------------------------------------------
+     *
+     * Do not automatically connect an existing email/password account
+     * to Google.
+     */
+
+    const existingEmailUser = await prisma.user.findUnique({
+      where: {
+        email,
+      },
+    });
+
+    if (existingEmailUser) {
+      return res.status(409).json({
+        success: false,
+        code: "EMAIL_ALREADY_EXISTS",
+        message:
+          "An account with this email already exists. Please log in using your email and password.",
+        loginMethod: existingEmailUser.authProvider,
+      });
+    }
+
+    /**
+     * |--------------------------------------------------------------------------
+     * | CREATE NEW GOOGLE USER
+     * |--------------------------------------------------------------------------
+     */
+
+    const username = await generateUsername(fullName);
+
+    user = await prisma.user.create({
+      data: {
+        email,
+        fullName,
+        username,
+        googleId,
+        authProvider: "GOOGLE",
+        fcmToken: fcmToken?.trim() || null,
+      },
+    });
 
     const token = generateJwt(user);
     const { password, ...safeUser } = user;
 
-    return res.status(200).json({
+    return res.status(201).json({
       success: true,
-      message: "Google login successful",
+      message: "Google account created successfully",
       token,
       user: safeUser,
     });
@@ -671,7 +722,9 @@ export const googleAuth = async (req, res) => {
       success: false,
       message: "Google authentication failed",
       error:
-        process.env.NODE_ENV === "development" ? error.message : undefined,
+        process.env.NODE_ENV === "development"
+          ? error.message
+          : undefined,
     });
   }
 };
