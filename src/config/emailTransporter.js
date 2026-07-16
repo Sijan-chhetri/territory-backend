@@ -1,4 +1,4 @@
-// utils/emailTransporter.js
+// config/emailTransporter.js
 
 import nodemailer from "nodemailer";
 

@@ -1,4 +1,4 @@
-// utils/templates/passwordResetOtp.template.js
+// config/templates/passwordResetOtp.template.js
 
 const escapeHtml = (value = "") =>
   String(value)

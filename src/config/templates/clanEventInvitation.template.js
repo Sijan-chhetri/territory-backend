@@ -1,4 +1,4 @@
-// utils/templates/clanEventInvitation.template.js
+// config/templates/clanEventInvitation.template.js
 
 const escapeHtml = (value = "") =>
   String(value)
