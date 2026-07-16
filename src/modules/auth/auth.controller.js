@@ -8,6 +8,57 @@ import { JWT_SECRET } from '../../config/jwt.js';
 import { OAuth2Client } from "google-auth-library";
 import appleSignin from "apple-signin-auth";
 
+import crypto from "crypto";
+import emailTransporter from "../../config/emailTransporter.js";
+
+import {
+  passwordResetOtpTemplate,
+} from "../../config/templates/passwordResetOtp.template.js";
+
+
+// helper for OTP
+
+const OTP_EXPIRY_MINUTES = 5;
+const OTP_MAX_ATTEMPTS = 3;
+const OTP_RESEND_COOLDOWN_SECONDS = 60;
+
+const generateOtp = () => {
+  return crypto.randomInt(100000, 1000000).toString();
+};
+
+const hashOtp = (otp) => {
+  return crypto
+    .createHash("sha256")
+    .update(String(otp))
+    .digest("hex");
+};
+
+const sendPasswordResetOtpEmail = async ({
+  user,
+  otp,
+}) => {
+  const template = passwordResetOtpTemplate({
+    fullName: user.fullName || user.username,
+    otp,
+  });
+
+  return emailTransporter.sendMail({
+    from: {
+      name: "Duro",
+      address: process.env.GMAIL_USER,
+    },
+
+    to: user.email,
+    subject: template.subject,
+    text: template.text,
+    html: template.html,
+
+    replyTo:
+      process.env.DURO_SUPPORT_EMAIL ||
+      process.env.GMAIL_USER,
+  });
+};
+
 
 // ─────────────────────────────────────────────
 // Generate Unique Username
@@ -964,6 +1015,726 @@ export const getUserWeight = async (req, res) => {
       success: false,
       message: "Something went wrong",
       error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
+};
+
+
+/**
+ * |--------------------------------------------------------------------------
+ * | REQUEST PASSWORD RESET OTP
+ * |--------------------------------------------------------------------------
+ * | POST /api/auth/forgot-password/request-otp
+ * |--------------------------------------------------------------------------
+ */
+export const requestPasswordResetOtp = async (req, res) => {
+  try {
+    const normalizedEmail = req.body.email
+      ?.toLowerCase()
+      .trim();
+
+    if (!normalizedEmail) {
+      return res.status(400).json({
+        success: false,
+        message: "Email is required",
+      });
+    }
+
+    if (!validator.isEmail(normalizedEmail)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid email format",
+      });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: {
+        email: normalizedEmail,
+      },
+      select: {
+        id: true,
+        email: true,
+        username: true,
+        fullName: true,
+        password: true,
+        authProvider: true,
+      },
+    });
+
+    /*
+     * Generic response avoids revealing whether an email exists.
+     */
+    if (!user) {
+      return res.status(200).json({
+        success: true,
+        message:
+          "If an account exists with this email, a password reset code has been sent.",
+      });
+    }
+
+    if (!user.password) {
+      return res.status(400).json({
+        success: false,
+        code: "SOCIAL_LOGIN_ACCOUNT",
+        message:
+          user.authProvider === "GOOGLE"
+            ? "This account uses Google login. Please continue with Google."
+            : "This account uses social login. Please use the original login method.",
+        loginMethod: user.authProvider,
+      });
+    }
+
+    const latestOtp =
+      await prisma.passwordResetOtp.findFirst({
+        where: {
+          userId: user.id,
+          isUsed: false,
+        },
+        orderBy: {
+          createdAt: "desc",
+        },
+      });
+
+    if (latestOtp) {
+      const cooldownEndsAt = new Date(
+        latestOtp.createdAt.getTime() +
+          OTP_RESEND_COOLDOWN_SECONDS * 1000
+      );
+
+      if (new Date() < cooldownEndsAt) {
+        const retryAfterSeconds = Math.ceil(
+          (cooldownEndsAt.getTime() - Date.now()) / 1000
+        );
+
+        return res.status(429).json({
+          success: false,
+          code: "OTP_RESEND_COOLDOWN",
+          message: `Please wait ${retryAfterSeconds} seconds before requesting another code.`,
+          retryAfterSeconds,
+        });
+      }
+    }
+
+    const otp = generateOtp();
+    const otpHash = hashOtp(otp);
+
+    const expiresAt = new Date(
+      Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000
+    );
+
+    /*
+     * Invalidate previous unused OTPs.
+     */
+    await prisma.passwordResetOtp.updateMany({
+      where: {
+        userId: user.id,
+        isUsed: false,
+      },
+      data: {
+        isUsed: true,
+      },
+    });
+
+    const otpRecord =
+      await prisma.passwordResetOtp.create({
+        data: {
+          userId: user.id,
+          email: user.email,
+          otpHash,
+          attempts: 0,
+          maxAttempts: OTP_MAX_ATTEMPTS,
+          expiresAt,
+          isVerified: false,
+          isUsed: false,
+        },
+      });
+
+    try {
+      await sendPasswordResetOtpEmail({
+        user,
+        otp,
+      });
+    } catch (emailError) {
+      console.error(
+        "PASSWORD_RESET_OTP_EMAIL_ERROR:",
+        emailError
+      );
+
+      await prisma.passwordResetOtp.update({
+        where: {
+          id: otpRecord.id,
+        },
+        data: {
+          isUsed: true,
+        },
+      });
+
+      return res.status(500).json({
+        success: false,
+        message: "Failed to send password reset code",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Password reset code sent successfully",
+      expiresInSeconds: OTP_EXPIRY_MINUTES * 60,
+      maxAttempts: OTP_MAX_ATTEMPTS,
+      resendAvailableInSeconds:
+        OTP_RESEND_COOLDOWN_SECONDS,
+    });
+  } catch (error) {
+    console.error(
+      "REQUEST_PASSWORD_RESET_OTP_ERROR:",
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to request password reset code",
+      error:
+        process.env.NODE_ENV === "development"
+          ? error.message
+          : undefined,
+    });
+  }
+};
+
+/**
+ * |--------------------------------------------------------------------------
+ * | RESEND PASSWORD RESET OTP
+ * |--------------------------------------------------------------------------
+ * | POST /api/auth/forgot-password/resend-otp
+ * |--------------------------------------------------------------------------
+ */
+export const resendPasswordResetOtp = async (req, res) => {
+  try {
+    const normalizedEmail = req.body.email
+      ?.toLowerCase()
+      .trim();
+
+    if (!normalizedEmail) {
+      return res.status(400).json({
+        success: false,
+        message: "Email is required",
+      });
+    }
+
+    if (!validator.isEmail(normalizedEmail)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid email format",
+      });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: {
+        email: normalizedEmail,
+      },
+      select: {
+        id: true,
+        email: true,
+        username: true,
+        fullName: true,
+        password: true,
+        authProvider: true,
+      },
+    });
+
+    if (!user) {
+      return res.status(200).json({
+        success: true,
+        message:
+          "If an account exists with this email, a new code has been sent.",
+      });
+    }
+
+    if (!user.password) {
+      return res.status(400).json({
+        success: false,
+        code: "SOCIAL_LOGIN_ACCOUNT",
+        message:
+          "This account does not use an email password. Please use the original login method.",
+        loginMethod: user.authProvider,
+      });
+    }
+
+    const latestOtp =
+      await prisma.passwordResetOtp.findFirst({
+        where: {
+          userId: user.id,
+        },
+        orderBy: {
+          createdAt: "desc",
+        },
+      });
+
+    if (latestOtp) {
+      const cooldownEndsAt = new Date(
+        latestOtp.createdAt.getTime() +
+          OTP_RESEND_COOLDOWN_SECONDS * 1000
+      );
+
+      if (new Date() < cooldownEndsAt) {
+        const retryAfterSeconds = Math.ceil(
+          (cooldownEndsAt.getTime() - Date.now()) / 1000
+        );
+
+        return res.status(429).json({
+          success: false,
+          code: "OTP_RESEND_COOLDOWN",
+          message: `Please wait ${retryAfterSeconds} seconds before resending the code.`,
+          retryAfterSeconds,
+        });
+      }
+    }
+
+    const otp = generateOtp();
+    const otpHash = hashOtp(otp);
+
+    const expiresAt = new Date(
+      Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000
+    );
+
+    await prisma.passwordResetOtp.updateMany({
+      where: {
+        userId: user.id,
+        isUsed: false,
+      },
+      data: {
+        isUsed: true,
+      },
+    });
+
+    const newOtpRecord =
+      await prisma.passwordResetOtp.create({
+        data: {
+          userId: user.id,
+          email: user.email,
+          otpHash,
+          attempts: 0,
+          maxAttempts: OTP_MAX_ATTEMPTS,
+          expiresAt,
+          isVerified: false,
+          isUsed: false,
+        },
+      });
+
+    try {
+      await sendPasswordResetOtpEmail({
+        user,
+        otp,
+      });
+    } catch (emailError) {
+      console.error(
+        "RESEND_PASSWORD_RESET_OTP_EMAIL_ERROR:",
+        emailError
+      );
+
+      await prisma.passwordResetOtp.update({
+        where: {
+          id: newOtpRecord.id,
+        },
+        data: {
+          isUsed: true,
+        },
+      });
+
+      return res.status(500).json({
+        success: false,
+        message: "Failed to resend password reset code",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "A new password reset code has been sent",
+      expiresInSeconds: OTP_EXPIRY_MINUTES * 60,
+      maxAttempts: OTP_MAX_ATTEMPTS,
+      resendAvailableInSeconds:
+        OTP_RESEND_COOLDOWN_SECONDS,
+    });
+  } catch (error) {
+    console.error(
+      "RESEND_PASSWORD_RESET_OTP_ERROR:",
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to resend password reset code",
+      error:
+        process.env.NODE_ENV === "development"
+          ? error.message
+          : undefined,
+    });
+  }
+};
+
+
+/**
+ * |--------------------------------------------------------------------------
+ * | VERIFY PASSWORD RESET OTP
+ * |--------------------------------------------------------------------------
+ * | POST /api/auth/forgot-password/verify-otp
+ * |--------------------------------------------------------------------------
+ */
+export const verifyPasswordResetOtp = async (req, res) => {
+  try {
+    const normalizedEmail = req.body.email
+      ?.toLowerCase()
+      .trim();
+
+    const otp = String(req.body.otp || "").trim();
+
+    if (!normalizedEmail || !otp) {
+      return res.status(400).json({
+        success: false,
+        message: "Email and OTP are required",
+      });
+    }
+
+    if (!validator.isEmail(normalizedEmail)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid email format",
+      });
+    }
+
+    if (!/^\d{6}$/.test(otp)) {
+      return res.status(400).json({
+        success: false,
+        message: "OTP must be a 6-digit number",
+      });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: {
+        email: normalizedEmail,
+      },
+      select: {
+        id: true,
+        email: true,
+      },
+    });
+
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid or expired OTP",
+      });
+    }
+
+    const otpRecord =
+      await prisma.passwordResetOtp.findFirst({
+        where: {
+          userId: user.id,
+          email: normalizedEmail,
+          isUsed: false,
+          isVerified: false,
+        },
+        orderBy: {
+          createdAt: "desc",
+        },
+      });
+
+    if (!otpRecord) {
+      return res.status(400).json({
+        success: false,
+        code: "OTP_NOT_FOUND",
+        message:
+          "No active password reset code was found. Please request a new code.",
+      });
+    }
+
+    if (new Date() > otpRecord.expiresAt) {
+      await prisma.passwordResetOtp.update({
+        where: {
+          id: otpRecord.id,
+        },
+        data: {
+          isUsed: true,
+        },
+      });
+
+      return res.status(400).json({
+        success: false,
+        code: "OTP_EXPIRED",
+        message:
+          "The password reset code has expired. Please request a new code.",
+      });
+    }
+
+    if (otpRecord.attempts >= otpRecord.maxAttempts) {
+      await prisma.passwordResetOtp.update({
+        where: {
+          id: otpRecord.id,
+        },
+        data: {
+          isUsed: true,
+        },
+      });
+
+      return res.status(429).json({
+        success: false,
+        code: "OTP_ATTEMPTS_EXCEEDED",
+        message:
+          "Maximum verification attempts exceeded. Please request a new code.",
+      });
+    }
+
+    const providedOtpHash = hashOtp(otp);
+    const isOtpCorrect =
+      providedOtpHash === otpRecord.otpHash;
+
+    if (!isOtpCorrect) {
+      const newAttempts = otpRecord.attempts + 1;
+      const attemptsRemaining = Math.max(
+        otpRecord.maxAttempts - newAttempts,
+        0
+      );
+
+      await prisma.passwordResetOtp.update({
+        where: {
+          id: otpRecord.id,
+        },
+        data: {
+          attempts: newAttempts,
+          isUsed:
+            newAttempts >= otpRecord.maxAttempts,
+        },
+      });
+
+      return res.status(400).json({
+        success: false,
+        code:
+          attemptsRemaining === 0
+            ? "OTP_ATTEMPTS_EXCEEDED"
+            : "INVALID_OTP",
+
+        message:
+          attemptsRemaining === 0
+            ? "Maximum verification attempts exceeded. Please request a new code."
+            : `Invalid OTP. You have ${attemptsRemaining} attempt${
+                attemptsRemaining === 1 ? "" : "s"
+              } remaining.`,
+
+        attemptsRemaining,
+      });
+    }
+
+    await prisma.passwordResetOtp.update({
+      where: {
+        id: otpRecord.id,
+      },
+      data: {
+        isVerified: true,
+        verifiedAt: new Date(),
+      },
+    });
+
+    const resetToken = jwt.sign(
+      {
+        userId: user.id,
+        email: user.email,
+        otpId: otpRecord.id,
+        purpose: "PASSWORD_RESET",
+      },
+      JWT_SECRET,
+      {
+        expiresIn: "10m",
+      }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "OTP verified successfully",
+      resetToken,
+      resetTokenExpiresInSeconds: 600,
+    });
+  } catch (error) {
+    console.error(
+      "VERIFY_PASSWORD_RESET_OTP_ERROR:",
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to verify password reset code",
+      error:
+        process.env.NODE_ENV === "development"
+          ? error.message
+          : undefined,
+    });
+  }
+};
+
+/**
+ * |--------------------------------------------------------------------------
+ * | RESET PASSWORD
+ * |--------------------------------------------------------------------------
+ * | POST /api/auth/forgot-password/reset
+ * |--------------------------------------------------------------------------
+ */
+export const resetPassword = async (req, res) => {
+  try {
+    const { resetToken, newPassword, confirmPassword } =
+      req.body;
+
+    if (!resetToken || !newPassword || !confirmPassword) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Reset token, new password and confirm password are required",
+      });
+    }
+
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "Passwords do not match",
+      });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Password must be at least 6 characters",
+      });
+    }
+
+    let decoded;
+
+    try {
+      decoded = jwt.verify(resetToken, JWT_SECRET);
+    } catch {
+      return res.status(401).json({
+        success: false,
+        code: "INVALID_RESET_TOKEN",
+        message:
+          "The password reset session is invalid or expired",
+      });
+    }
+
+    if (
+      decoded.purpose !== "PASSWORD_RESET" ||
+      !decoded.userId ||
+      !decoded.otpId
+    ) {
+      return res.status(401).json({
+        success: false,
+        code: "INVALID_RESET_TOKEN",
+        message: "Invalid password reset token",
+      });
+    }
+
+    const otpRecord =
+      await prisma.passwordResetOtp.findUnique({
+        where: {
+          id: decoded.otpId,
+        },
+      });
+
+    if (
+      !otpRecord ||
+      otpRecord.userId !== decoded.userId ||
+      !otpRecord.isVerified ||
+      otpRecord.isUsed
+    ) {
+      return res.status(401).json({
+        success: false,
+        code: "RESET_SESSION_NOT_VALID",
+        message:
+          "This password reset session is no longer valid",
+      });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: {
+        id: decoded.userId,
+      },
+      select: {
+        id: true,
+        password: true,
+      },
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    const isSamePassword = user.password
+      ? await bcrypt.compare(
+          newPassword,
+          user.password
+        )
+      : false;
+
+    if (isSamePassword) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Your new password must be different from your current password",
+      });
+    }
+
+    const hashedPassword = await bcrypt.hash(
+      newPassword,
+      10
+    );
+
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: {
+          id: decoded.userId,
+        },
+        data: {
+          password: hashedPassword,
+        },
+      });
+
+      await tx.passwordResetOtp.update({
+        where: {
+          id: otpRecord.id,
+        },
+        data: {
+          isUsed: true,
+        },
+      });
+
+      /*
+       * Invalidate any remaining reset codes.
+       */
+      await tx.passwordResetOtp.updateMany({
+        where: {
+          userId: decoded.userId,
+          isUsed: false,
+        },
+        data: {
+          isUsed: true,
+        },
+      });
+    });
+
+    return res.status(200).json({
+      success: true,
+      message:
+        "Password reset successfully. You can now log in with your new password.",
+    });
+  } catch (error) {
+    console.error("RESET_PASSWORD_ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to reset password",
+      error:
+        process.env.NODE_ENV === "development"
+          ? error.message
+          : undefined,
     });
   }
 };

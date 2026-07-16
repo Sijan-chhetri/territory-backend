@@ -1,10 +1,16 @@
 import { Router } from 'express';
 import authMiddleware from '../../middlewares/auth.js';
-import { register, login, getMe, updateProfile, changeUsername,getUsersWhoAreNotMyFriends,getUserDetailById,googleAuth,
-  appleAuth,checkUserSetupStatus,
-setupUserInfo,
-getUserWeight,
- } from './auth.controller.js';
+import {
+  register, login, getMe, updateProfile, changeUsername, getUsersWhoAreNotMyFriends, getUserDetailById, googleAuth,
+  appleAuth, checkUserSetupStatus,
+  setupUserInfo,
+  getUserWeight,
+  requestPasswordResetOtp,
+  resendPasswordResetOtp,
+  verifyPasswordResetOtp,
+  resetPassword,
+
+} from './auth.controller.js';
 
 const router = Router();
 
@@ -26,6 +32,26 @@ router.put("/user/setup", authMiddleware, setupUserInfo);
 router.get("/user/weight", authMiddleware, getUserWeight);
 
 router.get("/user/:userId", authMiddleware, getUserDetailById);
+
+router.post(
+  "/forgot-password/request-otp",
+  requestPasswordResetOtp
+);
+
+router.post(
+  "/forgot-password/resend-otp",
+  resendPasswordResetOtp
+);
+
+router.post(
+  "/forgot-password/verify-otp",
+  verifyPasswordResetOtp
+);
+
+router.post(
+  "/forgot-password/reset",
+  resetPassword
+);
 
 
 

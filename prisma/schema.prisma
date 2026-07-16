@@ -56,6 +56,7 @@ model User {
   createdClanEvents       ClanEvent[]            @relation("CreatedClanEvents")
   clanEventParticipants   ClanEventParticipant[]
   createdClubWars         ClubWar[]              @relation("CreatedClubWars")
+  passwordResetOtps       PasswordResetOtp[]
 
   @@index([email])
   @@index([username])
@@ -588,6 +589,34 @@ model ClanEventParticipant {
   @@index([eventId])
   @@index([userId])
   @@map("clan_event_participants")
+}
+
+model PasswordResetOtp {
+  id String @id @default(uuid())
+
+  userId String
+  email  String
+
+  otpHash String @map("otp_hash")
+
+  attempts    Int @default(0)
+  maxAttempts Int @default(3) @map("max_attempts")
+
+  expiresAt  DateTime  @map("expires_at")
+  verifiedAt DateTime? @map("verified_at")
+
+  isVerified Boolean @default(false) @map("is_verified")
+  isUsed     Boolean @default(false) @map("is_used")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([email])
+  @@index([expiresAt])
+  @@map("password_reset_otps")
 }
 
 enum ClanEventStatus {
