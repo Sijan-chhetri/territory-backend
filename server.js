@@ -5,6 +5,11 @@ import helmet from "helmet";
 import morgan from "morgan";
 import http from "http";
 
+import dns from "node:dns";
+
+dns.setDefaultResultOrder("ipv4first");
+
+
 import { initSocket } from "./src/config/socket.js";
 
 import authRoutes from "./src/modules/auth/auth.routes.js";
@@ -53,31 +58,33 @@ emailTransporter
     );
   });
 
-app.get("/", async (_, res) => {
+app.get("/", (_, res) => {
+  res.send("Territory Backend Running");
+});
+
+
+
+app.get("/api/test-email-connection", async (_, res) => {
   try {
     await emailTransporter.verify();
 
     return res.status(200).json({
       success: true,
-      message: "Territory Backend Running",
-      emailService: "Connected",
-      gmailUser: process.env.GMAIL_USER,
-      hasAppPassword: Boolean(process.env.GMAIL_APP_PASSWORD),
+      message: "Email service connected successfully",
     });
   } catch (error) {
     console.error("EMAIL_CONNECTION_TEST_ERROR:", error);
 
     return res.status(500).json({
       success: false,
-      message: "Territory Backend Running, but email connection failed",
-      emailService: "Disconnected",
+      message: "Email service connection failed",
       error: error.message,
       code: error.code,
-      response: error.response,
+      command: error.command,
+      responseCode: error.responseCode,
     });
   }
 });
-
 
 app.use("/api/auth", authRoutes);
 app.use("/api/activities", activityRoutes);
