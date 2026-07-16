@@ -21,6 +21,7 @@ import leaderboardRoutes from "./src/modules/leaderboard/User/leaderboard.routes
 import clanleaderboardRoutes from "./src/modules/leaderboard/Clan/clanLeaderboard.route.js";
 import clanChatRoutes from "./src/modules/clanChat/clanChatRoutes.js"
 import clubWarRoutes from "./src/modules/clubWar/clubWarRoutes.js";
+import clanEventRoutes from "./src/modules/clanEvent/clanEvent.routes.js";
 
 
 const app = express();
@@ -51,6 +52,7 @@ app.use("/api/notification", notificationRoutes);
 app.use("/api/leaderboard", leaderboardRoutes);
 app.use("/api/clan/leaderboard", clanleaderboardRoutes);
 app.use('/api/clan-chat', clanChatRoutes);
+app.use('/api/clan-event', clanEventRoutes);
 
 app.use('/api/club-wars',clubWarRoutes)
 

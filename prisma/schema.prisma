@@ -16,46 +16,46 @@ enum AuthProvider {
 }
 
 model User {
-  id                      String            @id @default(uuid())
-  email                   String            @unique
-  username                String            @unique
-  password                String?
-  fullName                String?           @map("full_name")
-  country                 String?
-  city                    String?
+  id       String  @id @default(uuid())
+  email    String  @unique
+  username String  @unique
+  password String?
+  fullName String? @map("full_name")
+  country  String?
+  city     String?
 
-  weight    Float?  
+  weight Float?
 
-  authProvider            AuthProvider      @default(EMAIL) @map("auth_provider")
-  googleId                String?           @unique @map("google_id")
-  appleId                 String?           @unique @map("apple_id")
+  authProvider AuthProvider @default(EMAIL) @map("auth_provider")
+  googleId     String?      @unique @map("google_id")
+  appleId      String?      @unique @map("apple_id")
 
   fcmToken String?
 
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  createdAt               DateTime          @default(now()) @map("created_at")
-  updatedAt               DateTime          @updatedAt @map("updated_at")
-
-  receivedFriendRequests  FriendRequest[]   @relation("FriendRequestReceiver")
-  sentFriendRequests      FriendRequest[]   @relation("FriendRequestSender")
-  friendOf                Friendship[]      @relation("FriendshipFriend")
-  friends                 Friendship[]      @relation("FriendshipUser")
+  receivedFriendRequests  FriendRequest[]        @relation("FriendRequestReceiver")
+  sentFriendRequests      FriendRequest[]        @relation("FriendRequestSender")
+  friendOf                Friendship[]           @relation("FriendshipFriend")
+  friends                 Friendship[]           @relation("FriendshipUser")
   activities              Activity[]
   clanActivities          ClanActivity[]
-  clanInvitesSent         ClanInvite[]      @relation("ClanInviteSender")
-  clanInvitesReceived     ClanInvite[]      @relation("ClanInviteReceiver")
+  clanInvitesSent         ClanInvite[]           @relation("ClanInviteSender")
+  clanInvitesReceived     ClanInvite[]           @relation("ClanInviteReceiver")
   clanJoinRequests        ClanJoinRequest[]
   clanMemberships         ClanMember[]
   clanTerritoriesCaptured ClanTerritory[]
-  clanCaptain             Clan[]            @relation("ClanCaptain")
+  clanCaptain             Clan[]                 @relation("ClanCaptain")
   notifications           Notification[]
   territories             Territory[]
   badges                  UserBadge[]
   progress                UserProgress?
   xpTransactions          XPTransaction[]
-  clanMessages ClanMessage[]
-  createdClubWars ClubWar[] @relation("CreatedClubWars")
-
+  clanMessages            ClanMessage[]
+  createdClanEvents       ClanEvent[]            @relation("CreatedClanEvents")
+  clanEventParticipants   ClanEventParticipant[]
+  createdClubWars         ClubWar[]              @relation("CreatedClubWars")
 
   @@index([email])
   @@index([username])
@@ -65,18 +65,17 @@ model User {
 }
 
 model Clan {
-  id                 String                   @id @default(uuid())
-  name               String                   @unique
-  slug               String                   @unique
-  description        String?
-  logo               String?
-  banner             String?
-  isPrivate          Boolean                  @default(false)
-  maxMembers         Int                      @default(50)
+  id          String  @id @default(uuid())
+  name        String  @unique
+  slug        String  @unique
+  description String?
+  logo        String?
+  banner      String?
+  isPrivate   Boolean @default(false)
+  maxMembers  Int     @default(50)
 
-  country            String?
-  imageUrl           String?                  @map("image_url")
-
+  country  String?
+  imageUrl String? @map("image_url")
 
   /// *
   /// * |--------------------------------------------------------------------------
@@ -113,13 +112,13 @@ model Clan {
   territories        ClanTerritory[]
   captain            User                     @relation("ClanCaptain", fields: [captainId], references: [id], onDelete: Cascade)
 
-  messages ClanMessage[]
-  challengerWars ClubWar[] @relation("ChallengerClanWars")
-  opponentWars   ClubWar[] @relation("OpponentClanWars")
-  wonWars        ClubWar[] @relation("WinnerClanWars")
+  messages       ClanMessage[]
+  challengerWars ClubWar[]     @relation("ChallengerClanWars")
+  opponentWars   ClubWar[]     @relation("OpponentClanWars")
+  wonWars        ClubWar[]     @relation("WinnerClanWars")
 
-  warStats       ClubWarParticipant[]
-
+  warStats ClubWarParticipant[]
+  events   ClanEvent[]
 
   @@index([name])
   @@index([rank])
@@ -273,12 +272,12 @@ model Friendship {
 }
 
 model Activity {
-  id             String                   @id @default(uuid())
+  id     String @id @default(uuid())
   /// *
   /// * |--------------------------------------------------------------------------
   /// * | RELATIONS
   /// * |--------------------------------------------------------------------------
-  userId         String
+  userId String
 
   clientActivityId String?
 
@@ -315,8 +314,8 @@ model Activity {
   territories    Territory[]
   xptransactions XPTransaction[]
 
-  @@index([userId])
   @@unique([userId, clientActivityId])
+  @@index([userId])
   @@map("activities")
 }
 
@@ -465,8 +464,6 @@ model UserBadge {
   @@map("user_badges")
 }
 
-
-
 model ClanMessage {
   id        String   @id @default(uuid())
   clanId    String
@@ -475,83 +472,130 @@ model ClanMessage {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  clan      Clan     @relation(fields: [clanId], references: [id], onDelete: Cascade)
-  sender    User     @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  clan   Clan @relation(fields: [clanId], references: [id], onDelete: Cascade)
+  sender User @relation(fields: [senderId], references: [id], onDelete: Cascade)
 
   @@index([clanId])
   @@index([senderId])
   @@index([createdAt])
 }
 
-
 model ClubWar {
-  id              String        @id @default(uuid())
+  id String @id @default(uuid())
 
-  type            ClubWarType
-  status          ClubWarStatus @default(PENDING)
+  type   ClubWarType
+  status ClubWarStatus @default(PENDING)
 
-  seasonName      String?
-  startsAt        DateTime
-  endsAt          DateTime
+  seasonName String?
+  startsAt   DateTime
+  endsAt     DateTime
 
   challengerClanId String?
   opponentClanId   String?
 
-  challengerClan   Clan? @relation("ChallengerClanWars", fields: [challengerClanId], references: [id])
-  opponentClan     Clan? @relation("OpponentClanWars", fields: [opponentClanId], references: [id])
+  challengerClan Clan? @relation("ChallengerClanWars", fields: [challengerClanId], references: [id])
+  opponentClan   Clan? @relation("OpponentClanWars", fields: [opponentClanId], references: [id])
 
-  winnerClanId     String?
-  winnerClan       Clan? @relation("WinnerClanWars", fields: [winnerClanId], references: [id])
-
+  winnerClanId String?
+  winnerClan   Clan?   @relation("WinnerClanWars", fields: [winnerClanId], references: [id])
 
   createdByUserId String?
-  createdByUser   User? @relation("CreatedClubWars", fields: [createdByUserId], references: [id])
+  createdByUser   User?   @relation("CreatedClubWars", fields: [createdByUserId], references: [id])
 
-  acceptedAt       DateTime?
-  declinedAt       DateTime?
-  cancelledAt      DateTime?
+  acceptedAt  DateTime?
+  declinedAt  DateTime?
+  cancelledAt DateTime?
 
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  participants     ClubWarParticipant[]
+  participants ClubWarParticipant[]
 
   @@index([status])
   @@index([type])
   @@index([startsAt, endsAt])
 }
 
-
 model ClubWarParticipant {
-  id              String @id @default(uuid())
+  id String @id @default(uuid())
 
-  warId           String
-  clanId          String
+  warId  String
+  clanId String
 
-  war             ClubWar @relation(fields: [warId], references: [id], onDelete: Cascade)
-  clan            Clan    @relation(fields: [clanId], references: [id])
+  war  ClubWar @relation(fields: [warId], references: [id], onDelete: Cascade)
+  clan Clan    @relation(fields: [clanId], references: [id])
 
-  memberCount     Int    @default(0)
-  activeMembers   Int    @default(0)
+  memberCount   Int @default(0)
+  activeMembers Int @default(0)
 
-  totalDistanceKm Float  @default(0)
-  avgDistanceKm   Float  @default(0)
+  totalDistanceKm Float @default(0)
+  avgDistanceKm   Float @default(0)
 
-  activeScore     Float  @default(0)
-  distanceScore   Float  @default(0)
-  finalScore      Float  @default(0)
+  activeScore   Float @default(0)
+  distanceScore Float @default(0)
+  finalScore    Float @default(0)
 
-  result          ClubWarResult?
+  result ClubWarResult?
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([warId, clanId])
   @@index([clanId])
 }
 
+model ClanEvent {
+  id          String @id @default(uuid())
+  clanId      String
+  createdById String
 
+  title       String
+  description String?
+  location    String?
 
+  startsAt DateTime
+  endsAt   DateTime
+
+  maxParticipants Int?
+  status          ClanEventStatus @default(UPCOMING)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  clan      Clan @relation(fields: [clanId], references: [id], onDelete: Cascade)
+  createdBy User @relation("CreatedClanEvents", fields: [createdById], references: [id], onDelete: Cascade)
+
+  participants ClanEventParticipant[]
+
+  @@index([clanId])
+  @@index([createdById])
+  @@index([startsAt])
+  @@index([status])
+  @@map("clan_events")
+}
+
+model ClanEventParticipant {
+  id      String @id @default(uuid())
+  eventId String
+  userId  String
+
+  joinedAt DateTime @default(now())
+
+  event ClanEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, userId])
+  @@index([eventId])
+  @@index([userId])
+  @@map("clan_event_participants")
+}
+
+enum ClanEventStatus {
+  UPCOMING
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
 
 enum ClubWarType {
   AUTOMATIC
