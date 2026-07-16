@@ -37,12 +37,24 @@ const sendPasswordResetOtpEmail = async ({
   user,
   otp,
 }) => {
+  console.log("SENDING_PASSWORD_RESET_OTP:", {
+    email: user.email,
+    otp,
+    gmailUser: process.env.GMAIL_USER,
+    hasAppPassword: Boolean(
+      process.env.GMAIL_APP_PASSWORD
+    ),
+  });
+
   const template = passwordResetOtpTemplate({
-    fullName: user.fullName || user.username,
+    fullName:
+      user.fullName ||
+      user.username ||
+      "Duro Athlete",
     otp,
   });
 
-  return emailTransporter.sendMail({
+  const info = await emailTransporter.sendMail({
     from: {
       name: "Duro",
       address: process.env.GMAIL_USER,
@@ -57,6 +69,15 @@ const sendPasswordResetOtpEmail = async ({
       process.env.DURO_SUPPORT_EMAIL ||
       process.env.GMAIL_USER,
   });
+
+  console.log("PASSWORD_RESET_EMAIL_SENT:", {
+    messageId: info.messageId,
+    accepted: info.accepted,
+    rejected: info.rejected,
+    response: info.response,
+  });
+
+  return info;
 };
 
 

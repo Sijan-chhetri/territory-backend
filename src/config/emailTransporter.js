@@ -11,6 +11,8 @@ const emailTransporter = nodemailer.createTransport({
   },
 });
 
+
+
 export const verifyEmailTransporter = async () => {
   try {
     await emailTransporter.verify();

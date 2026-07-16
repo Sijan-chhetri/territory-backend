@@ -24,7 +24,7 @@ import clubWarRoutes from "./src/modules/clubWar/clubWarRoutes.js";
 import clanEventRoutes from "./src/modules/clanEvent/clanEvent.routes.js";
 
 import { verifyEmailTransporter } from "./src/config/emailTransporter.js";
-
+import emailTransporter from "./src/config/emailTransporter.js";
 
 
 
@@ -39,6 +39,19 @@ const server = http.createServer(app);
 
 initSocket(server);
 verifyEmailTransporter();
+
+
+emailTransporter
+  .verify()
+  .then(() => {
+    console.log("GMAIL_TRANSPORTER_READY");
+  })
+  .catch((error) => {
+    console.error(
+      "GMAIL_TRANSPORTER_VERIFY_ERROR:",
+      error
+    );
+  });
 
 app.get("/", (_, res) => {
   res.send("Territory Backend Running");
