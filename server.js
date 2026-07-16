@@ -23,6 +23,10 @@ import clanChatRoutes from "./src/modules/clanChat/clanChatRoutes.js"
 import clubWarRoutes from "./src/modules/clubWar/clubWarRoutes.js";
 import clanEventRoutes from "./src/modules/clanEvent/clanEvent.routes.js";
 
+import { verifyEmailTransporter } from "./src/config/emailTransporter.js";
+
+
+
 
 const app = express();
 
@@ -34,10 +38,12 @@ app.use(express.json());
 const server = http.createServer(app);
 
 initSocket(server);
+verifyEmailTransporter();
 
 app.get("/", (_, res) => {
   res.send("Territory Backend Running");
 });
+
 
 app.use("/api/auth", authRoutes);
 app.use("/api/activities", activityRoutes);

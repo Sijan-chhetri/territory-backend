@@ -2,6 +2,8 @@
 
 import prisma from "../../config/prisma.js";
 
+import { sendClanEventInvitations } from "./clanEventEmail.service.js";
+
 
 
 const getUserClanMembership = async (userId) => {
@@ -75,141 +77,246 @@ const checkClanLeaderAccess = async (userId) => {
  * |--------------------------------------------------------------------------
  */
 export const createClanEvent = async (req, res) => {
-    try {
-        const userId = req.user.id;
+  try {
+    const userId = req.user.id;
 
-        const {
-            title,
-            description,
-            location,
-            startsAt,
-            endsAt,
-            maxParticipants,
-        } = req.body;
+    const {
+      title,
+      description,
+      location,
+      startsAt,
+      endsAt,
+      maxParticipants,
+    } = req.body;
 
-        if (!title?.trim()) {
-            return res.status(400).json({
-                success: false,
-                message: "Event title is required",
-            });
-        }
+    /**
+     * |--------------------------------------------------------------------------
+     * | VALIDATION
+     * |--------------------------------------------------------------------------
+     */
 
-        if (!startsAt || !endsAt) {
-            return res.status(400).json({
-                success: false,
-                message: "Event start time and end time are required",
-            });
-        }
-
-        const startDate = new Date(startsAt);
-        const endDate = new Date(endsAt);
-
-        if (
-            Number.isNaN(startDate.getTime()) ||
-            Number.isNaN(endDate.getTime())
-        ) {
-            return res.status(400).json({
-                success: false,
-                message: "Invalid event date",
-            });
-        }
-
-        if (endDate <= startDate) {
-            return res.status(400).json({
-                success: false,
-                message: "Event end time must be after the start time",
-            });
-        }
-
-        if (startDate <= new Date()) {
-            return res.status(400).json({
-                success: false,
-                message: "Event start time must be in the future",
-            });
-        }
-
-        let parsedMaxParticipants = null;
-
-        if (
-            maxParticipants !== undefined &&
-            maxParticipants !== null
-        ) {
-            parsedMaxParticipants = Number(maxParticipants);
-
-            if (
-                !Number.isInteger(parsedMaxParticipants) ||
-                parsedMaxParticipants < 1
-            ) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Maximum participants must be at least 1",
-                });
-            }
-        }
-
-        const access = await checkClanLeaderAccess(userId);
-
-        if (!access.allowed) {
-            return res.status(access.status).json({
-                success: false,
-                message: access.message,
-            });
-        }
-
-        const clanId = access.membership.clanId;
-
-        const event = await prisma.clanEvent.create({
-            data: {
-                clanId,
-                createdById: userId,
-                title: title.trim(),
-                description: description?.trim() || null,
-                location: location?.trim() || null,
-                startsAt: startDate,
-                endsAt: endDate,
-                maxParticipants: parsedMaxParticipants,
-            },
-            include: {
-                clan: {
-                    select: {
-                        id: true,
-                        name: true,
-                        slug: true,
-                        logo: true,
-                    },
-                },
-                createdBy: {
-                    select: {
-                        id: true,
-                        username: true,
-                        fullName: true,
-                    },
-                },
-                _count: {
-                    select: {
-                        participants: true,
-                    },
-                },
-            },
-        });
-
-        return res.status(201).json({
-            success: true,
-            message: "Clan event created successfully",
-            data: event,
-        });
-    } catch (error) {
-        console.error("CREATE_CLAN_EVENT_ERROR:", error);
-
-        return res.status(500).json({
-            success: false,
-            message: "Failed to create clan event",
-            error:
-                process.env.NODE_ENV === "development"
-                    ? error.message
-                    : undefined,
-        });
+    if (!title?.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Event title is required",
+      });
     }
+
+    if (!startsAt || !endsAt) {
+      return res.status(400).json({
+        success: false,
+        message: "Event start time and end time are required",
+      });
+    }
+
+    const startDate = new Date(startsAt);
+    const endDate = new Date(endsAt);
+
+    if (
+      Number.isNaN(startDate.getTime()) ||
+      Number.isNaN(endDate.getTime())
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid event date",
+      });
+    }
+
+    if (endDate <= startDate) {
+      return res.status(400).json({
+        success: false,
+        message: "Event end time must be after the start time",
+      });
+    }
+
+    if (startDate <= new Date()) {
+      return res.status(400).json({
+        success: false,
+        message: "Event start time must be in the future",
+      });
+    }
+
+    let parsedMaxParticipants = null;
+
+    if (
+      maxParticipants !== undefined &&
+      maxParticipants !== null &&
+      maxParticipants !== ""
+    ) {
+      parsedMaxParticipants = Number(maxParticipants);
+
+      if (
+        !Number.isInteger(parsedMaxParticipants) ||
+        parsedMaxParticipants < 1
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Maximum participants must be at least 1",
+        });
+      }
+    }
+
+    /**
+     * |--------------------------------------------------------------------------
+     * | CHECK CLAN LEADER ACCESS
+     * |--------------------------------------------------------------------------
+     */
+
+    const access = await checkClanLeaderAccess(userId);
+
+    if (!access.allowed) {
+      return res.status(access.status).json({
+        success: false,
+        message: access.message,
+      });
+    }
+
+    const clanId = access.membership.clanId;
+
+    /**
+     * |--------------------------------------------------------------------------
+     * | CREATE EVENT
+     * |--------------------------------------------------------------------------
+     */
+
+    const event = await prisma.clanEvent.create({
+      data: {
+        clanId,
+        createdById: userId,
+        title: title.trim(),
+        description: description?.trim() || null,
+        location: location?.trim() || null,
+        startsAt: startDate,
+        endsAt: endDate,
+        maxParticipants: parsedMaxParticipants,
+      },
+
+      include: {
+        clan: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            logo: true,
+            banner: true,
+          },
+        },
+
+        createdBy: {
+          select: {
+            id: true,
+            username: true,
+            fullName: true,
+            email: true,
+          },
+        },
+
+        _count: {
+          select: {
+            participants: true,
+          },
+        },
+      },
+    });
+
+    /**
+     * |--------------------------------------------------------------------------
+     * | FETCH ALL CLAN MEMBERS
+     * |--------------------------------------------------------------------------
+     */
+
+    const clanMembers = await prisma.clanMember.findMany({
+      where: {
+        clanId,
+      },
+
+      select: {
+        id: true,
+        userId: true,
+        role: true,
+
+        user: {
+          select: {
+            id: true,
+            email: true,
+            username: true,
+            fullName: true,
+          },
+        },
+      },
+    });
+
+    /**
+     * |--------------------------------------------------------------------------
+     * | SEND EMAIL INVITATIONS
+     * |--------------------------------------------------------------------------
+     *
+     * Email failure should not undo event creation.
+     */
+
+    let emailResult = {
+      attempted: 0,
+      sent: 0,
+      failed: 0,
+      successful: [],
+      failures: [],
+    };
+
+    try {
+      emailResult = await sendClanEventInvitations({
+        event,
+        clan: event.clan,
+        creator: event.createdBy,
+        members: clanMembers,
+      });
+    } catch (emailError) {
+      console.error(
+        "CLAN_EVENT_INVITATION_EMAIL_ERROR:",
+        emailError
+      );
+    }
+
+    /**
+     * |--------------------------------------------------------------------------
+     * | RESPONSE
+     * |--------------------------------------------------------------------------
+     */
+
+    return res.status(201).json({
+      success: true,
+      message: "Clan event created successfully",
+
+      invitationMessage:
+        emailResult.sent > 0
+          ? `Invitations sent to ${emailResult.sent} clan members`
+          : "Event created successfully, but no email invitations were sent",
+
+      data: {
+        ...event,
+
+        participantsCount:
+          event._count?.participants ?? 0,
+      },
+
+      emailInvitations: {
+        totalClanMembers: clanMembers.length,
+        attempted: emailResult.attempted,
+        sent: emailResult.sent,
+        failed: emailResult.failed,
+      },
+    });
+  } catch (error) {
+    console.error("CREATE_CLAN_EVENT_ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to create clan event",
+      error:
+        process.env.NODE_ENV === "development"
+          ? error.message
+          : undefined,
+    });
+  }
 };
 
 /**
