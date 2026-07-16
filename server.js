@@ -53,8 +53,29 @@ emailTransporter
     );
   });
 
-app.get("/", (_, res) => {
-  res.send("Territory Backend Running");
+app.get("/", async (_, res) => {
+  try {
+    await emailTransporter.verify();
+
+    return res.status(200).json({
+      success: true,
+      message: "Territory Backend Running",
+      emailService: "Connected",
+      gmailUser: process.env.GMAIL_USER,
+      hasAppPassword: Boolean(process.env.GMAIL_APP_PASSWORD),
+    });
+  } catch (error) {
+    console.error("EMAIL_CONNECTION_TEST_ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Territory Backend Running, but email connection failed",
+      emailService: "Disconnected",
+      error: error.message,
+      code: error.code,
+      response: error.response,
+    });
+  }
 });
 
 
