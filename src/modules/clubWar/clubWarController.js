@@ -83,6 +83,23 @@ const calculateParticipantStats = async ({ warId, clanId, startsAt, endsAt }) =>
   };
 };
 
+/**
+ * Returns the authenticated user's clan membership only when they are a leader.
+ */
+const getLeaderClanMembership = async (userId) => {
+  return prisma.clanMember.findFirst({
+    where: {
+      userId,
+      role: "LEADER",
+    },
+    select: {
+      id: true,
+      clanId: true,
+      role: true,
+    },
+  });
+};
+
 export const createManualClubWar = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -115,8 +132,7 @@ export const createManualClubWar = async (req, res) => {
       });
     }
 
-    // Find the authenticated user's clan membership
-    const myClanMember = await prisma.clanMember.findFirst({
+    const existingMembership = await prisma.clanMember.findFirst({
       where: {
         userId,
       },
@@ -126,15 +142,16 @@ export const createManualClubWar = async (req, res) => {
       },
     });
 
-    if (!myClanMember) {
+    if (!existingMembership) {
       return res.status(404).json({
         success: false,
         message: "You are not in a clan",
       });
     }
 
-    // Only the clan leader can challenge another clan
-    if (myClanMember.role?.toUpperCase() !== "LEADER") {
+    const myClanMember = await getLeaderClanMembership(userId);
+
+    if (!myClanMember) {
       return res.status(403).json({
         success: false,
         message: "Only the clan leader can challenge another clan",
@@ -248,17 +265,36 @@ export const acceptClubWar = async (req, res) => {
     const userId = req.user.id;
     const { warId } = req.params;
 
-    const myClanMember = await getUserClan(userId);
+    const existingMembership = await prisma.clanMember.findFirst({
+      where: {
+        userId,
+      },
+      select: {
+        clanId: true,
+        role: true,
+      },
+    });
 
-    if (!myClanMember) {
+    if (!existingMembership) {
       return res.status(404).json({
         success: false,
         message: "You are not in a clan",
       });
     }
 
+    const myClanMember = await getLeaderClanMembership(userId);
+
+    if (!myClanMember) {
+      return res.status(403).json({
+        success: false,
+        message: "Only the clan leader can accept a club war",
+      });
+    }
+
     const war = await prisma.clubWar.findUnique({
-      where: { id: warId },
+      where: {
+        id: warId,
+      },
     });
 
     if (!war) {
@@ -271,28 +307,41 @@ export const acceptClubWar = async (req, res) => {
     if (war.opponentClanId !== myClanMember.clanId) {
       return res.status(403).json({
         success: false,
-        message: "Only the challenged clan can accept this war",
+        message: "Only the challenged clan leader can accept this war",
+      });
+    }
+
+    if (war.status !== "PENDING") {
+      return res.status(400).json({
+        success: false,
+        message: `This club war cannot be accepted because its status is ${war.status}`,
       });
     }
 
     const updatedWar = await prisma.clubWar.update({
-      where: { id: warId },
+      where: {
+        id: warId,
+      },
       data: {
         status: "ACTIVE",
         acceptedAt: new Date(),
+        declinedAt: null,
       },
       include: {
         participants: true,
+        challengerClan: true,
+        opponentClan: true,
       },
     });
 
-    return res.json({
+    return res.status(200).json({
       success: true,
       message: "Club war accepted",
       war: updatedWar,
     });
   } catch (error) {
-    console.error("Accept club war error:", error);
+    console.error("ACCEPT_CLUB_WAR_ERROR:", error);
+
     return res.status(500).json({
       success: false,
       message: "Failed to accept club war",
@@ -305,17 +354,36 @@ export const declineClubWar = async (req, res) => {
     const userId = req.user.id;
     const { warId } = req.params;
 
-    const myClanMember = await getUserClan(userId);
+    const existingMembership = await prisma.clanMember.findFirst({
+      where: {
+        userId,
+      },
+      select: {
+        clanId: true,
+        role: true,
+      },
+    });
 
-    if (!myClanMember) {
+    if (!existingMembership) {
       return res.status(404).json({
         success: false,
         message: "You are not in a clan",
       });
     }
 
+    const myClanMember = await getLeaderClanMembership(userId);
+
+    if (!myClanMember) {
+      return res.status(403).json({
+        success: false,
+        message: "Only the clan leader can decline a club war",
+      });
+    }
+
     const war = await prisma.clubWar.findUnique({
-      where: { id: warId },
+      where: {
+        id: warId,
+      },
     });
 
     if (!war) {
@@ -328,32 +396,46 @@ export const declineClubWar = async (req, res) => {
     if (war.opponentClanId !== myClanMember.clanId) {
       return res.status(403).json({
         success: false,
-        message: "Only the challenged clan can decline this war",
+        message: "Only the challenged clan leader can decline this war",
+      });
+    }
+
+    if (war.status !== "PENDING") {
+      return res.status(400).json({
+        success: false,
+        message: `This club war cannot be declined because its status is ${war.status}`,
       });
     }
 
     const updatedWar = await prisma.clubWar.update({
-      where: { id: warId },
+      where: {
+        id: warId,
+      },
       data: {
         status: "DECLINED",
         declinedAt: new Date(),
       },
+      include: {
+        challengerClan: true,
+        opponentClan: true,
+        participants: true,
+      },
     });
 
-    return res.json({
+    return res.status(200).json({
       success: true,
       message: "Club war declined",
       war: updatedWar,
     });
   } catch (error) {
-    console.error("Decline club war error:", error);
+    console.error("DECLINE_CLUB_WAR_ERROR:", error);
+
     return res.status(500).json({
       success: false,
       message: "Failed to decline club war",
     });
   }
 };
-
 
 export const recalculateClubWar = async (req, res) => {
   try {
