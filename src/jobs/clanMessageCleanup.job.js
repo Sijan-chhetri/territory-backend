@@ -57,6 +57,6 @@ export const startClanMessageCleanupJob = () => {
   );
 
   console.log(
-    'Clan message cleanup scheduled daily at 3:00 AM Nepal time',
+    'Clan message cleanup scheduled daily at 2:20 PM Nepal time',
   );
 };

@@ -115,12 +115,29 @@ export const createManualClubWar = async (req, res) => {
       });
     }
 
-    const myClanMember = await getUserClan(userId);
+    // Find the authenticated user's clan membership
+    const myClanMember = await prisma.clanMember.findFirst({
+      where: {
+        userId,
+      },
+      select: {
+        clanId: true,
+        role: true,
+      },
+    });
 
     if (!myClanMember) {
       return res.status(404).json({
         success: false,
         message: "You are not in a clan",
+      });
+    }
+
+    // Only the clan leader can challenge another clan
+    if (myClanMember.role?.toUpperCase() !== "LEADER") {
+      return res.status(403).json({
+        success: false,
+        message: "Only the clan leader can challenge another clan",
       });
     }
 
@@ -154,15 +171,12 @@ export const createManualClubWar = async (req, res) => {
         status: {
           in: ["PENDING", "ACTIVE"],
         },
-
         startsAt: {
           lt: requestedEndsAt,
         },
-
         endsAt: {
           gt: requestedStartsAt,
         },
-
         participants: {
           some: {
             clanId: {
@@ -198,8 +212,12 @@ export const createManualClubWar = async (req, res) => {
         endsAt: requestedEndsAt,
         participants: {
           create: [
-            { clanId: challengerClanId },
-            { clanId: opponentClanId },
+            {
+              clanId: challengerClanId,
+            },
+            {
+              clanId: opponentClanId,
+            },
           ],
         },
       },
@@ -210,13 +228,14 @@ export const createManualClubWar = async (req, res) => {
       },
     });
 
-    return res.json({
+    return res.status(201).json({
       success: true,
       message: "Club war challenge sent",
       war,
     });
   } catch (error) {
-    console.error("Create manual club war error:", error);
+    console.error("CREATE_MANUAL_CLUB_WAR_ERROR:", error);
+
     return res.status(500).json({
       success: false,
       message: "Failed to create club war",
