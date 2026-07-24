@@ -45,7 +45,7 @@ export const startClanMessageCleanupJob = () => {
 
   // Run every day at 3:00 AM Nepal time.
   cron.schedule(
-    '0 3 * * *',
+    '20 14 * * *',
     async () => {
       await cleanupOldClanMessages();
     },
