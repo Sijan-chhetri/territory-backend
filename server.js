@@ -4,6 +4,7 @@ import cors from "cors";
 import helmet from "helmet";
 import morgan from "morgan";
 import http from "http";
+import { startClanMessageCleanupJob } from "./src/jobs/clanMessageCleanup.job.js";
 
 import dns from "node:dns";
 
@@ -105,4 +106,5 @@ const PORT = process.env.PORT || 3000;
 
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  startClanMessageCleanupJob();
 });
