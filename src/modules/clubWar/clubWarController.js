@@ -100,6 +100,8 @@ const getLeaderClanMembership = async (userId) => {
   });
 };
 
+
+
 export const createManualClubWar = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -108,7 +110,7 @@ export const createManualClubWar = async (req, res) => {
     if (!opponentClanId || !startsAt || !endsAt) {
       return res.status(400).json({
         success: false,
-        message: "opponentClanId, startsAt and endsAt are required",
+        message: "Opponent clan, start time, and end time are required.",
       });
     }
 
@@ -121,14 +123,15 @@ export const createManualClubWar = async (req, res) => {
     ) {
       return res.status(400).json({
         success: false,
-        message: "Invalid startsAt or endsAt date",
+        message:
+          "The selected start date or end date is invalid. Please select valid dates and try again.",
       });
     }
 
     if (requestedStartsAt >= requestedEndsAt) {
       return res.status(400).json({
         success: false,
-        message: "War start time must be before end time",
+        message: "The war start time must be before the war end time.",
       });
     }
 
@@ -145,7 +148,7 @@ export const createManualClubWar = async (req, res) => {
     if (!existingMembership) {
       return res.status(404).json({
         success: false,
-        message: "You are not in a clan",
+        message: "You must be a member of a clan to create a war challenge.",
       });
     }
 
@@ -154,7 +157,7 @@ export const createManualClubWar = async (req, res) => {
     if (!myClanMember) {
       return res.status(403).json({
         success: false,
-        message: "Only the clan leader can challenge another clan",
+        message: "Only the clan leader can challenge another clan.",
       });
     }
 
@@ -163,7 +166,7 @@ export const createManualClubWar = async (req, res) => {
     if (challengerClanId === opponentClanId) {
       return res.status(400).json({
         success: false,
-        message: "You cannot challenge your own clan",
+        message: "You cannot challenge your own clan.",
       });
     }
 
@@ -173,48 +176,95 @@ export const createManualClubWar = async (req, res) => {
       },
       select: {
         id: true,
+        name: true,
       },
     });
 
     if (!opponentClan) {
       return res.status(404).json({
         success: false,
-        message: "Opponent clan not found",
+        message: "The selected opponent clan could not be found.",
       });
     }
 
-    const overlappingWar = await prisma.clubWar.findFirst({
-      where: {
-        status: {
-          in: ["PENDING", "ACTIVE"],
+    const overlapTimeFilter = {
+      status: {
+        in: ["PENDING", "ACTIVE"],
+      },
+      startsAt: {
+        lt: requestedEndsAt,
+      },
+      endsAt: {
+        gt: requestedStartsAt,
+      },
+    };
+
+    const warConflictInclude = {
+      challengerClan: true,
+      opponentClan: true,
+      participants: {
+        include: {
+          clan: true,
         },
-        startsAt: {
-          lt: requestedEndsAt,
-        },
-        endsAt: {
-          gt: requestedStartsAt,
-        },
-        participants: {
-          some: {
-            clanId: {
-              in: [challengerClanId, opponentClanId],
+      },
+    };
+
+    const [challengerOverlappingWar, opponentOverlappingWar] =
+      await Promise.all([
+        prisma.clubWar.findFirst({
+          where: {
+            ...overlapTimeFilter,
+            participants: {
+              some: {
+                clanId: challengerClanId,
+              },
             },
           },
-        },
-      },
-      include: {
-        challengerClan: true,
-        opponentClan: true,
-        participants: true,
-      },
-    });
+          include: warConflictInclude,
+        }),
 
-    if (overlappingWar) {
-      return res.status(400).json({
+        prisma.clubWar.findFirst({
+          where: {
+            ...overlapTimeFilter,
+            participants: {
+              some: {
+                clanId: opponentClanId,
+              },
+            },
+          },
+          include: warConflictInclude,
+        }),
+      ]);
+
+    if (challengerOverlappingWar && opponentOverlappingWar) {
+      return res.status(409).json({
         success: false,
+        conflictType: "BOTH_CLANS_UNAVAILABLE",
         message:
-          "One of these clans already has a pending or active war during this time period",
-        overlappingWar,
+          "Both your clan and the opponent clan already have a pending or active war during the selected time period. Please choose a different schedule.",
+        conflicts: {
+          challengerClanWar: challengerOverlappingWar,
+          opponentClanWar: opponentOverlappingWar,
+        },
+      });
+    }
+
+    if (challengerOverlappingWar) {
+      return res.status(409).json({
+        success: false,
+        conflictType: "CHALLENGER_CLAN_UNAVAILABLE",
+        message:
+          "Your clan already has a pending or active war during the selected time period. Please choose a different date or time.",
+        overlappingWar: challengerOverlappingWar,
+      });
+    }
+
+    if (opponentOverlappingWar) {
+      return res.status(409).json({
+        success: false,
+        conflictType: "OPPONENT_CLAN_UNAVAILABLE",
+        message: `${opponentClan.name} already has a pending or active war during the selected time period. Please choose a different date or time.`,
+        overlappingWar: opponentOverlappingWar,
       });
     }
 
@@ -239,7 +289,11 @@ export const createManualClubWar = async (req, res) => {
         },
       },
       include: {
-        participants: true,
+        participants: {
+          include: {
+            clan: true,
+          },
+        },
         challengerClan: true,
         opponentClan: true,
       },
@@ -247,7 +301,7 @@ export const createManualClubWar = async (req, res) => {
 
     return res.status(201).json({
       success: true,
-      message: "Club war challenge sent",
+      message: `Club war challenge sent successfully to ${opponentClan.name}.`,
       war,
     });
   } catch (error) {
@@ -255,7 +309,8 @@ export const createManualClubWar = async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      message: "Failed to create club war",
+      message:
+        "The club war challenge could not be created. Please try again later.",
     });
   }
 };
