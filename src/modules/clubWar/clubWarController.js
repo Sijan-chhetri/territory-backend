@@ -260,6 +260,8 @@ export const createManualClubWar = async (req, res) => {
   }
 };
 
+
+
 export const acceptClubWar = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -354,6 +356,7 @@ export const declineClubWar = async (req, res) => {
     const userId = req.user.id;
     const { warId } = req.params;
 
+    // Check whether the user belongs to any clan
     const existingMembership = await prisma.clanMember.findFirst({
       where: {
         userId,
@@ -371,6 +374,7 @@ export const declineClubWar = async (req, res) => {
       });
     }
 
+    // Only a clan leader can decline a club war
     const myClanMember = await getLeaderClanMembership(userId);
 
     if (!myClanMember) {
@@ -393,10 +397,18 @@ export const declineClubWar = async (req, res) => {
       });
     }
 
-    if (war.opponentClanId !== myClanMember.clanId) {
+    // Both the challenger clan leader and opponent clan leader can decline
+    const isChallengerClan =
+      war.challengerClanId === myClanMember.clanId;
+
+    const isOpponentClan =
+      war.opponentClanId === myClanMember.clanId;
+
+    if (!isChallengerClan && !isOpponentClan) {
       return res.status(403).json({
         success: false,
-        message: "Only the challenged clan leader can decline this war",
+        message:
+          "Only the challenger or challenged clan leader can decline this war",
       });
     }
 
@@ -422,9 +434,15 @@ export const declineClubWar = async (req, res) => {
       },
     });
 
+    const declinedBy = isChallengerClan ? "challenger" : "opponent";
+
     return res.status(200).json({
       success: true,
-      message: "Club war declined",
+      message:
+        declinedBy === "challenger"
+          ? "Club war cancelled by the challenger clan"
+          : "Club war declined by the challenged clan",
+      declinedBy,
       war: updatedWar,
     });
   } catch (error) {
@@ -436,6 +454,7 @@ export const declineClubWar = async (req, res) => {
     });
   }
 };
+
 
 export const recalculateClubWar = async (req, res) => {
   try {
