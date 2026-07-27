@@ -25,6 +25,7 @@ model User {
   city     String?
 
   weight Float?
+  height Float?
 
   authProvider AuthProvider @default(EMAIL) @map("auth_provider")
   googleId     String?      @unique @map("google_id")
@@ -273,44 +274,39 @@ model Friendship {
 }
 
 model Activity {
-  id     String @id @default(uuid())
-  /// *
-  /// * |--------------------------------------------------------------------------
-  /// * | RELATIONS
-  /// * |--------------------------------------------------------------------------
-  userId String
+  id String @id @default(uuid())
 
+  userId          String
   clientActivityId String?
 
-  /// *
-  /// * |--------------------------------------------------------------------------
-  /// * | ACTIVITY DATA
-  /// * |--------------------------------------------------------------------------
-  mode           ActivityMode
-  distanceKm     Float
-  durationSec    Int
-  stopTime       Int?
-  elapsedTime    Int?
-  movingTime     Int?
-  avgPace        Float
-  topPace        Float?
-  avgSpeed       Float?
-  topSpeed       Float?
-  calories       Float
-  elevationGain  Float?
-  startedAt      DateTime
-  endedAt        DateTime
-  routeEncoded   String?
-  kmSplits       Json?
-  routeGeometry  Unsupported("geometry")?
-  /// *
-  /// * |--------------------------------------------------------------------------
-  /// * | TIMESTAMPS
-  /// * |--------------------------------------------------------------------------
-  createdAt      DateTime                 @default(now())
-  includeInClan  Boolean                  @default(false) @map("include_in_clan")
+  mode        ActivityMode
+  distanceKm  Float
+  durationSec Int
+  stopTime    Int?
+  elapsedTime Int?
+  movingTime  Int?
+  avgPace     Float
+  topPace     Float?
+  avgSpeed    Float?
+  topSpeed    Float?
+  calories    Float
+
+  elevationGain    Float?
+  elevationLoss    Float?
+  highestElevation Float?
+  lowestElevation  Float?
+
+  startedAt     DateTime
+  endedAt       DateTime
+  routeEncoded  String?
+  kmSplits      Json?
+  routeGeometry Unsupported("geometry")?
+
+  createdAt      DateTime @default(now())
+  includeInClan  Boolean  @default(false) @map("include_in_clan")
   notes          String?
-  user           User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   clanActivities ClanActivity[]
   territories    Territory[]
   xptransactions XPTransaction[]
@@ -319,6 +315,8 @@ model Activity {
   @@index([userId])
   @@map("activities")
 }
+
+
 
 model Territory {
   id                   String                   @id @default(uuid())
