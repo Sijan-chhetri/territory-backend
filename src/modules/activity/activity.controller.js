@@ -4,7 +4,7 @@ import { addXP } from '../xp/xp.service.js';
 import { checkLevelUp } from '../level/level.service.js';
 import { checkBadges } from '../badge/badge.service.js';
 import polyline from '@mapbox/polyline';
-import { getHydrationRecommendation } from '../hydration/hydration.service.js';
+import { getHydrationRecommendation } from '../hydration/hydration_service.js';
 
 
 // ─────────────────────────────────────────────
