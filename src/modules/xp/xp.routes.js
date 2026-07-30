@@ -1,10 +1,31 @@
-import { Router } from 'express';
+import express from 'express';
+
+import {
+  getMyTransactions,
+  getMyXpSummary,
+  grantRewardedAdXp,
+} from './xp.controller.js';
+
 import authMiddleware from '../../middlewares/auth.js';
-import { getMyTransactions, getMyXpSummary } from './xp.controller.js';
 
-const router = Router();
+const router = express.Router();
 
-router.get('/summary', authMiddleware, getMyXpSummary);
-router.get('/transactions', authMiddleware, getMyTransactions);
+router.get(
+  '/transactions',
+  authMiddleware,
+  getMyTransactions,
+);
+
+router.get(
+  '/summary',
+  authMiddleware,
+  getMyXpSummary,
+);
+
+router.post(
+  '/rewarded-ad',
+  authMiddleware,
+  grantRewardedAdXp,
+);
 
 export default router;
