@@ -100,6 +100,15 @@ router.get(
   getClanDetails
 );
 
+
+router.get(
+  "/:clanId/detailsbyid",
+  optionalAuthMiddleware,
+  getClanDetailsbyId
+);
+
+
+
 router.get(
   "/:clanId/territories",
   authMiddleware,

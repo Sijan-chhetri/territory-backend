@@ -85,6 +85,589 @@ export const getClanJoinRequests = async (req, res) => {
   }
 };
 
+
+
+
+
+
+// controllers/clan.controller.js
+
+/**
+ * Safely execute optional dashboard queries.
+ *
+ * A secondary dashboard section should not make the entire
+ * clan-details request fail.
+ */
+const safeQuery = async (label, query, fallback) => {
+  try {
+    return await query();
+  } catch (error) {
+    console.error(`${label}_ERROR:`, error);
+    return fallback;
+  }
+};
+
+const toNumber = (value) => {
+  if (value === null || value === undefined) return 0;
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+/**
+ * GET /api/clans/:clanId/details
+ *
+ * Public clan-dashboard endpoint.
+ *
+ * Authentication is optional:
+ * - Logged-out user can see public clan information.
+ * - Logged-in user also receives membership and permission information.
+ * - Leaders receive management counts.
+ */
+export const getClanDetailsbyId = async (req, res) => {
+  try {
+    const { clanId } = req.params;
+    const currentUserId = req.user?.id ?? null;
+
+    if (!clanId || !String(clanId).trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Clan ID is required",
+      });
+    }
+
+    const clan = await prisma.clan.findUnique({
+      where: {
+        id: clanId,
+      },
+      include: {
+        captain: {
+          select: {
+            id: true,
+            username: true,
+            fullName: true,
+          },
+        },
+
+        members: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                username: true,
+                fullName: true,
+              },
+            },
+          },
+          orderBy: [
+            {
+              role: "asc",
+            },
+            {
+              joinedAt: "asc",
+            },
+          ],
+        },
+
+        _count: {
+          select: {
+            members: true,
+          },
+        },
+      },
+    });
+
+    if (!clan) {
+      return res.status(404).json({
+        success: false,
+        message: "Clan not found",
+      });
+    }
+
+    const memberUserIds = clan.members
+      .map((member) => member.userId)
+      .filter(Boolean);
+
+    const currentUserMembership = currentUserId
+      ? clan.members.find(
+          (member) => String(member.userId) === String(currentUserId)
+        )
+      : null;
+
+    const isCaptain =
+      currentUserId !== null &&
+      String(clan.captainId) === String(currentUserId);
+
+    const isLeader =
+      isCaptain ||
+      String(currentUserMembership?.role ?? "").toUpperCase() === "LEADER";
+
+    const isMember = Boolean(currentUserMembership);
+
+    /*
+     * Territory contribution grouped by member.
+     */
+    const territoryRows =
+      memberUserIds.length === 0
+        ? []
+        : await safeQuery(
+            "GET_CLAN_MEMBER_TERRITORY_STATS",
+            () =>
+              prisma.$queryRaw`
+                SELECT
+                  t."userId",
+                  COALESCE(SUM(t."areaKm2"), 0) AS "totalAreaKm2",
+                  COUNT(t.id) AS "territoryCount"
+                FROM territories t
+                LEFT JOIN activities a
+                  ON a.id = t."activityId"
+                WHERE t."userId" IN (${Prisma.join(memberUserIds)})
+                  AND t.boundary IS NOT NULL
+                  AND NOT ST_IsEmpty(t.boundary)
+                  AND (
+                    a.id IS NULL
+                    OR a."include_in_clan" = true
+                  )
+                GROUP BY t."userId";
+              `,
+            []
+          );
+
+    /*
+     * Activity contribution grouped by member.
+     *
+     * This is queried separately from territories so an activity's
+     * distance is not counted multiple times when it has multiple territories.
+     */
+    const activityRows =
+      memberUserIds.length === 0
+        ? []
+        : await safeQuery(
+            "GET_CLAN_MEMBER_ACTIVITY_STATS",
+            () =>
+              prisma.$queryRaw`
+                SELECT
+                  a."userId",
+                  COALESCE(SUM(a."distanceKm"), 0) AS "totalDistanceKm",
+                  COUNT(a.id) AS "totalActivities"
+                FROM activities a
+                WHERE a."userId" IN (${Prisma.join(memberUserIds)})
+                  AND a."include_in_clan" = true
+                GROUP BY a."userId";
+              `,
+            []
+          );
+
+    const territoryStatsByUser = new Map(
+      territoryRows.map((row) => [
+        String(row.userId),
+        {
+          totalAreaKm2: toNumber(row.totalAreaKm2),
+          territoryCount: toNumber(row.territoryCount),
+        },
+      ])
+    );
+
+    const activityStatsByUser = new Map(
+      activityRows.map((row) => [
+        String(row.userId),
+        {
+          totalDistanceKm: toNumber(row.totalDistanceKm),
+          totalActivities: toNumber(row.totalActivities),
+        },
+      ])
+    );
+
+    /*
+     * Build member leaderboard.
+     */
+    const members = clan.members
+      .map((member) => {
+        const territoryStats =
+          territoryStatsByUser.get(String(member.userId)) ?? {};
+
+        const activityStats =
+          activityStatsByUser.get(String(member.userId)) ?? {};
+
+        return {
+          membershipId: member.id,
+          userId: member.userId,
+          role: member.role,
+          joinedAt: member.joinedAt,
+
+          user: {
+            id: member.user.id,
+            username: member.user.username,
+            fullName: member.user.fullName,
+          },
+
+          contribution: {
+            territoryCount: toNumber(territoryStats.territoryCount),
+            totalAreaKm2: toNumber(territoryStats.totalAreaKm2),
+            totalAreaM2:
+              toNumber(territoryStats.totalAreaKm2) * 1_000_000,
+            totalDistanceKm: toNumber(activityStats.totalDistanceKm),
+            totalActivities: toNumber(activityStats.totalActivities),
+          },
+        };
+      })
+      .sort((a, b) => {
+        const areaDifference =
+          b.contribution.totalAreaKm2 - a.contribution.totalAreaKm2;
+
+        if (areaDifference !== 0) {
+          return areaDifference;
+        }
+
+        return (
+          b.contribution.totalDistanceKm -
+          a.contribution.totalDistanceKm
+        );
+      })
+      .map((member, index) => ({
+        rank: index + 1,
+        ...member,
+      }));
+
+    /*
+     * Calculate total dashboard statistics.
+     */
+    const dashboardStats = members.reduce(
+      (totals, member) => {
+        totals.territoryCount += member.contribution.territoryCount;
+        totals.totalAreaKm2 += member.contribution.totalAreaKm2;
+        totals.totalDistanceKm += member.contribution.totalDistanceKm;
+        totals.totalActivities += member.contribution.totalActivities;
+
+        return totals;
+      },
+      {
+        territoryCount: 0,
+        totalAreaKm2: 0,
+        totalDistanceKm: 0,
+        totalActivities: 0,
+      }
+    );
+
+    /*
+     * Recent captured territories.
+     */
+    const recentTerritories =
+      memberUserIds.length === 0
+        ? []
+        : await safeQuery(
+            "GET_CLAN_RECENT_TERRITORIES",
+            () =>
+              prisma.$queryRaw`
+                SELECT
+                  t.id,
+                  t."userId",
+                  t.name,
+                  t."areaKm2",
+                  t."capturedAt",
+                  u.username,
+                  u."full_name" AS "fullName",
+                  a.mode,
+                  a."distanceKm",
+                  a."include_in_clan" AS "includeInClan"
+                FROM territories t
+                JOIN users u
+                  ON u.id = t."userId"
+                LEFT JOIN activities a
+                  ON a.id = t."activityId"
+                WHERE t."userId" IN (${Prisma.join(memberUserIds)})
+                  AND t.boundary IS NOT NULL
+                  AND NOT ST_IsEmpty(t.boundary)
+                  AND (
+                    a.id IS NULL
+                    OR a."include_in_clan" = true
+                  )
+                ORDER BY t."capturedAt" DESC
+                LIMIT 10;
+              `,
+            []
+          );
+
+    /*
+     * Upcoming and recently completed clan events.
+     */
+    const clanEvents = await safeQuery(
+      "GET_CLAN_DASHBOARD_EVENTS",
+      () =>
+        prisma.clanEvent.findMany({
+          where: {
+            clanId,
+          },
+          include: {
+            _count: {
+              select: {
+                participants: true,
+              },
+            },
+
+            ...(currentUserId
+              ? {
+                  participants: {
+                    where: {
+                      userId: currentUserId,
+                    },
+                    select: {
+                      userId: true,
+                    },
+                    take: 1,
+                  },
+                }
+              : {}),
+          },
+          orderBy: {
+            startsAt: "desc",
+          },
+          take: 12,
+        }),
+      []
+    );
+
+    const now = new Date();
+
+    const formattedEvents = clanEvents.map((event) => {
+      const startsAt = event.startsAt
+        ? new Date(event.startsAt)
+        : null;
+
+      const endsAt = event.endsAt
+        ? new Date(event.endsAt)
+        : null;
+
+      let displayStatus = event.status ?? "UPCOMING";
+
+      if (
+        String(event.status).toUpperCase() !== "CANCELLED" &&
+        endsAt &&
+        endsAt < now
+      ) {
+        displayStatus = "COMPLETED";
+      } else if (
+        String(event.status).toUpperCase() !== "CANCELLED" &&
+        startsAt &&
+        endsAt &&
+        startsAt <= now &&
+        endsAt >= now
+      ) {
+        displayStatus = "ONGOING";
+      }
+
+      return {
+        id: event.id,
+        title: event.title,
+        description: event.description ?? "",
+        location: event.location ?? "",
+        startsAt: event.startsAt,
+        endsAt: event.endsAt,
+        status: displayStatus,
+        participantCount: event._count?.participants ?? 0,
+        isCurrentUserJoined:
+          Array.isArray(event.participants) &&
+          event.participants.length > 0,
+      };
+    });
+
+    const upcomingEvents = formattedEvents
+      .filter(
+        (event) =>
+          event.status === "UPCOMING" ||
+          event.status === "ONGOING"
+      )
+      .sort(
+        (a, b) =>
+          new Date(a.startsAt).getTime() -
+          new Date(b.startsAt).getTime()
+      )
+      .slice(0, 5);
+
+    const recentEvents = formattedEvents
+      .filter(
+        (event) =>
+          event.status === "COMPLETED" ||
+          event.status === "CANCELLED"
+      )
+      .slice(0, 5);
+
+    /*
+     * Current user's pending join request.
+     */
+    const currentUserJoinRequest =
+      currentUserId && !isMember
+        ? await safeQuery(
+            "GET_CURRENT_USER_CLAN_JOIN_REQUEST",
+            () =>
+              prisma.clanJoinRequest.findFirst({
+                where: {
+                  clanId,
+                  userId: currentUserId,
+                  status: "PENDING",
+                },
+                select: {
+                  id: true,
+                  status: true,
+                  createdAt: true,
+                },
+              }),
+            null
+          )
+        : null;
+
+    /*
+     * Management information is visible only to the leader.
+     */
+    let management = null;
+
+    if (isLeader) {
+      const [pendingJoinRequests, pendingInvites] =
+        await Promise.all([
+          safeQuery(
+            "COUNT_CLAN_JOIN_REQUESTS",
+            () =>
+              prisma.clanJoinRequest.count({
+                where: {
+                  clanId,
+                  status: "PENDING",
+                },
+              }),
+            0
+          ),
+
+          safeQuery(
+            "COUNT_CLAN_INVITES",
+            () =>
+              prisma.clanInvite.count({
+                where: {
+                  clanId,
+                  status: "PENDING",
+                },
+              }),
+            0
+          ),
+        ]);
+
+      management = {
+        pendingJoinRequests,
+        pendingInvites,
+      };
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Clan details fetched successfully",
+
+      data: {
+        clan: {
+          id: clan.id,
+          name: clan.name,
+          slug: clan.slug,
+          description: clan.description ?? "",
+          country: clan.country ?? "",
+          logo: clan.logo,
+          banner: clan.banner,
+          imageUrl: clan.imageUrl,
+          isPrivate: clan.isPrivate,
+          visibility: clan.isPrivate ? "PRIVATE" : "PUBLIC",
+          joinMethod: clan.isPrivate ? "REQUEST" : "DIRECT",
+
+          captainId: clan.captainId,
+          captain: clan.captain,
+
+          totalXp: toNumber(clan.totalXp),
+          storedTerritoryCount: toNumber(clan.territoryCount),
+          storedTotalAreaKm2: toNumber(clan.totalAreaKm2),
+
+          createdAt: clan.createdAt,
+          updatedAt: clan.updatedAt,
+        },
+
+        stats: {
+          totalMembers: clan._count.members,
+          territoryCount: dashboardStats.territoryCount,
+          totalAreaKm2: dashboardStats.totalAreaKm2,
+          totalAreaM2:
+            dashboardStats.totalAreaKm2 * 1_000_000,
+          totalDistanceKm: dashboardStats.totalDistanceKm,
+          totalActivities: dashboardStats.totalActivities,
+        },
+
+        currentUser: {
+          isAuthenticated: Boolean(currentUserId),
+          isMember,
+          role: currentUserMembership?.role ?? null,
+          joinedAt: currentUserMembership?.joinedAt ?? null,
+          isCaptain,
+          isLeader,
+
+          permissions: {
+            canEditClan: isLeader,
+            canManageMembers: isLeader,
+            canManageRequests: isLeader,
+            canCreateEvent: isLeader,
+            canCreateWar: isLeader,
+            canJoin:
+              Boolean(currentUserId) &&
+              !isMember &&
+              !currentUserJoinRequest,
+            canLeave: isMember && !isCaptain,
+          },
+
+          joinRequest: currentUserJoinRequest,
+        },
+
+        management,
+
+        leaderboard: members,
+
+        members,
+
+        events: {
+          upcoming: upcomingEvents,
+          recent: recentEvents,
+        },
+
+        recentTerritories: recentTerritories.map(
+          (territory) => ({
+            id: territory.id,
+            userId: territory.userId,
+            name: territory.name,
+            areaKm2: toNumber(territory.areaKm2),
+            areaM2: toNumber(territory.areaKm2) * 1_000_000,
+            capturedAt: territory.capturedAt,
+
+            owner: {
+              userId: territory.userId,
+              username: territory.username,
+              fullName: territory.fullName,
+            },
+
+            activity: {
+              mode: territory.mode,
+              distanceKm: toNumber(territory.distanceKm),
+              includeInClan: territory.includeInClan,
+            },
+          })
+        ),
+      },
+    });
+  } catch (error) {
+    console.error("GET_CLAN_DETAILS_ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch clan details",
+      error:
+        process.env.NODE_ENV === "development"
+          ? error.message
+          : undefined,
+    });
+  }
+};
+
+
 /**
  * |--------------------------------------------------------------------------
  * | CREATE CLAN
@@ -1750,6 +2333,7 @@ export const getClanDetails = async (req, res) => {
     });
   }
 };
+
 
 
 /**

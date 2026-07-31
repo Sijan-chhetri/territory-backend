@@ -201,6 +201,7 @@ model ClanTerritory {
   @@map("clan_territories")
 }
 
+
 model ClanActivity {
   id                  String    @id @default(uuid())
   clanId              String
