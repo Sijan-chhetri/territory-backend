@@ -20,6 +20,7 @@ import {
   getClanMembers,
   getClanMembersFull,
   checkIfClanLeader,
+  editClan
 } from "../clan/clan.controller.js";
 
 const router = express.Router();
@@ -40,6 +41,12 @@ router.delete("/leave", authMiddleware, leaveClan);
  * Clan creation and listing
  */
 router.post("/", authMiddleware, createClan);
+router.patch(
+  "/:clanId",
+  authMiddleware,
+  editClan
+);
+
 router.get("/", authMiddleware, getAllClans);
 
 /**

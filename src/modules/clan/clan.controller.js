@@ -203,6 +203,222 @@ export const createClan = async (req, res) => {
   }
 };
 
+
+
+export const editClan = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { clanId } = req.params;
+
+    const {
+      name,
+      slug,
+      description,
+      logo,
+      banner,
+      country,
+      imageUrl,
+      isPrivate,
+    } = req.body;
+
+    if (!clanId) {
+      return res.status(400).json({
+        success: false,
+        message: "Clan ID is required",
+      });
+    }
+
+    const existingClan = await prisma.clan.findUnique({
+      where: {
+        id: clanId,
+      },
+      include: {
+        members: {
+          where: {
+            userId,
+          },
+          select: {
+            role: true,
+          },
+          take: 1,
+        },
+      },
+    });
+
+    if (!existingClan) {
+      return res.status(404).json({
+        success: false,
+        message: "Clan not found",
+      });
+    }
+
+    const currentMember = existingClan.members[0];
+
+    const canEditClan =
+      existingClan.captainId === userId ||
+      currentMember?.role === "LEADER";
+
+    if (!canEditClan) {
+      return res.status(403).json({
+        success: false,
+        message: "Only the clan leader can edit this clan",
+      });
+    }
+
+    const updateData = {};
+
+    /*
+     * Update clan name
+     */
+    if (name !== undefined) {
+      const normalizedName = String(name).trim();
+
+      if (!normalizedName) {
+        return res.status(400).json({
+          success: false,
+          message: "Clan name cannot be empty",
+        });
+      }
+
+      const duplicateClanName = await prisma.clan.findFirst({
+        where: {
+          id: {
+            not: clanId,
+          },
+          name: {
+            equals: normalizedName,
+            mode: "insensitive",
+          },
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      if (duplicateClanName) {
+        return res.status(409).json({
+          success: false,
+          message: "Clan name already exists",
+        });
+      }
+
+      updateData.name = normalizedName;
+    }
+
+    /*
+     * Update country
+     */
+    if (country !== undefined) {
+      const normalizedCountry = String(country).trim();
+
+      if (!normalizedCountry) {
+        return res.status(400).json({
+          success: false,
+          message: "Country cannot be empty",
+        });
+      }
+
+      updateData.country = normalizedCountry;
+    }
+
+    /*
+     * Update slug only when it is included in the request.
+     *
+     * When slug is not provided, the existing slug remains unchanged,
+     * even if the clan name changes.
+     */
+    if (slug !== undefined) {
+      const requestedSlug = String(slug).trim();
+
+      if (!requestedSlug) {
+        return res.status(400).json({
+          success: false,
+          message: "Clan slug cannot be empty",
+        });
+      }
+
+      updateData.slug = await generateUniqueClanSlug({
+        prismaClient: prisma,
+        value: requestedSlug,
+        excludeClanId: clanId,
+      });
+    }
+
+    /*
+     * Fields that may be cleared.
+     */
+    if (description !== undefined) {
+      updateData.description =
+        description === null ? "" : String(description).trim();
+    }
+
+    if (logo !== undefined) {
+      updateData.logo = normalizeOptionalImage(logo);
+    }
+
+    if (banner !== undefined) {
+      updateData.banner = normalizeOptionalImage(banner);
+    }
+
+    if (imageUrl !== undefined) {
+      updateData.imageUrl = normalizeOptionalImage(imageUrl);
+    }
+
+    if (isPrivate !== undefined) {
+      if (typeof isPrivate !== "boolean") {
+        return res.status(400).json({
+          success: false,
+          message: "isPrivate must be true or false",
+        });
+      }
+
+      updateData.isPrivate = isPrivate;
+    }
+
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No clan changes were provided",
+      });
+    }
+
+    const updatedClan = await prisma.clan.update({
+      where: {
+        id: clanId,
+      },
+      data: updateData,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Clan updated successfully",
+      data: updatedClan,
+    });
+  } catch (error) {
+    console.error("EDIT_CLAN_ERROR:", error);
+
+    if (error?.code === "P2025") {
+      return res.status(404).json({
+        success: false,
+        message: "Clan not found",
+      });
+    }
+
+    if (error?.code === "P2002") {
+      return res.status(409).json({
+        success: false,
+        message: "Clan name or slug already exists",
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to update clan",
+    });
+  }
+};
+
+
 /**
  * |--------------------------------------------------------------------------
  * | GET ALL CLANS
@@ -1311,6 +1527,8 @@ export const joinClanDirectly = async (req, res) => {
     });
   }
 };
+
+
 
 
 

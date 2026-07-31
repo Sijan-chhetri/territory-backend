@@ -36,12 +36,12 @@ export const clanEventInvitationTemplate = ({
   const safeClanName = escapeHtml(clanName);
   const safeEventTitle = escapeHtml(eventTitle);
   const safeDescription = escapeHtml(
-    eventDescription || "Your clan has created a new event."
+    eventDescription || "Your club has created a new event.",
   );
   const safeLocation = escapeHtml(
-    eventLocation || "Location will be announced"
+    eventLocation || "Location will be announced",
   );
-  const safeCreator = escapeHtml(createdByName || "Your clan leader");
+  const safeCreator = escapeHtml(createdByName || "Your club leader");
 
   const formattedStart = formatEventDate(startsAt);
   const formattedEnd = formatEventDate(endsAt);
@@ -52,7 +52,7 @@ export const clanEventInvitationTemplate = ({
     text: `
 Hi ${memberName || "Duro Athlete"},
 
-${createdByName || "Your clan leader"} has invited you to join a new event organized by ${clanName}.
+${createdByName || "Your club leader"} has invited you to join a new event organized by ${clanName}.
 
 Event: ${eventTitle}
 Date: ${formattedStart}
@@ -138,53 +138,37 @@ The Duro Team
                 border="0"
               >
                 <tr>
-                  <td>
-                    ${
-                      process.env.DURO_LOGO_URL
-                        ? `
-                        <img
-                          src="${process.env.DURO_LOGO_URL}"
-                          alt="Duro"
-                          width="110"
-                          style="
-                            display: block;
-                            max-width: 110px;
-                            height: auto;
-                          "
-                        />
-                      `
-                        : `
-                        <div
-                          style="
-                            color: #ffffff;
-                            font-size: 30px;
-                            font-weight: 900;
-                            letter-spacing: 3px;
-                          "
-                        >
-                          DURO
-                        </div>
-                      `
-                    }
-                  </td>
+  <td>
+    <div
+      style="
+        color: #ffffff;
+        font-size: 30px;
+        font-weight: 900;
+        letter-spacing: 3px;
+      "
+    >
+      DURO
+    </div>
+  </td>
 
-                  <td align="right">
-                    <span
-                      style="
-                        display: inline-block;
-                        padding: 8px 13px;
-                        border-radius: 999px;
-                        background-color: #b7ff3c;
-                        color: #101418;
-                        font-size: 12px;
-                        font-weight: 800;
-                        letter-spacing: 0.8px;
-                      "
-                    >
-                      CLAN EVENT
-                    </span>
-                  </td>
-                </tr>
+  <td align="right">
+    <span
+      style="
+        display: inline-block;
+        padding: 8px 13px;
+        border-radius: 999px;
+        background-color: #b7ff3c;
+        color: #101418;
+        font-size: 12px;
+        font-weight: 800;
+        letter-spacing: 0.8px;
+      "
+    >
+      CLUB EVENT
+    </span>
+  </td>
+</tr>
+
               </table>
 
               <div
@@ -220,7 +204,7 @@ The Duro Team
                   line-height: 1.6;
                 "
               >
-                Your clan is gathering. Your next challenge is ready.
+                Your club is gathering. Your next challenge is ready.
               </p>
             </td>
           </tr>

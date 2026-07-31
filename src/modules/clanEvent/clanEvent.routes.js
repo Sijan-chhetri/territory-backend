@@ -23,6 +23,9 @@ router.post(
   createClanEvent
 );
 
+
+
+
 router.get(
   "/",
   authMiddleware,

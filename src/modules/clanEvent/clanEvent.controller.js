@@ -452,6 +452,9 @@ export const joinClanEvent = async (req, res) => {
     }
 };
 
+
+
+
 /**
  * |--------------------------------------------------------------------------
  * | LEAVE CLAN EVENT
