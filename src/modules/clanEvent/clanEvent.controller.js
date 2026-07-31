@@ -864,37 +864,101 @@ export const cancelClanEvent = async (req, res) => {
 
 
 export const deleteClanEvent = async (req, res) => {
-  try {
-    const userId = req.user.id;
-    const eventId = req.params.eventId;
+    try {
+        const userId = req.user.id;
+        const { eventId } = req.params;
 
-    const result = await getLeaderManagedEvent(userId, eventId);
+        if (!eventId) {
+            return res.status(400).json({
+                success: false,
+                message: "Event ID is required",
+            });
+        }
 
-    if (result.error) {
-      return res.status(result.error.status).json({
-        success: false,
-        message: result.error.message,
-      });
+        const event = await prisma.clanEvent.findUnique({
+            where: {
+                id: eventId,
+            },
+            select: {
+                id: true,
+                clanId: true,
+                title: true,
+                status: true,
+            },
+        });
+
+        if (!event) {
+            return res.status(404).json({
+                success: false,
+                message: "Event not found",
+            });
+        }
+
+        const access = await checkClanLeaderAccess(userId);
+
+        if (!access.allowed) {
+            return res.status(access.status).json({
+                success: false,
+                message: access.message,
+            });
+        }
+
+        if (access.membership.clanId !== event.clanId) {
+            return res.status(403).json({
+                success: false,
+                message: "This event does not belong to your clan",
+            });
+        }
+
+        await prisma.$transaction([
+            prisma.clanEventParticipant.deleteMany({
+                where: {
+                    eventId,
+                },
+            }),
+
+            prisma.clanEvent.delete({
+                where: {
+                    id: eventId,
+                },
+            }),
+        ]);
+
+        return res.status(200).json({
+            success: true,
+            message: "Club event deleted successfully",
+            data: {
+                eventId: event.id,
+                title: event.title,
+            },
+        });
+    } catch (error) {
+        console.error("DELETE_CLAN_EVENT_ERROR:", error);
+
+        if (error?.code === "P2025") {
+            return res.status(404).json({
+                success: false,
+                message: "Event not found or already deleted",
+            });
+        }
+
+        if (error?.code === "P2003") {
+            return res.status(409).json({
+                success: false,
+                message:
+                    "The event has related records that prevent deletion",
+            });
+        }
+
+        return res.status(500).json({
+            success: false,
+            message: "Failed to delete clan event",
+            error:
+                process.env.NODE_ENV === "development"
+                    ? error.message
+                    : undefined,
+        });
     }
-
-    await prisma.clanEvent.delete({
-      where: {
-        id: eventId,
-      },
-    });
-
-    return res.status(200).json({
-      success: true,
-      message: "Club event deleted successfully",
-    });
-  } catch (error) {
-    console.error("DELETE_CLAN_EVENT_ERROR:", error);
-
-    return res.status(500).json({
-      success: false,
-      message: "Server error while deleting the club event",
-    });
-  }
 };
 
 
