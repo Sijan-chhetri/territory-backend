@@ -856,3 +856,46 @@ export const cancelClanEvent = async (req, res) => {
         });
     }
 };
+
+
+
+
+
+
+
+export const deleteClanEvent = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const eventId = req.params.eventId;
+
+    const result = await getLeaderManagedEvent(userId, eventId);
+
+    if (result.error) {
+      return res.status(result.error.status).json({
+        success: false,
+        message: result.error.message,
+      });
+    }
+
+    await prisma.clanEvent.delete({
+      where: {
+        id: eventId,
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Club event deleted successfully",
+    });
+  } catch (error) {
+    console.error("DELETE_CLAN_EVENT_ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error while deleting the club event",
+    });
+  }
+};
+
+
+

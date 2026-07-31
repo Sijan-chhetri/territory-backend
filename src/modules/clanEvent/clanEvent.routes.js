@@ -8,6 +8,8 @@ import {
   getMyClanEvents,
   getClanEventDetail,
   cancelClanEvent,
+  deleteClanEvent
+
 } from "./clanEvent.controller.js";
 
 const router = express.Router();
@@ -25,6 +27,15 @@ router.get(
   "/",
   authMiddleware,
   getMyClanEvents
+);
+
+
+
+
+router.delete(
+  "/:eventId",
+  authMiddleware,
+  deleteClanEvent
 );
 
 /**
