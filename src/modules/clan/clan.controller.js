@@ -1,6 +1,7 @@
 
 import { Prisma } from "@prisma/client";
 import prisma from "../../config/prisma.js";
+import { sendClanEventInvitations } from "../clanEvent/clanEventEmail.service.js";
 
 
 
@@ -1009,14 +1010,165 @@ export const getMyClanStatus = async (req, res) => {
  * |--------------------------------------------------------------------------
  */
 
+
+const sendCurrentClanEventsToNewMember = async ({
+  clanId,
+  member,
+}) => {
+  const now = new Date();
+
+  const events = await prisma.clanEvent.findMany({
+    where: {
+      clanId,
+
+      // Include upcoming and currently active events.
+      endsAt: {
+        gt: now,
+      },
+
+      // Do not send cancelled-event invitations.
+      status: {
+        not: "CANCELLED",
+      },
+    },
+
+    include: {
+      clan: {
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          logo: true,
+          banner: true,
+        },
+      },
+
+      createdBy: {
+        select: {
+          id: true,
+          username: true,
+          fullName: true,
+          email: true,
+        },
+      },
+
+      _count: {
+        select: {
+          participants: true,
+        },
+      },
+    },
+
+    orderBy: {
+      startsAt: "asc",
+    },
+  });
+
+  const result = {
+    eventsFound: events.length,
+    attempted: 0,
+    sent: 0,
+    failed: 0,
+    failures: [],
+  };
+
+  if (events.length === 0) {
+    return result;
+  }
+
+  if (!member?.user?.email) {
+    result.failed = events.length;
+    result.failures.push({
+      message: "The new member does not have an email address",
+    });
+
+    return result;
+  }
+
+  /*
+   * sendClanEventInvitations expects a list of clan members.
+   * We pass only the newly joined member, so existing members
+   * do not receive duplicate event invitations.
+   */
+  const invitationMember = {
+    id: member.id,
+    userId: member.userId,
+    role: member.role,
+    user: {
+      id: member.user.id,
+      email: member.user.email,
+      username: member.user.username,
+      fullName: member.user.fullName,
+    },
+  };
+
+  for (const event of events) {
+    try {
+      const emailResult = await sendClanEventInvitations({
+        event,
+        clan: event.clan,
+        creator: event.createdBy,
+        members: [invitationMember],
+      });
+
+      result.attempted += emailResult?.attempted ?? 1;
+      result.sent += emailResult?.sent ?? 0;
+      result.failed += emailResult?.failed ?? 0;
+
+      if (Array.isArray(emailResult?.failures)) {
+        result.failures.push(
+          ...emailResult.failures.map((failure) => ({
+            eventId: event.id,
+            eventTitle: event.title,
+            ...failure,
+          })),
+        );
+      }
+    } catch (error) {
+      result.attempted += 1;
+      result.failed += 1;
+
+      result.failures.push({
+        eventId: event.id,
+        eventTitle: event.title,
+        message: error.message,
+      });
+
+      console.error(
+        `NEW_MEMBER_EVENT_EMAIL_ERROR [${event.id}]:`,
+        error,
+      );
+    }
+  }
+
+  return result;
+};
+
+
+
 export const joinClanDirectly = async (req, res) => {
   try {
     const userId = req.user.id;
     const { clanId } = req.params;
 
+    if (!clanId?.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Clan ID is required",
+      });
+    }
+
     const clan = await prisma.clan.findUnique({
       where: {
         id: clanId,
+      },
+
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        logo: true,
+        banner: true,
       },
     });
 
@@ -1027,42 +1179,141 @@ export const joinClanDirectly = async (req, res) => {
       });
     }
 
-    // Check if already in any clan
+    /*
+     * A user can only belong to one clan.
+     */
     const existingMembership = await prisma.clanMember.findFirst({
       where: {
         userId,
+      },
+
+      select: {
+        id: true,
+        clanId: true,
+        role: true,
       },
     });
 
     if (existingMembership) {
       return res.status(400).json({
         success: false,
-        message: "User is already in a clan",
+        message:
+          existingMembership.clanId === clanId
+            ? "You are already a member of this clan"
+            : "You are already a member of another clan",
       });
     }
 
+    /*
+     * Include the user's email because it will be used to send
+     * invitations for existing clan events.
+     */
     const member = await prisma.clanMember.create({
       data: {
         clanId,
         userId,
         role: "RUNNER",
       },
+
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+            username: true,
+            fullName: true,
+          },
+        },
+
+        clan: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            logo: true,
+            banner: true,
+          },
+        },
+      },
     });
+
+    /*
+     * Email failure must never cancel or undo the successful
+     * clan membership creation.
+     */
+    let eventEmailResult = {
+      eventsFound: 0,
+      attempted: 0,
+      sent: 0,
+      failed: 0,
+      failures: [],
+    };
+
+    try {
+      eventEmailResult =
+        await sendCurrentClanEventsToNewMember({
+          clanId,
+          member,
+        });
+    } catch (emailError) {
+      console.error(
+        "JOIN_CLAN_EXISTING_EVENT_EMAIL_ERROR:",
+        emailError,
+      );
+    }
+
+    let eventInvitationMessage;
+
+    if (eventEmailResult.eventsFound === 0) {
+      eventInvitationMessage =
+        "The clan currently has no upcoming events";
+    } else if (eventEmailResult.sent > 0) {
+      eventInvitationMessage =
+        eventEmailResult.sent === 1
+          ? "An existing club event invitation was sent to your email"
+          : `${eventEmailResult.sent} existing club event invitations were sent to your email`;
+    } else {
+      eventInvitationMessage =
+        "You joined successfully, but the existing event emails could not be sent";
+    }
 
     return res.status(200).json({
       success: true,
       message: "Joined clan successfully",
+      eventInvitationMessage,
+
       data: member,
+
+      eventEmails: {
+        eventsFound: eventEmailResult.eventsFound,
+        attempted: eventEmailResult.attempted,
+        sent: eventEmailResult.sent,
+        failed: eventEmailResult.failed,
+      },
     });
   } catch (error) {
-    console.log(error);
+    console.error("JOIN_CLAN_DIRECTLY_ERROR:", error);
+
+    if (error?.code === "P2002") {
+      return res.status(409).json({
+        success: false,
+        message: "You are already a member of a clan",
+      });
+    }
 
     return res.status(500).json({
       success: false,
       message: "Failed to join clan",
+      error:
+        process.env.NODE_ENV === "development"
+          ? error.message
+          : undefined,
     });
   }
 };
+
+
+
 
 /**
  * |--------------------------------------------------------------------------

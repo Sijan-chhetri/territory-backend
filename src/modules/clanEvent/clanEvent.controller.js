@@ -860,9 +860,6 @@ export const cancelClanEvent = async (req, res) => {
 
 
 
-
-
-
 export const deleteClanEvent = async (req, res) => {
     try {
         const userId = req.user.id;
