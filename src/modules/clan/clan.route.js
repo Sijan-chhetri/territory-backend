@@ -20,7 +20,8 @@ import {
   getClanMembers,
   getClanMembersFull,
   checkIfClanLeader,
-  editClan
+  editClan,
+  getClanDetailsbyId
 } from "../clan/clan.controller.js";
 
 const router = express.Router();
@@ -103,7 +104,7 @@ router.get(
 
 router.get(
   "/:clanId/detailsbyid",
-  optionalAuthMiddleware,
+  
   getClanDetailsbyId
 );
 
