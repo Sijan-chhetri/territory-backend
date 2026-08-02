@@ -1672,56 +1672,69 @@ export const finishActivity = async (req, res) => {
      * The original activity route is never subtracted or modified when
      * territories overlap.
      */
-    const safeAreaKm2 = toNullableFiniteNumber(areaKm2);
+    const activity = await prisma.activity.create({
+      data: {
+        clientActivityId: clientActivityId ?? null,
+        userId,
+        mode,
 
-const activity = await prisma.activity.create({
-  data: {
-    clientActivityId: clientActivityId ?? null,
-    userId,
-    mode,
+        distanceKm: Number(distanceKm),
+        durationSec: Number(durationSec),
 
-    distanceKm: Number(distanceKm),
-    durationSec: Number(durationSec),
+        stopTime:
+          stopTime === undefined || stopTime === null
+            ? null
+            : Number(stopTime),
 
-    stopTime:
-      stopTime === undefined || stopTime === null
-        ? null
-        : Number(stopTime),
+        elapsedTime:
+          elapsedTime === undefined || elapsedTime === null
+            ? Number(durationSec)
+            : Number(elapsedTime),
 
-    elapsedTime:
-      elapsedTime === undefined || elapsedTime === null
-        ? Number(durationSec)
-        : Number(elapsedTime),
+        movingTime:
+          movingTime === undefined || movingTime === null
+            ? Number(durationSec)
+            : Number(movingTime),
 
-    movingTime:
-      movingTime === undefined || movingTime === null
-        ? Number(durationSec)
-        : Number(movingTime),
+        avgPace: Number(avgPace) || 0,
 
-    avgPace: Number(avgPace) || 0,
-    topPace: toNullableFiniteNumber(topPace),
-    avgSpeed: toNullableFiniteNumber(avgSpeed),
-    topSpeed: toNullableFiniteNumber(topSpeed),
-    calories: Number(calories) || 0,
+        topPace:
+          topPace === undefined || topPace === null
+            ? null
+            : Number(topPace),
 
-    elevationGain: safeElevationGain,
-    elevationLoss: safeElevationLoss,
-    highestElevation: safeHighestElevation,
-    lowestElevation: safeLowestElevation,
+        avgSpeed:
+          avgSpeed === undefined || avgSpeed === null
+            ? null
+            : Number(avgSpeed),
 
-    // Add this
-    areaKm2: safeAreaKm2,
+        topSpeed:
+          topSpeed === undefined || topSpeed === null
+            ? null
+            : Number(topSpeed),
 
-    startedAt: parsedStartedAt,
-    endedAt: parsedEndedAt,
-    routeEncoded: safeRouteEncoded,
-    kmSplits,
+        calories: Number(calories) || 0,
 
-    includeInClan: includeInClan ?? false,
-    notes: notes?.trim() || null,
-  },
-});
+        // Complete activity elevation values
+        elevationGain: safeElevationGain,
+        elevationLoss: safeElevationLoss,
+        highestElevation: safeHighestElevation,
+        lowestElevation: safeLowestElevation,
 
+        startedAt: parsedStartedAt,
+        endedAt: parsedEndedAt,
+
+        routeEncoded: safeRouteEncoded,
+
+        // Contains split-wise elevation and calorie information.
+        kmSplits,
+
+        includeInClan: includeInClan ?? false,
+        notes: notes?.trim() || null,
+      },
+    });
+
+    
     /*
      * Save routeGeometry separately using PostGIS.
      */
