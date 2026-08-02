@@ -42,6 +42,7 @@ export const clanEventInvitationTemplate = ({
     eventLocation || "Location will be announced",
   );
   const safeCreator = escapeHtml(createdByName || "Your club leader");
+  const safeJoinUrl = escapeHtml(joinUrl || "#");
 
   const formattedStart = formatEventDate(startsAt);
   const formattedEnd = formatEventDate(endsAt);
@@ -397,7 +398,7 @@ The Duro Team
                 <tr>
                   <td align="center">
                     <a
-                      href="${joinUrl}"
+                      href="${safeJoinUrl}"
                       style="
                         display: inline-block;
                         min-width: 220px;
