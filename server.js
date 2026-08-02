@@ -65,7 +65,7 @@ app.get("/", (_, res) => {
 
 
 
-app.use("/deep-link", deepLinkRoutes);
+
 
 
 

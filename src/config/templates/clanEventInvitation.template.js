@@ -42,13 +42,12 @@ export const clanEventInvitationTemplate = ({
     eventLocation || "Location will be announced",
   );
   const safeCreator = escapeHtml(createdByName || "Your club leader");
-  const safeJoinUrl = escapeHtml(joinUrl || "#");
 
   const formattedStart = formatEventDate(startsAt);
   const formattedEnd = formatEventDate(endsAt);
 
   return {
-    subject: `${subjectClanName} invited you to ${subjectEventTitle} | DURO`,
+    subject: `${safeClanName} invited you to ${safeEventTitle} | Duro`,
 
     text: `
 Hi ${memberName || "Duro Athlete"},
@@ -398,7 +397,7 @@ The Duro Team
                 <tr>
                   <td align="center">
                     <a
-                      href="${safeJoinUrl}"
+                      href="${joinUrl}"
                       style="
                         display: inline-block;
                         min-width: 220px;
