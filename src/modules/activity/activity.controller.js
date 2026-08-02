@@ -1672,67 +1672,55 @@ export const finishActivity = async (req, res) => {
      * The original activity route is never subtracted or modified when
      * territories overlap.
      */
-    const activity = await prisma.activity.create({
-      data: {
-        clientActivityId: clientActivityId ?? null,
-        userId,
-        mode,
+    const safeAreaKm2 = toNullableFiniteNumber(areaKm2);
 
-        distanceKm: Number(distanceKm),
-        durationSec: Number(durationSec),
+const activity = await prisma.activity.create({
+  data: {
+    clientActivityId: clientActivityId ?? null,
+    userId,
+    mode,
 
-        stopTime:
-          stopTime === undefined || stopTime === null
-            ? null
-            : Number(stopTime),
+    distanceKm: Number(distanceKm),
+    durationSec: Number(durationSec),
 
-        elapsedTime:
-          elapsedTime === undefined || elapsedTime === null
-            ? Number(durationSec)
-            : Number(elapsedTime),
+    stopTime:
+      stopTime === undefined || stopTime === null
+        ? null
+        : Number(stopTime),
 
-        movingTime:
-          movingTime === undefined || movingTime === null
-            ? Number(durationSec)
-            : Number(movingTime),
+    elapsedTime:
+      elapsedTime === undefined || elapsedTime === null
+        ? Number(durationSec)
+        : Number(elapsedTime),
 
-        avgPace: Number(avgPace) || 0,
+    movingTime:
+      movingTime === undefined || movingTime === null
+        ? Number(durationSec)
+        : Number(movingTime),
 
-        topPace:
-          topPace === undefined || topPace === null
-            ? null
-            : Number(topPace),
+    avgPace: Number(avgPace) || 0,
+    topPace: toNullableFiniteNumber(topPace),
+    avgSpeed: toNullableFiniteNumber(avgSpeed),
+    topSpeed: toNullableFiniteNumber(topSpeed),
+    calories: Number(calories) || 0,
 
-        avgSpeed:
-          avgSpeed === undefined || avgSpeed === null
-            ? null
-            : Number(avgSpeed),
+    elevationGain: safeElevationGain,
+    elevationLoss: safeElevationLoss,
+    highestElevation: safeHighestElevation,
+    lowestElevation: safeLowestElevation,
 
-        topSpeed:
-          topSpeed === undefined || topSpeed === null
-            ? null
-            : Number(topSpeed),
+    // Add this
+    areaKm2: safeAreaKm2,
 
-        calories: Number(calories) || 0,
+    startedAt: parsedStartedAt,
+    endedAt: parsedEndedAt,
+    routeEncoded: safeRouteEncoded,
+    kmSplits,
 
-        // Complete activity elevation values
-        elevationGain: safeElevationGain,
-        elevationLoss: safeElevationLoss,
-        highestElevation: safeHighestElevation,
-        lowestElevation: safeLowestElevation,
-
-        startedAt: parsedStartedAt,
-        endedAt: parsedEndedAt,
-
-        routeEncoded: safeRouteEncoded,
-
-        // Contains split-wise elevation and calorie information.
-        kmSplits,
-
-        includeInClan: includeInClan ?? false,
-        notes: notes?.trim() || null,
-      },
-    });
+    includeInClan: includeInClan ?? false,
+    notes: notes?.trim() || null,
+  },
+});
 
     /*
      * Save routeGeometry separately using PostGIS.
@@ -3251,6 +3239,10 @@ export const finishActivity = async (req, res) => {
 // Get Activity Detail
 // GET /api/activities/:id
 // ─────────────────────────────────────────────
+
+
+
+
 
 export const getActivityDetail = async (req, res) => {
   try {
