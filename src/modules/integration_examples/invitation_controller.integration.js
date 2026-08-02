@@ -6,6 +6,7 @@ import { clanEventInvitationTemplate } from "../../config/templates/clanEventInv
 // `event` and `clan` are examples; use your existing queried records.
 const joinUrl = buildClanEventDeepLink({
   clanId: clan.id,
+  eventId: event.id,
 });
 
 const email = clanEventInvitationTemplate({

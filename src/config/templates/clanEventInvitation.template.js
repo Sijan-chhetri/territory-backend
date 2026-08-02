@@ -48,7 +48,7 @@ export const clanEventInvitationTemplate = ({
   const formattedEnd = formatEventDate(endsAt);
 
   return {
-    subject: `${safeClanName} invited you to ${safeEventTitle} | Duro`,
+    subject: `${subjectClanName} invited you to ${subjectEventTitle} | DURO`,
 
     text: `
 Hi ${memberName || "Duro Athlete"},

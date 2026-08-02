@@ -28,6 +28,7 @@ import clanleaderboardRoutes from "./src/modules/leaderboard/Clan/clanLeaderboar
 import clanChatRoutes from "./src/modules/clanChat/clanChatRoutes.js"
 import clubWarRoutes from "./src/modules/clubWar/clubWarRoutes.js";
 import clanEventRoutes from "./src/modules/clanEvent/clanEvent.routes.js";
+import deepLinkRoutes from "./src/modules/integration_examples/deepLink.routes.js";
 
 import { verifyEmailTransporter } from "./src/config/emailTransporter.js";
 import emailTransporter from "./src/config/emailTransporter.js";
@@ -60,6 +61,11 @@ emailTransporter
 app.get("/", (_, res) => {
   res.send("Territory Backend Running");
 });
+
+
+
+
+app.use("/deep-link", deepLinkRoutes);
 
 
 
