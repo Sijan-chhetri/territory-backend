@@ -3648,6 +3648,8 @@ export const getMyTodayActivities = async (req, res) => {
 // Get My Friends Activities With Stats + Route
 // GET /api/activities/friends
 // ─────────────────────────────────────────────
+
+
 export const getMyFriendsActivities = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -3785,6 +3787,182 @@ export const getMyFriendsActivities = async (req, res) => {
     });
   }
 };
+
+
+
+export const getFriendActivityDetails = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { activityId } = req.params;
+
+    if (!activityId) {
+      return res.status(400).json({
+        success: false,
+        message: "Activity ID is required",
+      });
+    }
+
+    // Get all accepted friends of the logged-in user
+    const friendships = await prisma.friendship.findMany({
+      where: {
+        userId,
+      },
+      select: {
+        friendId: true,
+      },
+    });
+
+    const friendIds = friendships.map(
+      (friendship) => friendship.friendId
+    );
+
+    if (friendIds.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Friend activity not found",
+      });
+    }
+
+    // The activity must belong to one of the user's friends
+    const activity = await prisma.activity.findFirst({
+      where: {
+        id: activityId,
+        userId: {
+          in: friendIds,
+        },
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            username: true,
+            fullName: true,
+          },
+        },
+        territories: {
+          select: {
+            id: true,
+            areaKm2: true,
+            routeEncoded: true,
+            routeSegmentsEncoded: true,
+            capturedAt: true,
+          },
+        },
+      },
+    });
+
+    if (!activity) {
+      return res.status(404).json({
+        success: false,
+        message:
+          "Activity not found or you are not allowed to view it",
+      });
+    }
+
+    const totalAreaKm2 = activity.territories.reduce(
+      (sum, territory) =>
+        sum + Number(territory.areaKm2 ?? 0),
+      0
+    );
+
+    const activityDetails = {
+      id: activity.id,
+
+      friend: activity.user,
+
+      stats: {
+        mode: activity.mode,
+
+        distanceKm: Number(activity.distanceKm ?? 0),
+
+        durationSec: Number(activity.durationSec ?? 0),
+        elapsedTime: Number(activity.elapsedTime ?? 0),
+        movingTime: Number(activity.movingTime ?? 0),
+        stopTime: Number(activity.stopTime ?? 0),
+
+        avgPace:
+          activity.avgPace !== null
+            ? Number(activity.avgPace)
+            : null,
+
+        avgPaceFormatted: formatPace(activity.avgPace),
+
+        topPace:
+          activity.topPace !== null
+            ? Number(activity.topPace)
+            : null,
+
+        topPaceFormatted: formatPace(activity.topPace),
+
+        avgSpeed: Number(activity.avgSpeed ?? 0),
+        topSpeed: Number(activity.topSpeed ?? 0),
+
+        calories: Number(activity.calories ?? 0),
+
+        elevationGain: Number(
+          activity.elevationGain ?? 0
+        ),
+
+        elevationLoss: Number(
+          activity.elevationLoss ?? 0
+        ),
+
+        highestElevation:
+          activity.highestElevation !== null
+            ? Number(activity.highestElevation)
+            : null,
+
+        lowestElevation:
+          activity.lowestElevation !== null
+            ? Number(activity.lowestElevation)
+            : null,
+
+        totalAreaKm2,
+        territoriesCaptured: activity.territories.length,
+      },
+
+      map: {
+        routeEncoded: activity.routeEncoded,
+
+        territoryRoutes: activity.territories.map(
+          (territory) => ({
+            territoryId: territory.id,
+            areaKm2: Number(territory.areaKm2 ?? 0),
+            routeEncoded: territory.routeEncoded,
+            routeSegmentsEncoded:
+              territory.routeSegmentsEncoded ?? [],
+            capturedAt: territory.capturedAt,
+          })
+        ),
+      },
+
+      startedAt: activity.startedAt,
+      endedAt: activity.endedAt,
+      createdAt: activity.createdAt,
+      updatedAt: activity.updatedAt,
+    };
+
+    return res.status(200).json({
+      success: true,
+      activity: activityDetails,
+    });
+  } catch (error) {
+    console.error(
+      "GET_FRIEND_ACTIVITY_DETAILS_ERROR:",
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch activity details",
+      error:
+        process.env.NODE_ENV === "development"
+          ? error.message
+          : undefined,
+    });
+  }
+};
+
 
 
 // ─────────────────────────────────────────────

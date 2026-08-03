@@ -13,6 +13,7 @@ import {
   getPersonalRecords,
   getLifetimeActivityStats,
   getActivityGraphStats,
+  getFriendActivityDetails
 } from './activity.controller.js';
 
 const router = Router();
@@ -30,6 +31,13 @@ router.get('/stats/today', authMiddleware, getTodayStats);
 
 // IMPORTANT: keep this before /:id
 router.get('/friends', authMiddleware, getMyFriendsActivities);
+
+
+router.get(
+  "/activities/friends/:activityId",
+  authMiddleware,
+  getFriendActivityDetails
+);
 
 // dynamic route always last
 router.get('/:id', authMiddleware, getActivityDetail);
