@@ -3652,12 +3652,20 @@ export const getMyFriendsActivities = async (req, res) => {
   try {
     const userId = req.user.id;
 
+    const sevenDaysAgo = new Date(
+      Date.now() - 7 * 24 * 60 * 60 * 1000
+    );
+
     const friendships = await prisma.friendship.findMany({
       where: { userId },
-      select: { friendId: true },
+      select: {
+        friendId: true,
+      },
     });
 
-    const friendIds = friendships.map((f) => f.friendId);
+    const friendIds = friendships.map(
+      (friendship) => friendship.friendId
+    );
 
     if (friendIds.length === 0) {
       return res.status(200).json({
@@ -3671,6 +3679,12 @@ export const getMyFriendsActivities = async (req, res) => {
       where: {
         userId: {
           in: friendIds,
+        },
+
+        // Only activities started within the last seven days
+        startedAt: {
+          gte: sevenDaysAgo,
+          lte: new Date(),
         },
       },
       orderBy: {
@@ -3699,7 +3713,8 @@ export const getMyFriendsActivities = async (req, res) => {
 
     const formatted = activities.map((activity) => {
       const totalAreaKm2 = activity.territories.reduce(
-        (sum, t) => sum + Number(t.areaKm2 ?? 0),
+        (sum, territory) =>
+          sum + Number(territory.areaKm2 ?? 0),
         0
       );
 
@@ -3726,13 +3741,16 @@ export const getMyFriendsActivities = async (req, res) => {
 
         map: {
           routeEncoded: activity.routeEncoded,
-          territoryRoutes: activity.territories.map((t) => ({
-            territoryId: t.id,
-            areaKm2: Number(t.areaKm2 ?? 0),
-            routeEncoded: t.routeEncoded,
-            routeSegmentsEncoded: t.routeSegmentsEncoded ?? [],
-            capturedAt: t.capturedAt,
-          })),
+          territoryRoutes: activity.territories.map(
+            (territory) => ({
+              territoryId: territory.id,
+              areaKm2: Number(territory.areaKm2 ?? 0),
+              routeEncoded: territory.routeEncoded,
+              routeSegmentsEncoded:
+                territory.routeSegmentsEncoded ?? [],
+              capturedAt: territory.capturedAt,
+            })
+          ),
         },
 
         startedAt: activity.startedAt,
@@ -3744,10 +3762,18 @@ export const getMyFriendsActivities = async (req, res) => {
     return res.status(200).json({
       success: true,
       count: formatted.length,
+      period: {
+        days: 7,
+        from: sevenDaysAgo,
+        to: new Date(),
+      },
       activities: formatted,
     });
   } catch (error) {
-    console.error("GET_MY_FRIENDS_ACTIVITIES_ERROR:", error);
+    console.error(
+      "GET_MY_FRIENDS_ACTIVITIES_ERROR:",
+      error
+    );
 
     return res.status(500).json({
       success: false,
@@ -3759,7 +3785,6 @@ export const getMyFriendsActivities = async (req, res) => {
     });
   }
 };
-
 
 
 // ─────────────────────────────────────────────
