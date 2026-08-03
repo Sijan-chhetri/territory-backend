@@ -114,6 +114,618 @@ const toNumber = (value) => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
+// promote demote, kick 
+
+/**
+ * Get the acting member and target member.
+ */
+const getClanMemberships = async ({
+  clanId,
+  actingUserId,
+  targetUserId,
+  client = prisma,
+}) => {
+  const memberships = await client.clanMember.findMany({
+    where: {
+      clanId,
+      userId: {
+        in: [actingUserId, targetUserId],
+      },
+    },
+  });
+
+  const actingMember = memberships.find(
+    (member) => member.userId === actingUserId
+  );
+
+  const targetMember = memberships.find(
+    (member) => member.userId === targetUserId
+  );
+
+  return {
+    actingMember,
+    targetMember,
+  };
+};
+
+/**
+ * PATCH /clans/:clanId/members/:targetUserId/promote
+ *
+ * Body:
+ * {
+ *   "role": "CAPTAIN"
+ * }
+ *
+ * or
+ *
+ * {
+ *   "role": "LEADER"
+ * }
+ */
+export const promoteClanMember = async (req, res) => {
+  try {
+    const actingUserId = req.user.id;
+    const { clanId, targetUserId } = req.params;
+
+    const requestedRole = String(req.body.role || "")
+      .trim()
+      .toUpperCase();
+
+    if (!clanId || !targetUserId) {
+      return res.status(400).json({
+        success: false,
+        message: "Clan ID and target user ID are required",
+      });
+    }
+
+    if (!["CAPTAIN", "LEADER"].includes(requestedRole)) {
+      return res.status(400).json({
+        success: false,
+        message: "Promotion role must be CAPTAIN or LEADER",
+      });
+    }
+
+    if (actingUserId === targetUserId) {
+      return res.status(400).json({
+        success: false,
+        message: "You cannot promote yourself",
+      });
+    }
+
+    const clan = await prisma.clan.findUnique({
+      where: {
+        id: clanId,
+      },
+      select: {
+        id: true,
+        name: true,
+        captainId: true,
+      },
+    });
+
+    if (!clan) {
+      return res.status(404).json({
+        success: false,
+        message: "Clan not found",
+      });
+    }
+
+    const { actingMember, targetMember } = await getClanMemberships({
+      clanId,
+      actingUserId,
+      targetUserId,
+    });
+
+    if (!actingMember) {
+      return res.status(403).json({
+        success: false,
+        message: "You are not a member of this clan",
+      });
+    }
+
+    if (!targetMember) {
+      return res.status(404).json({
+        success: false,
+        message: "The selected user is not a member of this clan",
+      });
+    }
+
+    if (actingMember.role === "RUNNER") {
+      return res.status(403).json({
+        success: false,
+        message: "Runners cannot promote clan members",
+      });
+    }
+
+    /*
+     * Captain permissions:
+     * - Can promote RUNNER to CAPTAIN.
+     * - Cannot promote anyone to LEADER.
+     * - Cannot promote another CAPTAIN.
+     */
+    if (actingMember.role === "CAPTAIN") {
+      if (requestedRole === "LEADER") {
+        return res.status(403).json({
+          success: false,
+          message: "Captains cannot promote members to leader",
+        });
+      }
+
+      if (targetMember.role === "LEADER") {
+        return res.status(403).json({
+          success: false,
+          message: "Captains cannot change the leader's role",
+        });
+      }
+
+      if (targetMember.role === "CAPTAIN") {
+        return res.status(400).json({
+          success: false,
+          message: "This member is already a captain",
+        });
+      }
+
+      const updatedMember = await prisma.clanMember.update({
+        where: {
+          id: targetMember.id,
+        },
+        data: {
+          role: "CAPTAIN",
+        },
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: "Runner promoted to captain successfully",
+        data: updatedMember,
+      });
+    }
+
+    /*
+     * Leader permissions.
+     */
+    if (actingMember.role === "LEADER") {
+      /*
+       * Promote to CAPTAIN.
+       */
+      if (requestedRole === "CAPTAIN") {
+        if (targetMember.role === "LEADER") {
+          return res.status(400).json({
+            success: false,
+            message: "The selected member is already the clan leader",
+          });
+        }
+
+        if (targetMember.role === "CAPTAIN") {
+          return res.status(400).json({
+            success: false,
+            message: "This member is already a captain",
+          });
+        }
+
+        const updatedMember = await prisma.clanMember.update({
+          where: {
+            id: targetMember.id,
+          },
+          data: {
+            role: "CAPTAIN",
+          },
+        });
+
+        return res.status(200).json({
+          success: true,
+          message: "Runner promoted to captain successfully",
+          data: updatedMember,
+        });
+      }
+
+      /*
+       * Promote RUNNER or CAPTAIN to LEADER.
+       *
+       * The current leader becomes CAPTAIN.
+       */
+      if (requestedRole === "LEADER") {
+        if (targetMember.role === "LEADER") {
+          return res.status(400).json({
+            success: false,
+            message: "This member is already the clan leader",
+          });
+        }
+
+        const result = await prisma.$transaction(async (tx) => {
+          // Recheck the memberships inside the transaction.
+          const currentActingMember = await tx.clanMember.findFirst({
+            where: {
+              id: actingMember.id,
+              clanId,
+              userId: actingUserId,
+            },
+          });
+
+          const currentTargetMember = await tx.clanMember.findFirst({
+            where: {
+              id: targetMember.id,
+              clanId,
+              userId: targetUserId,
+            },
+          });
+
+          if (!currentActingMember) {
+            throw new Error("ACTING_MEMBER_NOT_FOUND");
+          }
+
+          if (!currentTargetMember) {
+            throw new Error("TARGET_MEMBER_NOT_FOUND");
+          }
+
+          if (currentActingMember.role !== "LEADER") {
+            throw new Error("ACTING_MEMBER_NOT_LEADER");
+          }
+
+          if (currentTargetMember.role === "LEADER") {
+            throw new Error("TARGET_ALREADY_LEADER");
+          }
+
+          // Current leader becomes captain.
+          const previousLeader = await tx.clanMember.update({
+            where: {
+              id: currentActingMember.id,
+            },
+            data: {
+              role: "CAPTAIN",
+            },
+          });
+
+          // Selected member becomes leader.
+          const newLeader = await tx.clanMember.update({
+            where: {
+              id: currentTargetMember.id,
+            },
+            data: {
+              role: "LEADER",
+            },
+          });
+
+          // Keep Clan.captainId synchronized with the clan leader.
+          await tx.clan.update({
+            where: {
+              id: clanId,
+            },
+            data: {
+              captainId: targetUserId,
+            },
+          });
+
+          return {
+            previousLeader,
+            newLeader,
+          };
+        });
+
+        return res.status(200).json({
+          success: true,
+          message:
+            "Member promoted to leader successfully. The previous leader is now a captain.",
+          data: result,
+        });
+      }
+    }
+
+    return res.status(403).json({
+      success: false,
+      message: "You do not have permission to promote this member",
+    });
+  } catch (error) {
+    console.log("PROMOTE_CLAN_MEMBER_ERROR:", error);
+
+    if (error.message === "ACTING_MEMBER_NOT_FOUND") {
+      return res.status(404).json({
+        success: false,
+        message: "Your clan membership was not found",
+      });
+    }
+
+    if (error.message === "TARGET_MEMBER_NOT_FOUND") {
+      return res.status(404).json({
+        success: false,
+        message: "The selected clan member was not found",
+      });
+    }
+
+    if (error.message === "ACTING_MEMBER_NOT_LEADER") {
+      return res.status(403).json({
+        success: false,
+        message: "You are no longer the leader of this clan",
+      });
+    }
+
+    if (error.message === "TARGET_ALREADY_LEADER") {
+      return res.status(400).json({
+        success: false,
+        message: "The selected member is already the clan leader",
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to promote clan member",
+    });
+  }
+};
+
+/**
+ * PATCH /clans/:clanId/members/:targetUserId/demote
+ *
+ * Only a LEADER can demote a CAPTAIN to RUNNER.
+ */
+export const demoteClanMember = async (req, res) => {
+  try {
+    const actingUserId = req.user.id;
+    const { clanId, targetUserId } = req.params;
+
+    if (!clanId || !targetUserId) {
+      return res.status(400).json({
+        success: false,
+        message: "Clan ID and target user ID are required",
+      });
+    }
+
+    if (actingUserId === targetUserId) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "You cannot demote yourself. Transfer leadership to another member instead.",
+      });
+    }
+
+    const clan = await prisma.clan.findUnique({
+      where: {
+        id: clanId,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!clan) {
+      return res.status(404).json({
+        success: false,
+        message: "Clan not found",
+      });
+    }
+
+    const { actingMember, targetMember } = await getClanMemberships({
+      clanId,
+      actingUserId,
+      targetUserId,
+    });
+
+    if (!actingMember) {
+      return res.status(403).json({
+        success: false,
+        message: "You are not a member of this clan",
+      });
+    }
+
+    if (!targetMember) {
+      return res.status(404).json({
+        success: false,
+        message: "The selected user is not a member of this clan",
+      });
+    }
+
+    if (actingMember.role === "RUNNER") {
+      return res.status(403).json({
+        success: false,
+        message: "Runners cannot demote clan members",
+      });
+    }
+
+    if (actingMember.role === "CAPTAIN") {
+      return res.status(403).json({
+        success: false,
+        message: "Captains cannot demote clan members",
+      });
+    }
+
+    if (actingMember.role !== "LEADER") {
+      return res.status(403).json({
+        success: false,
+        message: "Only the clan leader can demote members",
+      });
+    }
+
+    if (targetMember.role === "LEADER") {
+      return res.status(403).json({
+        success: false,
+        message: "The clan leader cannot be demoted using this action",
+      });
+    }
+
+    if (targetMember.role === "RUNNER") {
+      return res.status(400).json({
+        success: false,
+        message: "This member is already a runner",
+      });
+    }
+
+    const updatedMember = await prisma.clanMember.update({
+      where: {
+        id: targetMember.id,
+      },
+      data: {
+        role: "RUNNER",
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Captain demoted to runner successfully",
+      data: updatedMember,
+    });
+  } catch (error) {
+    console.log("DEMOTE_CLAN_MEMBER_ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to demote clan member",
+    });
+  }
+};
+
+/**
+ * DELETE /clans/:clanId/members/:targetUserId/kick
+ *
+ * Leader:
+ * - Can kick RUNNER.
+ * - Can kick CAPTAIN.
+ *
+ * Captain:
+ * - Can kick RUNNER only.
+ * - Cannot kick CAPTAIN.
+ * - Cannot kick LEADER.
+ */
+export const kickClanMember = async (req, res) => {
+  try {
+    const actingUserId = req.user.id;
+    const { clanId, targetUserId } = req.params;
+
+    if (!clanId || !targetUserId) {
+      return res.status(400).json({
+        success: false,
+        message: "Clan ID and target user ID are required",
+      });
+    }
+
+    if (actingUserId === targetUserId) {
+      return res.status(400).json({
+        success: false,
+        message: "You cannot kick yourself from the clan",
+      });
+    }
+
+    const clan = await prisma.clan.findUnique({
+      where: {
+        id: clanId,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!clan) {
+      return res.status(404).json({
+        success: false,
+        message: "Clan not found",
+      });
+    }
+
+    const { actingMember, targetMember } = await getClanMemberships({
+      clanId,
+      actingUserId,
+      targetUserId,
+    });
+
+    if (!actingMember) {
+      return res.status(403).json({
+        success: false,
+        message: "You are not a member of this clan",
+      });
+    }
+
+    if (!targetMember) {
+      return res.status(404).json({
+        success: false,
+        message: "The selected user is not a member of this clan",
+      });
+    }
+
+    if (actingMember.role === "RUNNER") {
+      return res.status(403).json({
+        success: false,
+        message: "Runners cannot kick clan members",
+      });
+    }
+
+    /*
+     * Captain can only kick runners.
+     */
+    if (actingMember.role === "CAPTAIN") {
+      if (targetMember.role === "LEADER") {
+        return res.status(403).json({
+          success: false,
+          message: "Captains cannot kick the clan leader",
+        });
+      }
+
+      if (targetMember.role === "CAPTAIN") {
+        return res.status(403).json({
+          success: false,
+          message: "Captains cannot kick other captains",
+        });
+      }
+
+      await prisma.clanMember.delete({
+        where: {
+          id: targetMember.id,
+        },
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: "Runner kicked from the clan successfully",
+        data: {
+          userId: targetUserId,
+          previousRole: targetMember.role,
+        },
+      });
+    }
+
+    /*
+     * Leader can kick captains and runners.
+     */
+    if (actingMember.role === "LEADER") {
+      if (targetMember.role === "LEADER") {
+        return res.status(403).json({
+          success: false,
+          message: "The clan leader cannot be kicked",
+        });
+      }
+
+      await prisma.clanMember.delete({
+        where: {
+          id: targetMember.id,
+        },
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: `${
+          targetMember.role === "CAPTAIN" ? "Captain" : "Runner"
+        } kicked from the clan successfully`,
+        data: {
+          userId: targetUserId,
+          previousRole: targetMember.role,
+        },
+      });
+    }
+
+    return res.status(403).json({
+      success: false,
+      message: "You do not have permission to kick this member",
+    });
+  } catch (error) {
+    console.log("KICK_CLAN_MEMBER_ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to kick clan member",
+    });
+  }
+};
+
+
+
 /**
  * GET /api/clans/:clanId/details
  *
@@ -666,6 +1278,14 @@ export const getClanDetailsbyId = async (req, res) => {
     });
   }
 };
+
+
+
+
+
+
+
+
 
 
 /**

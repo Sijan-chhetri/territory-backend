@@ -21,7 +21,10 @@ import {
   getClanMembersFull,
   checkIfClanLeader,
   editClan,
-  getClanDetailsbyId
+  getClanDetailsbyId,
+  promoteClanMember,
+  demoteClanMember,
+  kickClanMember,
 } from "../clan/clan.controller.js";
 
 const router = express.Router();
@@ -134,5 +137,24 @@ router.get(
   authMiddleware,
   getClanMembers
 );
+
+router.patch(
+  "/:clanId/members/:targetUserId/promote",
+  authMiddleware,
+  promoteClanMember
+);
+
+router.patch(
+  "/:clanId/members/:targetUserId/demote",
+  authMiddleware,
+  demoteClanMember
+);
+
+router.delete(
+  "/:clanId/members/:targetUserId/kick",
+  authMiddleware,
+  kickClanMember
+);
+
 
 export default router;
