@@ -4096,6 +4096,8 @@ export const getWeeklyActivityStats = async (req, res) => {
 // Get Personal Records
 // GET /api/activities/stats/personal-records
 // ─────────────────────────────────────────────
+
+
 export const getPersonalRecords = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -4175,7 +4177,9 @@ export const getPersonalRecords = async (req, res) => {
     const formatPace = (secondsPerKm) => {
       if (secondsPerKm == null) return null;
 
-      const totalSeconds = Math.round(Number(secondsPerKm));
+      const totalSeconds = Math.round(
+        Number(secondsPerKm)
+      );
 
       if (
         !Number.isFinite(totalSeconds) ||
@@ -4184,32 +4188,126 @@ export const getPersonalRecords = async (req, res) => {
         return null;
       }
 
-      const minutes = Math.floor(totalSeconds / 60);
-      const seconds = totalSeconds % 60;
+      const minutes = Math.floor(
+        totalSeconds / 60
+      );
 
-      return `${minutes}:${String(seconds).padStart(2, '0')}/km`;
+      const seconds =
+        totalSeconds % 60;
+
+      return `${minutes}:${String(seconds).padStart(
+        2,
+        '0'
+      )}/km`;
     };
 
     // =========================================================================
-    // NORMALIZE KM SPLITS
+    // GET SPLIT DISTANCE
     //
-    // IMPORTANT:
+    // Supports different possible kmSplits formats:
     //
-    // Only COMPLETE kilometres are kept.
+    // {
+    //   distanceKm: 1
+    // }
+    //
+    // {
+    //   distanceMeters: 1000
+    // }
+    //
+    // {
+    //   distanceM: 1000
+    // }
+    //
+    // {
+    //   meters: 1000
+    // }
+    //
+    // If no split-distance field exists, we still protect against the final
+    // partial split using activity.distanceKm and the split's km number.
+    // =========================================================================
+
+    const getSplitDistanceKm = (split) => {
+      if (
+        !split ||
+        typeof split !== 'object'
+      ) {
+        return null;
+      }
+
+      // -----------------------------------------------------------------------
+      // DISTANCE ALREADY STORED IN KM
+      // -----------------------------------------------------------------------
+
+      if (split.distanceKm != null) {
+        const value = Number(
+          split.distanceKm
+        );
+
+        if (Number.isFinite(value)) {
+          return value;
+        }
+      }
+
+      if (split.splitDistanceKm != null) {
+        const value = Number(
+          split.splitDistanceKm
+        );
+
+        if (Number.isFinite(value)) {
+          return value;
+        }
+      }
+
+      // -----------------------------------------------------------------------
+      // DISTANCE STORED IN METERS
+      // -----------------------------------------------------------------------
+
+      const meterCandidates = [
+        split.distanceMeters,
+        split.distanceM,
+        split.meters,
+        split.splitDistanceMeters,
+      ];
+
+      for (const candidate of meterCandidates) {
+        if (candidate == null) {
+          continue;
+        }
+
+        const value = Number(candidate);
+
+        if (Number.isFinite(value)) {
+          return value / 1000;
+        }
+      }
+
+      return null;
+    };
+
+    // =========================================================================
+    // NORMALIZE SPLITS
+    //
+    // CRITICAL PERSONAL RECORD RULE:
+    //
+    // Only COMPLETE 1 km splits are returned from this function.
     //
     // Example:
     //
-    // Activity distance = 3.42 km
+    // Activity = 5.80 km
     //
-    // Valid:
-    // km 1
-    // km 2
-    // km 3
+    // KM 1 = 1000m ✅
+    // KM 2 = 1000m ✅
+    // KM 3 = 1000m ✅
+    // KM 4 = 1000m ✅
+    // KM 5 = 1000m ✅
+    // KM 6 = 800m  ❌
     //
-    // Invalid:
-    // km 4 -> only 0.42 km was completed
+    // The 800m split is completely removed here, so it cannot affect:
     //
-    // So KM 4 MUST NOT become a personal record.
+    // fastest1Km
+    // fastest5Km
+    // fastest10Km
+    // fastest20Km
     // =========================================================================
 
     const normalizeSplits = (
@@ -4220,8 +4318,9 @@ export const getPersonalRecords = async (req, res) => {
         return [];
       }
 
-      const totalDistanceKm =
-        Number(activityDistanceKm ?? 0);
+      const totalDistanceKm = Number(
+        activityDistanceKm ?? 0
+      );
 
       if (
         !Number.isFinite(totalDistanceKm) ||
@@ -4230,66 +4329,76 @@ export const getPersonalRecords = async (req, res) => {
         return [];
       }
 
-      // Number of fully completed kilometres.
+      // -----------------------------------------------------------------------
+      // FULL KM COMPLETED BY ACTIVITY
       //
-      // 0.95 km -> 0
-      // 1.00 km -> 1
-      // 1.95 km -> 1
-      // 3.40 km -> 3
-      // 5.00 km -> 5
+      // 0.80 km -> 0
+      // 1.80 km -> 1
+      // 4.80 km -> 4
+      // 5.80 km -> 5
+      // 10.80 km -> 10
       //
-      // Small epsilon protects against values such as 4.999999999.
+      // -----------------------------------------------------------------------
+
       const completedKm = Math.floor(
         totalDistanceKm + 0.000001
       );
 
-      return kmSplits
+      const normalized = kmSplits
         .map((split) => {
-          if (!split || typeof split !== 'object') {
+          if (
+            !split ||
+            typeof split !== 'object'
+          ) {
             return null;
           }
 
-          const km = Number(split.km);
+          const km = Number(
+            split.km
+          );
 
-          // Prefer actual timeSec.
-          //
-          // pace is kept only as a fallback because your existing
-          // data may already contain it.
           const rawTime =
             split.timeSec ??
             split.pace;
 
-          const timeSec =
-            Number(rawTime);
+          const timeSec = Number(
+            rawTime
+          );
+
+          const splitDistanceKm =
+            getSplitDistanceKm(
+              split
+            );
 
           return {
             km,
             timeSec,
+            splitDistanceKm,
           };
         })
-
         .filter((split) => {
           if (split == null) {
             return false;
           }
 
-          // -------------------------------------------------------------
-          // KM MUST EXIST
-          // -------------------------------------------------------------
+          // ===================================================================
+          // KM NUMBER MUST EXIST
+          // ===================================================================
 
           if (!Number.isFinite(split.km)) {
             return false;
           }
 
-          // -------------------------------------------------------------
-          // KM MUST BE A WHOLE NUMBER
+          // ===================================================================
+          // KM MUST BE A WHOLE KM NUMBER
           //
           // 1 ✅
           // 2 ✅
           // 3 ✅
           //
-          // 3.4 ❌
-          // -------------------------------------------------------------
+          // 1.8 ❌
+          // 5.5 ❌
+          // ===================================================================
 
           if (!Number.isInteger(split.km)) {
             return false;
@@ -4299,57 +4408,136 @@ export const getPersonalRecords = async (req, res) => {
             return false;
           }
 
-          // -------------------------------------------------------------
-          // MOST IMPORTANT CHECK
+          // ===================================================================
+          // REMOVE FINAL PARTIAL KM
           //
-          // Ignore any split beyond the fully completed activity distance.
+          // Activity = 5.80 km
           //
-          // Activity = 3.42 km
-          // completedKm = 3
+          // completedKm = 5
           //
-          // km 4 ❌
-          // -------------------------------------------------------------
+          // KM 1 -> ✅
+          // KM 2 -> ✅
+          // KM 3 -> ✅
+          // KM 4 -> ✅
+          // KM 5 -> ✅
+          //
+          // KM 6 -> ❌
+          //
+          // Even if KM 6 has a very fast time because it contains only
+          // 800 metres, it can never become a PR.
+          // ===================================================================
 
           if (split.km > completedKm) {
             return false;
           }
 
-          // -------------------------------------------------------------
-          // TIME MUST EXIST
-          // -------------------------------------------------------------
+          // ===================================================================
+          // VALID TIME
+          // ===================================================================
 
-          if (!Number.isFinite(split.timeSec)) {
+          if (
+            !Number.isFinite(split.timeSec) ||
+            split.timeSec <= 0
+          ) {
             return false;
           }
 
-          if (split.timeSec <= 0) {
-            return false;
+          // ===================================================================
+          // IF ACTUAL SPLIT DISTANCE EXISTS, REQUIRE A FULL KM
+          //
+          // GPS can be slightly imperfect, so allow a small tolerance.
+          //
+          // 1.000 km ✅
+          // 0.995 km ✅
+          // 0.980 km ✅
+          //
+          // 0.800 km ❌
+          // 0.750 km ❌
+          // 0.500 km ❌
+          //
+          // Also reject obviously oversized "splits".
+          // ===================================================================
+
+          if (split.splitDistanceKm != null) {
+            const distance =
+              Number(
+                split.splitDistanceKm
+              );
+
+            if (!Number.isFinite(distance)) {
+              return false;
+            }
+
+            if (
+              distance < 0.95 ||
+              distance > 1.05
+            ) {
+              return false;
+            }
           }
 
           return true;
         })
+        .sort(
+          (a, b) =>
+            a.km - b.km
+        );
 
-        // Sort by KM number.
-        .sort((a, b) => a.km - b.km);
+      // -----------------------------------------------------------------------
+      // REMOVE DUPLICATE KM NUMBERS
+      //
+      // We do not want:
+      //
+      // km 1
+      // km 1
+      // km 2
+      //
+      // to accidentally create a fake continuous window.
+      // -----------------------------------------------------------------------
+
+      const uniqueSplits = [];
+      const seenKm = new Set();
+
+      for (const split of normalized) {
+        if (seenKm.has(split.km)) {
+          continue;
+        }
+
+        seenKm.add(split.km);
+        uniqueSplits.push(split);
+      }
+
+      return uniqueSplits;
     };
 
     // =========================================================================
-    // FIND FASTEST CONTINUOUS WINDOW
+    // FIND FASTEST CONTINUOUS FULL-KM WINDOW
     //
-    // targetKm = 1:
+    // 1 KM:
     //
-    // check every individual COMPLETE 1 km split.
+    // Each split must itself be a complete 1 km.
     //
-    // targetKm = 5:
+    // -------------------------------------------------------------------------
     //
-    // 1,2,3,4,5 ✅
-    // 2,3,4,5,6 ✅
+    // 5 KM:
     //
-    // but:
+    // KM 1 + 2 + 3 + 4 + 5 ✅
     //
-    // 1,2,3,5,6 ❌
+    // KM 2 + 3 + 4 + 5 + 6 ✅
     //
-    // because KM 4 is missing.
+    // KM 1 + 2 + 3 + 4 + partial 800m ❌
+    //
+    // -------------------------------------------------------------------------
+    //
+    // 10 KM:
+    //
+    // Must contain ten complete continuous 1 km splits.
+    //
+    // -------------------------------------------------------------------------
+    //
+    // 20 KM:
+    //
+    // Must contain twenty complete continuous 1 km splits.
     // =========================================================================
 
     const findFastestWindow = (
@@ -4376,43 +4564,98 @@ export const getPersonalRecords = async (req, res) => {
           i + targetKm
         );
 
-        // ===============================================================
-        // VERIFY CONTINUOUS KM
-        // ===============================================================
+        let validWindow = true;
 
-        let continuous = true;
+        // =====================================================================
+        // VERIFY EVERY SPLIT IN WINDOW
+        // =====================================================================
 
         for (
-          let j = 1;
+          let j = 0;
           j < window.length;
           j++
         ) {
-          const previousKm =
-            Number(window[j - 1].km);
+          const split = window[j];
 
-          const currentKm =
-            Number(window[j].km);
+          // -------------------------------------------------------------------
+          // VALID KM
+          // -------------------------------------------------------------------
 
           if (
-            currentKm !== previousKm + 1
+            !Number.isFinite(split.km) ||
+            !Number.isInteger(split.km)
           ) {
-            continuous = false;
+            validWindow = false;
             break;
+          }
+
+          // -------------------------------------------------------------------
+          // VALID TIME
+          // -------------------------------------------------------------------
+
+          if (
+            !Number.isFinite(split.timeSec) ||
+            split.timeSec <= 0
+          ) {
+            validWindow = false;
+            break;
+          }
+
+          // -------------------------------------------------------------------
+          // FULL 1 KM DISTANCE
+          // -------------------------------------------------------------------
+
+          if (split.splitDistanceKm != null) {
+            if (
+              split.splitDistanceKm < 0.95 ||
+              split.splitDistanceKm > 1.05
+            ) {
+              validWindow = false;
+              break;
+            }
+          }
+
+          // -------------------------------------------------------------------
+          // CONTINUOUS KM
+          //
+          // 1,2,3,4,5 ✅
+          //
+          // 1,2,3,5,6 ❌
+          // -------------------------------------------------------------------
+
+          if (j > 0) {
+            const previousKm =
+              window[j - 1].km;
+
+            const currentKm =
+              split.km;
+
+            if (
+              currentKm !==
+              previousKm + 1
+            ) {
+              validWindow = false;
+              break;
+            }
           }
         }
 
-        if (!continuous) {
+        if (!validWindow) {
           continue;
         }
 
-        // ===============================================================
-        // SUM THE SPLIT TIMES
-        // ===============================================================
+        // =====================================================================
+        // SUM ONLY VALID COMPLETE KM SPLITS
+        // =====================================================================
 
         const totalTimeSec =
           window.reduce(
-            (sum, split) =>
-              sum + Number(split.timeSec),
+            (sum, split) => {
+              return (
+                sum +
+                Number(split.timeSec)
+              );
+            },
             0
           );
 
@@ -4423,9 +4666,9 @@ export const getPersonalRecords = async (req, res) => {
           continue;
         }
 
-        // ===============================================================
-        // KEEP FASTEST
-        // ===============================================================
+        // =====================================================================
+        // FASTEST WINDOW
+        // =====================================================================
 
         if (
           best == null ||
@@ -4434,19 +4677,20 @@ export const getPersonalRecords = async (req, res) => {
         ) {
           best = {
             fromKm:
-                window[0].km,
+              window[0].km,
 
             toKm:
-                window[
-                  window.length - 1
-                ].km,
+              window[
+                window.length - 1
+              ].km,
 
             totalTimeSec,
 
             paceSecPerKm:
-                Math.round(
-              totalTimeSec / targetKm
-            ),
+              Math.round(
+                totalTimeSec /
+                  targetKm
+              ),
           };
         }
       }
@@ -4472,7 +4716,7 @@ export const getPersonalRecords = async (req, res) => {
             );
 
           return currentDistance >
-              bestDistance
+            bestDistance
             ? current
             : best;
         },
@@ -4497,7 +4741,7 @@ export const getPersonalRecords = async (req, res) => {
             );
 
           return currentSpeed >
-              bestSpeed
+            bestSpeed
             ? current
             : best;
         },
@@ -4505,7 +4749,7 @@ export const getPersonalRecords = async (req, res) => {
       );
 
     // =========================================================================
-    // FIND FASTEST RECORD
+    // FIND FASTEST PERSONAL RECORD
     // =========================================================================
 
     const findFastestRecord = (
@@ -4519,32 +4763,31 @@ export const getPersonalRecords = async (req, res) => {
             activity.distanceKm ?? 0
           );
 
-        // ===============================================================
-        // ACTIVITY MUST ACTUALLY COMPLETE TARGET DISTANCE
+        // =====================================================================
+        // ACTIVITY ITSELF MUST COMPLETE TARGET DISTANCE
         //
-        // 0.9 km activity -> cannot have 1 km PR
-        // 4.9 km activity -> cannot have 5 km PR
-        // 9.9 km activity -> cannot have 10 km PR
-        // ===============================================================
+        // 0.8 km cannot have 1 km PR
+        //
+        // 4.8 km cannot have 5 km PR
+        //
+        // 9.8 km cannot have 10 km PR
+        //
+        // 19.8 km cannot have 20 km PR
+        // =====================================================================
 
         if (
           !Number.isFinite(
             activityDistanceKm
-          )
-        ) {
-          continue;
-        }
-
-        if (
+          ) ||
           activityDistanceKm <
-          targetKm
+            targetKm
         ) {
           continue;
         }
 
-        // ===============================================================
-        // GET ONLY VALID FULL-KM SPLITS
-        // ===============================================================
+        // =====================================================================
+        // REMOVE PARTIAL SPLITS BEFORE CALCULATING ANY PR
+        // =====================================================================
 
         const splits =
           normalizeSplits(
@@ -4552,9 +4795,13 @@ export const getPersonalRecords = async (req, res) => {
             activityDistanceKm
           );
 
-        // ===============================================================
-        // MUST HAVE ENOUGH FULL KM SPLITS
-        // ===============================================================
+        // =====================================================================
+        // REQUIRE ENOUGH COMPLETE KM
+        //
+        // targetKm = 5
+        //
+        // Must contain at least 5 FULL km splits.
+        // =====================================================================
 
         if (
           splits.length <
@@ -4563,9 +4810,9 @@ export const getPersonalRecords = async (req, res) => {
           continue;
         }
 
-        // ===============================================================
-        // FIND FASTEST CONTINUOUS WINDOW
-        // ===============================================================
+        // =====================================================================
+        // FIND BEST COMPLETE CONTINUOUS WINDOW
+        // =====================================================================
 
         const bestWindow =
           findFastestWindow(
@@ -4577,9 +4824,9 @@ export const getPersonalRecords = async (req, res) => {
           continue;
         }
 
-        // ===============================================================
-        // COMPARE AGAINST ALL-TIME RECORD
-        // ===============================================================
+        // =====================================================================
+        // COMPARE WITH ALL-TIME RECORD
+        // =====================================================================
 
         if (
           bestRecord == null ||
@@ -4588,44 +4835,44 @@ export const getPersonalRecords = async (req, res) => {
         ) {
           bestRecord = {
             activityId:
-                activity.id,
+              activity.id,
 
             mode:
-                activity.mode,
+              activity.mode,
 
             distanceKm:
-                targetKm,
+              targetKm,
 
             timeSec:
-                bestWindow.totalTimeSec,
+              bestWindow.totalTimeSec,
 
             timeFormatted:
-                formatDuration(
-              bestWindow.totalTimeSec
-            ),
+              formatDuration(
+                bestWindow.totalTimeSec
+              ),
 
             paceSecPerKm:
-                bestWindow.paceSecPerKm,
+              bestWindow.paceSecPerKm,
 
             paceFormatted:
-                formatPace(
-              bestWindow.paceSecPerKm
-            ),
+              formatPace(
+                bestWindow.paceSecPerKm
+              ),
 
             fromKm:
-                bestWindow.fromKm,
+              bestWindow.fromKm,
 
             toKm:
-                bestWindow.toKm,
+              bestWindow.toKm,
 
             actualActivityDistanceKm:
-                activityDistanceKm,
+              activityDistanceKm,
 
             startedAt:
-                activity.startedAt,
+              activity.startedAt,
 
             endedAt:
-                activity.endedAt,
+              activity.endedAt,
           };
         }
       }
@@ -4635,6 +4882,8 @@ export const getPersonalRecords = async (req, res) => {
 
     // =========================================================================
     // PERSONAL RECORDS
+    //
+    // ALL OF THESE NOW ONLY USE COMPLETE KM SPLITS
     // =========================================================================
 
     const fastest1Km =
@@ -4657,7 +4906,7 @@ export const getPersonalRecords = async (req, res) => {
       success: true,
 
       message:
-          'Personal records loaded',
+        'Personal records loaded',
 
       records: {
         // =====================================================================
@@ -4666,42 +4915,44 @@ export const getPersonalRecords = async (req, res) => {
 
         longestActivity: {
           activityId:
-              longestActivity.id,
+            longestActivity.id,
 
           mode:
-              longestActivity.mode,
+            longestActivity.mode,
 
           distanceKm:
-              Number(
-            longestActivity.distanceKm ??
+            Number(
+              longestActivity.distanceKm ??
                 0
-          ),
+            ),
 
           durationSec:
-              longestActivity.durationSec,
+            longestActivity.durationSec,
 
           durationFormatted:
-              formatDuration(
-            longestActivity.durationSec
-          ),
+            formatDuration(
+              longestActivity.durationSec
+            ),
 
           movingTimeSec:
-              longestActivity.movingTime,
+            longestActivity.movingTime,
 
           movingTimeFormatted:
-              formatDuration(
-            longestActivity.movingTime
-          ),
+            formatDuration(
+              longestActivity.movingTime
+            ),
 
           startedAt:
-              longestActivity.startedAt,
+            longestActivity.startedAt,
 
           endedAt:
-              longestActivity.endedAt,
+            longestActivity.endedAt,
         },
 
         // =====================================================================
         // FASTEST TIMES
+        //
+        // No partial 800m / 600m / etc. split can appear here.
         // =====================================================================
 
         fastest1Km,
@@ -4718,28 +4969,28 @@ export const getPersonalRecords = async (req, res) => {
 
         highestSpeed: {
           activityId:
-              highestSpeedActivity.id,
+            highestSpeedActivity.id,
 
           mode:
-              highestSpeedActivity.mode,
+            highestSpeedActivity.mode,
 
           topSpeed:
-              Number(
-            highestSpeedActivity.topSpeed ??
+            Number(
+              highestSpeedActivity.topSpeed ??
                 0
-          ),
+            ),
 
           distanceKm:
-              Number(
-            highestSpeedActivity.distanceKm ??
+            Number(
+              highestSpeedActivity.distanceKm ??
                 0
-          ),
+            ),
 
           startedAt:
-              highestSpeedActivity.startedAt,
+            highestSpeedActivity.startedAt,
 
           endedAt:
-              highestSpeedActivity.endedAt,
+            highestSpeedActivity.endedAt,
         },
       },
     });
@@ -4753,16 +5004,18 @@ export const getPersonalRecords = async (req, res) => {
       success: false,
 
       message:
-          'Failed to fetch personal records',
+        'Failed to fetch personal records',
 
       error:
-          process.env.NODE_ENV ===
-          'development'
-            ? error.message
-            : undefined,
+        process.env.NODE_ENV ===
+        'development'
+          ? error.message
+          : undefined,
     });
   }
 };
+
+
 
 
 export const getLifetimeActivityStats = async (req, res) => {
