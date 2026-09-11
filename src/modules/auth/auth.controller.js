@@ -439,6 +439,62 @@ export const getUsersWhoAreNotMyFriends = async (req, res) => {
 
 
 
+// delete account
+
+
+
+export const deleteMyAccount = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const user = await prisma.user.findUnique({
+      where: {
+        id: userId,
+      },
+      select: {
+        id: true,
+        email: true,
+        username: true,
+      },
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User account not found.",
+      });
+    }
+
+    await prisma.user.delete({
+      where: {
+        id: userId,
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Your account has been permanently deleted.",
+    });
+  } catch (error) {
+    console.error("DELETE_ACCOUNT_ERROR:", error);
+
+    // Prisma foreign key constraint error
+    if (error.code === "P2003") {
+      return res.status(409).json({
+        success: false,
+        message:
+          "Unable to delete account because related account data still exists.",
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to delete account.",
+    });
+  }
+};
+
+
 // ─────────────────────────────────────────────
 // Get User Detail By UserId + Leaderboard Rank
 // GET /api/auth/user/:userId

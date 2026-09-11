@@ -9,6 +9,7 @@ import {
   resendPasswordResetOtp,
   verifyPasswordResetOtp,
   resetPassword,
+  deleteMyAccount
 
 } from './auth.controller.js';
 
@@ -19,6 +20,8 @@ router.post('/login', login);
 
 router.post("/google", googleAuth);
 router.post("/apple", appleAuth);
+
+router.delete("/me", authMiddleware, deleteMyAccount);
 
 router.get('/user/me', authMiddleware, getMe);
 router.put('/user/profile', authMiddleware, updateProfile);
