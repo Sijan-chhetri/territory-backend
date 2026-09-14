@@ -23,19 +23,14 @@ model User {
   fullName String? @map("full_name")
   country  String?
   city     String?
-
   weight Float?
   height Float?
-
   authProvider AuthProvider @default(EMAIL) @map("auth_provider")
   googleId     String?      @unique @map("google_id")
   appleId      String?      @unique @map("apple_id")
-
   fcmToken String?
-
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
-
   receivedFriendRequests  FriendRequest[]        @relation("FriendRequestReceiver")
   sentFriendRequests      FriendRequest[]        @relation("FriendRequestSender")
   friendOf                Friendship[]           @relation("FriendshipFriend")
@@ -58,13 +53,13 @@ model User {
   clanEventParticipants   ClanEventParticipant[]
   createdClubWars         ClubWar[]              @relation("CreatedClubWars")
   passwordResetOtps       PasswordResetOtp[]
-
   @@index([email])
   @@index([username])
   @@index([googleId])
   @@index([appleId])
   @@map("users")
 }
+
 
 model Clan {
   id          String  @id @default(uuid())
@@ -75,10 +70,8 @@ model Clan {
   banner      String?
   isPrivate   Boolean @default(false)
   maxMembers  Int     @default(50)
-
   country  String?
   imageUrl String? @map("image_url")
-
   /// *
   /// * |--------------------------------------------------------------------------
   /// * | CAPTAIN
@@ -113,7 +106,6 @@ model Clan {
   members            ClanMember[]
   territories        ClanTerritory[]
   captain            User                     @relation("ClanCaptain", fields: [captainId], references: [id], onDelete: Cascade)
-
   messages       ClanMessage[]
   challengerWars ClubWar[]     @relation("ChallengerClanWars")
   opponentWars   ClubWar[]     @relation("OpponentClanWars")

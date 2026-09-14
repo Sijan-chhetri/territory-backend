@@ -83,11 +83,17 @@ export const sendFriendRequest = async (req, res) => {
       },
     });
 
+    // get sender username for notification
+    const sender = await prisma.user.findUnique({
+      where: { id: senderId },
+      select: { username: true },
+    });
+
     // notify receiver via FCM
     await sendFCMToUser({
       userId: receiver.id,
       title: "New Friend Request",
-      message: `${req.user.username} sent you a friend request`,
+      message: `${sender?.username ?? "Someone"} sent you a friend request`,
       data: {
         type: "FRIEND_REQUEST",
         senderId: String(senderId),
