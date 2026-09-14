@@ -9,7 +9,9 @@ import {
   resendPasswordResetOtp,
   verifyPasswordResetOtp,
   resetPassword,
-  deleteMyAccount
+  deleteMyAccount,
+  saveFcmToken,
+  removeFcmToken,
 
 } from './auth.controller.js';
 
@@ -55,6 +57,9 @@ router.post(
   "/forgot-password/reset",
   resetPassword
 );
+
+router.post('/fcm-token', authMiddleware, saveFcmToken);
+router.delete('/fcm-token', authMiddleware, removeFcmToken);
 
 
 

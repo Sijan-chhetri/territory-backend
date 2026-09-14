@@ -1815,3 +1815,49 @@ export const resetPassword = async (req, res) => {
     });
   }
 };
+
+
+// ─────────────────────────────────────────────
+// Save FCM Token
+// POST /api/auth/fcm-token
+// ─────────────────────────────────────────────
+export const saveFcmToken = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { fcmToken } = req.body;
+
+    if (!fcmToken) {
+      return res.status(400).json({ success: false, message: "fcmToken is required" });
+    }
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: { fcmToken },
+    });
+
+    return res.status(200).json({ success: true, message: "FCM token saved" });
+  } catch (error) {
+    console.log(error);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+// ─────────────────────────────────────────────
+// Remove FCM Token (on logout)
+// DELETE /api/auth/fcm-token
+// ─────────────────────────────────────────────
+export const removeFcmToken = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: { fcmToken: null },
+    });
+
+    return res.status(200).json({ success: true, message: "FCM token removed" });
+  } catch (error) {
+    console.log(error);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+};
