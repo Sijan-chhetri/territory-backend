@@ -1,5 +1,6 @@
 import admin from "firebase-admin";
-import serviceAccount from "./firebase_service.json" with { type: "json" };
+
+const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
 
 if (!admin.apps.length) {
   admin.initializeApp({
