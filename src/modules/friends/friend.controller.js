@@ -1,6 +1,7 @@
 // controllers/friend.controller.js
 
 import prisma from "../../config/prisma.js";
+import { sendFCMToUser } from "../../config/fcm.service.js";
 
 /**
  * ============================================================================
@@ -82,6 +83,17 @@ export const sendFriendRequest = async (req, res) => {
       },
     });
 
+    // notify receiver via FCM
+    await sendFCMToUser({
+      userId: receiver.id,
+      title: "New Friend Request",
+      message: `${req.user.username} sent you a friend request`,
+      data: {
+        type: "FRIEND_REQUEST",
+        senderId: String(senderId),
+      },
+    });
+
     return res.status(201).json({
       success: true,
       message: "Friend request sent",
@@ -96,6 +108,8 @@ export const sendFriendRequest = async (req, res) => {
     });
   }
 };
+
+
 
 /**
  * ============================================================================
