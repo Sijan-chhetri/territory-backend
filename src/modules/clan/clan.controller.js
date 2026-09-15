@@ -3114,15 +3114,21 @@ export const getClanDetails = async (req, res) => {
 // };
 
 
-
 export const leaveClan = async (req, res) => {
   try {
     const userId = req.user.id;
 
     const result = await prisma.$transaction(async (tx) => {
+      /*
+       * Find current membership.
+       */
       const membership = await tx.clanMember.findFirst({
-        where: { userId },
-        include: { clan: true },
+        where: {
+          userId,
+        },
+        include: {
+          clan: true,
+        },
       });
 
       if (!membership) {
@@ -3136,82 +3142,194 @@ export const leaveClan = async (req, res) => {
       }
 
       const clanId = membership.clanId;
-      const isLeader = membership.clan.captainId === userId;
 
+      /*
+       * Captain is determined from Clan.captainId.
+       */
+      const isLeader =
+        membership.clan.captainId === userId;
+
+      /*
+       * =========================================================
+       * CAPTAIN LEAVING
+       * =========================================================
+       */
       if (isLeader) {
-        const otherMember = await tx.clanMember.findFirst({
-          where: {
-            clanId,
-            userId: {
-              not: userId,
+        /*
+         * Find oldest remaining member.
+         */
+        const otherMember =
+          await tx.clanMember.findFirst({
+            where: {
+              clanId,
+
+              userId: {
+                not: userId,
+              },
             },
-          },
-          orderBy: {
-            joinedAt: "asc",
-          },
-        });
 
-        // If leader is the only member, delete whole clan
+            orderBy: {
+              joinedAt: "asc",
+            },
+          });
+
+        /*
+         * IMPORTANT:
+         *
+         * Do NOT automatically delete the clan here.
+         *
+         * Deleting Clan would cascade-delete:
+         *
+         * - ClanTerritory
+         * - ClanActivity
+         * - Clan messages/events/etc depending on relations
+         *
+         * If the captain is the final member, require them to
+         * explicitly delete the clan using a separate endpoint.
+         */
         if (!otherMember) {
-          await tx.clanMember.deleteMany({
-            where: { clanId },
-          });
-
-          await tx.clan.delete({
-            where: { id: clanId },
-          });
-
           return {
-            status: 200,
+            status: 400,
             body: {
-              success: true,
-              message: "You were the only member. Clan deleted successfully.",
+              success: false,
+              message:
+                "You are the only member of this clan. Delete the clan if you want to remove it.",
+              code: "LAST_CLAN_MEMBER",
             },
           };
         }
 
-        // Promote oldest member as new leader
+        /*
+         * Promote the oldest remaining member.
+         */
         await tx.clan.update({
-          where: { id: clanId },
+          where: {
+            id: clanId,
+          },
+
           data: {
             captainId: otherMember.userId,
           },
         });
 
+        /*
+         * Promote membership role.
+         */
         await tx.clanMember.update({
-          where: { id: otherMember.id },
+          where: {
+            id: otherMember.id,
+          },
+
           data: {
             role: "LEADER",
           },
         });
       }
 
+      /*
+       * =========================================================
+       * REMOVE ONLY THE MEMBERSHIP
+       * =========================================================
+       *
+       * VERY IMPORTANT:
+       *
+       * We ONLY delete ClanMember.
+       *
+       * We intentionally DO NOT delete:
+       *
+       * ClanTerritory
+       * ClanActivity
+       * Territory
+       *
+       * Therefore:
+       *
+       * User A captures territory for Clan X
+       *
+       * User A leaves Clan X
+       *
+       * Territory STILL belongs to Clan X.
+       */
       await tx.clanMember.delete({
-        where: { id: membership.id },
+        where: {
+          id: membership.id,
+        },
       });
+
+      /*
+       * Optional:
+       * remove pending request/invite records for this exact clan.
+       *
+       * This has no effect on territory ownership.
+       */
+      await tx.clanJoinRequest.deleteMany({
+        where: {
+          clanId,
+          userId,
+        },
+      });
+
+      await tx.clanInvite.deleteMany({
+        where: {
+          clanId,
+          invitedUserId: userId,
+        },
+      });
+
+      /*
+       * IMPORTANT:
+       *
+       * DO NOT DO THIS:
+       *
+       * await tx.clanTerritory.deleteMany({
+       *   where: {
+       *     capturedByUserId: userId,
+       *   },
+       * });
+       *
+       * Clan territory belongs to clanId, not to the current
+       * membership of capturedByUserId.
+       */
 
       return {
         status: 200,
+
         body: {
           success: true,
+
           message: isLeader
             ? "You left the clan. A new leader has been promoted."
             : "Successfully left the clan",
+
+          clanId,
         },
       };
     });
 
-    return res.status(result.status).json(result.body);
+    return res
+      .status(result.status)
+      .json(result.body);
   } catch (error) {
-    console.log("LEAVE_CLAN_ERROR:", error);
+    console.log(
+      "LEAVE_CLAN_ERROR:",
+      error,
+    );
 
     return res.status(500).json({
       success: false,
-      message: "Failed to leave clan",
-      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+
+      message:
+        "Failed to leave clan",
+
+      error:
+        process.env.NODE_ENV ===
+        "development"
+          ? error.message
+          : undefined,
     });
   }
 };
+
+
 
 /**
  * |--------------------------------------------------------------------------

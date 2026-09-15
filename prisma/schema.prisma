@@ -16,21 +16,21 @@ enum AuthProvider {
 }
 
 model User {
-  id       String  @id @default(uuid())
-  email    String  @unique
-  username String  @unique
-  password String?
-  fullName String? @map("full_name")
-  country  String?
-  city     String?
-  weight Float?
-  height Float?
-  authProvider AuthProvider @default(EMAIL) @map("auth_provider")
-  googleId     String?      @unique @map("google_id")
-  appleId      String?      @unique @map("apple_id")
-  fcmToken String?
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id                      String                 @id @default(uuid())
+  email                   String                 @unique
+  username                String                 @unique
+  password                String?
+  fullName                String?                @map("full_name")
+  country                 String?
+  city                    String?
+  weight                  Float?
+  height                  Float?
+  authProvider            AuthProvider           @default(EMAIL) @map("auth_provider")
+  googleId                String?                @unique @map("google_id")
+  appleId                 String?                @unique @map("apple_id")
+  fcmToken                String?
+  createdAt               DateTime               @default(now()) @map("created_at")
+  updatedAt               DateTime               @updatedAt @map("updated_at")
   receivedFriendRequests  FriendRequest[]        @relation("FriendRequestReceiver")
   sentFriendRequests      FriendRequest[]        @relation("FriendRequestSender")
   friendOf                Friendship[]           @relation("FriendshipFriend")
@@ -53,6 +53,7 @@ model User {
   clanEventParticipants   ClanEventParticipant[]
   createdClubWars         ClubWar[]              @relation("CreatedClubWars")
   passwordResetOtps       PasswordResetOtp[]
+
   @@index([email])
   @@index([username])
   @@index([googleId])
@@ -60,18 +61,17 @@ model User {
   @@map("users")
 }
 
-
 model Clan {
-  id          String  @id @default(uuid())
-  name        String  @unique
-  slug        String  @unique
-  description String?
-  logo        String?
-  banner      String?
-  isPrivate   Boolean @default(false)
-  maxMembers  Int     @default(50)
-  country  String?
-  imageUrl String? @map("image_url")
+  id                 String                   @id @default(uuid())
+  name               String                   @unique
+  slug               String                   @unique
+  description        String?
+  logo               String?
+  banner             String?
+  isPrivate          Boolean                  @default(false)
+  maxMembers         Int                      @default(50)
+  country            String?
+  imageUrl           String?                  @map("image_url")
   /// *
   /// * |--------------------------------------------------------------------------
   /// * | CAPTAIN
@@ -106,10 +106,10 @@ model Clan {
   members            ClanMember[]
   territories        ClanTerritory[]
   captain            User                     @relation("ClanCaptain", fields: [captainId], references: [id], onDelete: Cascade)
-  messages       ClanMessage[]
-  challengerWars ClubWar[]     @relation("ChallengerClanWars")
-  opponentWars   ClubWar[]     @relation("OpponentClanWars")
-  wonWars        ClubWar[]     @relation("WinnerClanWars")
+  messages           ClanMessage[]
+  challengerWars     ClubWar[]                @relation("ChallengerClanWars")
+  opponentWars       ClubWar[]                @relation("OpponentClanWars")
+  wonWars            ClubWar[]                @relation("WinnerClanWars")
 
   warStats ClubWarParticipant[]
   events   ClanEvent[]
@@ -173,26 +173,23 @@ model ClanInvite {
 }
 
 model ClanTerritory {
-  id               String    @id @default(uuid())
+  id               String  @id @default(uuid())
   clanId           String
   territoryId      String
   capturedByUserId String?
-  /// *
-  /// * |--------------------------------------------------------------------------
-  /// * | TERRITORY STATS
-  /// * |--------------------------------------------------------------------------
-  areaKm2          Float
-  capturedAt       DateTime  @default(now())
-  capturedBy       User?     @relation(fields: [capturedByUserId], references: [id])
-  clan             Clan      @relation(fields: [clanId], references: [id], onDelete: Cascade)
-  territory        Territory @relation(fields: [territoryId], references: [id], onDelete: Cascade)
+
+  areaKm2    Float
+  capturedAt DateTime @default(now())
+
+  capturedBy User?     @relation(fields: [capturedByUserId], references: [id], onDelete: SetNull)
+  clan       Clan      @relation(fields: [clanId], references: [id], onDelete: Cascade)
+  territory  Territory @relation(fields: [territoryId], references: [id], onDelete: Cascade)
 
   @@unique([clanId, territoryId])
   @@index([clanId])
   @@index([territoryId])
   @@map("clan_territories")
 }
-
 
 model ClanActivity {
   id                  String    @id @default(uuid())
@@ -269,7 +266,7 @@ model Friendship {
 model Activity {
   id String @id @default(uuid())
 
-  userId          String
+  userId           String
   clientActivityId String?
 
   mode        ActivityMode
@@ -295,11 +292,11 @@ model Activity {
   kmSplits      Json?
   routeGeometry Unsupported("geometry")?
 
-  createdAt      DateTime @default(now())
-  includeInClan  Boolean  @default(false) @map("include_in_clan")
-  notes          String?
+  createdAt     DateTime @default(now())
+  includeInClan Boolean  @default(false) @map("include_in_clan")
+  notes         String?
 
-  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   clanActivities ClanActivity[]
   territories    Territory[]
   xptransactions XPTransaction[]
@@ -308,8 +305,6 @@ model Activity {
   @@index([userId])
   @@map("activities")
 }
-
-
 
 model Territory {
   id                   String                   @id @default(uuid())
