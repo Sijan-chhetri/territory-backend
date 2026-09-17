@@ -3113,14 +3113,13 @@ export const getClanDetails = async (req, res) => {
 //   }
 // };
 
-
 export const leaveClan = async (req, res) => {
   try {
     const userId = req.user.id;
 
     const result = await prisma.$transaction(async (tx) => {
       // =========================================================
-      // FIND CURRENT CLAN MEMBERSHIP
+      // FIND USER'S CURRENT CLAN MEMBERSHIP
       // =========================================================
 
       const membership = await tx.clanMember.findFirst({
@@ -3147,149 +3146,125 @@ export const leaveClan = async (req, res) => {
       const isLeader =
         membership.clan.captainId === userId;
 
-      let wasLastMember = false;
-      let newLeaderId = null;
-
       // =========================================================
-      // CAPTAIN LEAVING
+      // FIND ANOTHER MEMBER
       // =========================================================
 
-      if (isLeader) {
-        // Find oldest remaining clan member
-        const otherMember =
-          await tx.clanMember.findFirst({
-            where: {
-              clanId,
+      const otherMember = await tx.clanMember.findFirst({
+        where: {
+          clanId,
+          userId: {
+            not: userId,
+          },
+        },
+        orderBy: {
+          joinedAt: "asc",
+        },
+      });
 
-              userId: {
-                not: userId,
-              },
-            },
+      // If there is no other member, this user is the final member.
+      const isLastMember = !otherMember;
 
-            orderBy: {
-              joinedAt: "asc",
-            },
-          });
+      // =========================================================
+      // LAST MEMBER LEAVING
+      // =========================================================
 
-        // =======================================================
-        // CAPTAIN IS THE ONLY MEMBER
-        // =======================================================
-
-        if (!otherMember) {
-          wasLastMember = true;
-
-          /*
-           * Delete all clan activity history because
-           * this clan will now have zero members.
-           *
-           * IMPORTANT:
-           * This does NOT touch:
-           *
-           * - ClanTerritory
-           * - Territory
-           */
-          await tx.clanActivity.deleteMany({
-            where: {
-              clanId,
-            },
-          });
-
-          /*
-           * Remove pending join requests.
-           */
-          await tx.clanJoinRequest.deleteMany({
-            where: {
-              clanId,
-            },
-          });
-
-          /*
-           * Remove clan invites.
-           */
-          await tx.clanInvite.deleteMany({
-            where: {
-              clanId,
-            },
-          });
-
-          /*
-           * Remove final member.
-           */
-          await tx.clanMember.delete({
-            where: {
-              id: membership.id,
-            },
-          });
-
-          /*
-           * IMPORTANT:
-           *
-           * Because there is now no captain/member,
-           * captainId should become null.
-           *
-           * Your Prisma Clan model needs:
-           *
-           * captainId String?
-           *
-           * instead of:
-           *
-           * captainId String
-           */
-          await tx.clan.update({
-            where: {
-              id: clanId,
-            },
-
-            data: {
-              captainId: null,
-            },
-          });
-
-          return {
-            status: 200,
-
-            body: {
-              success: true,
-
-              message:
-                "Successfully left the clan. Clan activity has been cleared.",
-
-              clanId,
-
-              wasLastMember: true,
-
-              clanActivityDeleted: true,
-            },
-          };
-        }
-
-        // =======================================================
-        // CAPTAIN LEAVES BUT OTHER MEMBERS EXIST
-        // =======================================================
-
-        newLeaderId = otherMember.userId;
+      if (isLastMember) {
+        /*
+         * Delete clan activity because clan now has
+         * no active members.
+         */
+        await tx.clanActivity.deleteMany({
+          where: {
+            clanId,
+          },
+        });
 
         /*
-         * Change clan captain.
+         * Delete pending join requests.
+         */
+        await tx.clanJoinRequest.deleteMany({
+          where: {
+            clanId,
+          },
+        });
+
+        /*
+         * Delete pending invites.
+         */
+        await tx.clanInvite.deleteMany({
+          where: {
+            clanId,
+          },
+        });
+
+        /*
+         * Remove final membership.
+         */
+        await tx.clanMember.delete({
+          where: {
+            id: membership.id,
+          },
+        });
+
+        /*
+         * IMPORTANT:
+         *
+         * DO NOT SET captainId TO NULL.
+         *
+         * Your current Prisma schema has a required captain
+         * relation, so captainId cannot be null.
+         *
+         * We also DO NOT delete:
+         *
+         * - Clan
+         * - ClanTerritory
+         * - Territory
+         */
+        return {
+          status: 200,
+          body: {
+            success: true,
+            message:
+              "Successfully left the clan. Clan activity has been cleared.",
+            clanId,
+            wasLastMember: true,
+            clanActivityDeleted: true,
+          },
+        };
+      }
+
+      // =========================================================
+      // CAPTAIN LEAVING WHILE OTHER MEMBERS EXIST
+      // =========================================================
+
+      if (isLeader && otherMember) {
+        /*
+         * Transfer captain relation to oldest remaining member.
+         *
+         * Since Prisma exposes captain as the relation field,
+         * use connect instead of captainId.
          */
         await tx.clan.update({
           where: {
             id: clanId,
           },
-
           data: {
-            captainId: otherMember.userId,
+            captain: {
+              connect: {
+                id: otherMember.userId,
+              },
+            },
           },
         });
 
         /*
-         * Change new captain membership role.
+         * Promote their ClanMember role.
          */
         await tx.clanMember.update({
           where: {
             id: otherMember.id,
           },
-
           data: {
             role: "LEADER",
           },
@@ -3297,20 +3272,9 @@ export const leaveClan = async (req, res) => {
       }
 
       // =========================================================
-      // NORMAL MEMBER / CAPTAIN WITH OTHER MEMBERS
+      // DELETE LEAVING USER'S MEMBERSHIP
       // =========================================================
 
-      /*
-       * Delete ONLY membership.
-       *
-       * We DO NOT delete:
-       *
-       * - ClanTerritory
-       * - Territory
-       * - ClanActivity
-       *
-       * ClanActivity is deleted ONLY when the final member leaves.
-       */
       await tx.clanMember.delete({
         where: {
           id: membership.id,
@@ -3318,7 +3282,7 @@ export const leaveClan = async (req, res) => {
       });
 
       // =========================================================
-      // CLEAN REQUESTS / INVITES FOR LEAVING USER
+      // CLEAN USER-SPECIFIC REQUESTS / INVITES
       // =========================================================
 
       await tx.clanJoinRequest.deleteMany({
@@ -3341,7 +3305,6 @@ export const leaveClan = async (req, res) => {
 
       return {
         status: 200,
-
         body: {
           success: true,
 
@@ -3351,9 +3314,12 @@ export const leaveClan = async (req, res) => {
 
           clanId,
 
-          wasLastMember,
+          wasLastMember: false,
 
-          newLeaderId,
+          newLeaderId:
+            isLeader && otherMember
+              ? otherMember.userId
+              : null,
 
           clanActivityDeleted: false,
         },
@@ -3364,7 +3330,7 @@ export const leaveClan = async (req, res) => {
       .status(result.status)
       .json(result.body);
   } catch (error) {
-    console.log(
+    console.error(
       "LEAVE_CLAN_ERROR:",
       error,
     );
@@ -3383,8 +3349,6 @@ export const leaveClan = async (req, res) => {
     });
   }
 };
-
-
 
 /**
  * |--------------------------------------------------------------------------
