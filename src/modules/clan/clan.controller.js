@@ -2,7 +2,7 @@
 import { Prisma } from "@prisma/client";
 import prisma from "../../config/prisma.js";
 import { sendClanEventInvitations } from "../clanEvent/clanEventEmail.service.js";
-import { sendFCMToUser } from "../../services/fcm.service.js";
+import { sendFCMToUser } from "../../config/fcm.service.js";
 
 
 
