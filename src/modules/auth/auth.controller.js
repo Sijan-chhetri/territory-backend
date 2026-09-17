@@ -591,9 +591,45 @@ export const deleteMyAccount = async (req, res) => {
 // Rank is based on total activity distance
 // Level and XP come from user_progress
 // ─────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────
+// GET USER DETAIL BY ID
+//
+// Returns:
+// - User profile
+// - XP / Level
+// - Total distance
+// - Total activities
+// - Leaderboard rank
+// - ALL activities of the user
+// - ALL scalar Activity fields
+//   including kmSplits, routeEncoded, calories,
+//   elevation, speed, pace, area, etc.
+// - Territory relation for every activity
+// ─────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────
+// GET USER DETAIL BY ID
+//
+// Returns:
+// - User profile
+// - XP / Level
+// - Total distance
+// - Total activities
+// - Leaderboard rank
+// - ALL activities of the user
+// - ALL scalar Activity fields
+//   including kmSplits, routeEncoded, calories,
+//   elevation, speed, pace, area, etc.
+// - Territory relation for every activity
+// ─────────────────────────────────────────────────────────────
+
 export const getUserDetailById = async (req, res) => {
   try {
     const { userId } = req.params;
+
+    // =========================================================
+    // VALIDATE USER ID
+    // =========================================================
 
     if (!userId) {
       return res.status(400).json({
@@ -602,10 +638,15 @@ export const getUserDetailById = async (req, res) => {
       });
     }
 
+    // =========================================================
+    // GET USER
+    // =========================================================
+
     const user = await prisma.user.findUnique({
       where: {
         id: userId,
       },
+
       select: {
         id: true,
         username: true,
@@ -615,7 +656,7 @@ export const getUserDetailById = async (req, res) => {
         country: true,
         createdAt: true,
 
-        // Get stored level and XP from user_progress
+        // Stored level + XP
         progress: {
           select: {
             totalXp: true,
@@ -625,6 +666,10 @@ export const getUserDetailById = async (req, res) => {
       },
     });
 
+    // =========================================================
+    // USER NOT FOUND
+    // =========================================================
+
     if (!user) {
       return res.status(404).json({
         success: false,
@@ -632,81 +677,332 @@ export const getUserDetailById = async (req, res) => {
       });
     }
 
-    // User total distance and total activities
-    const userActivityStats = await prisma.activity.aggregate({
+    // =========================================================
+    // GET ALL ACTIVITIES
+    //
+    // IMPORTANT:
+    // We are NOT using select here.
+    //
+    // Because of that Prisma returns every scalar field
+    // available in your Activity model automatically.
+    //
+    // Examples:
+    //
+    // id
+    // userId
+    // mode
+    // distanceKm
+    // durationSec
+    // movingTime
+    // avgPace
+    // avgSpeed
+    // topSpeed
+    // calories
+    // areaSqMeters
+    // routeEncoded
+    // kmSplits
+    // elevationGain
+    // elevationLoss
+    // highestElevation
+    // lowestElevation
+    // notes
+    // startedAt
+    // endedAt
+    // createdAt
+    // updatedAt
+    //
+    // + any other scalar fields that exist in Activity.
+    // =========================================================
+
+    const activities = await prisma.activity.findMany({
       where: {
         userId,
       },
-      _sum: {
-        distanceKm: true,
+
+      orderBy: {
+        startedAt: "desc",
       },
-      _count: {
-        id: true,
+
+      // Relations must still be explicitly included.
+      include: {
+        territories: true,
       },
     });
 
+    // =========================================================
+    // USER TOTAL ACTIVITY STATS
+    // =========================================================
+
+    const userActivityStats =
+      await prisma.activity.aggregate({
+        where: {
+          userId,
+        },
+
+        _sum: {
+          distanceKm: true,
+        },
+
+        _count: {
+          id: true,
+        },
+      });
+
     const totalDistanceKm = Number(
-      userActivityStats._sum.distanceKm ?? 0
+      userActivityStats._sum.distanceKm ?? 0,
     );
 
     const totalActivities = Number(
-      userActivityStats._count.id ?? 0
+      userActivityStats._count.id ?? 0,
     );
 
-    // All users ranked by total activity distance
-    const leaderboard = await prisma.activity.groupBy({
-      by: ["userId"],
-      _sum: {
-        distanceKm: true,
-      },
-      orderBy: {
+    // =========================================================
+    // OPTIONAL EXTRA TOTALS
+    // Calculated from all returned activities.
+    // =========================================================
+
+    const totalDurationSec = activities.reduce(
+      (sum, activity) =>
+        sum +
+        Number(
+          activity.durationSec ?? 0,
+        ),
+      0,
+    );
+
+    const totalMovingTimeSec = activities.reduce(
+      (sum, activity) =>
+        sum +
+        Number(
+          activity.movingTime ?? 0,
+        ),
+      0,
+    );
+
+    const totalCalories = activities.reduce(
+      (sum, activity) =>
+        sum +
+        Number(
+          activity.calories ?? 0,
+        ),
+      0,
+    );
+
+    // =========================================================
+    // OVERALL AVG PACE
+    // =========================================================
+
+    let averagePace = 0;
+
+    if (
+      totalDistanceKm > 0 &&
+      totalMovingTimeSec > 0
+    ) {
+      averagePace =
+        totalMovingTimeSec /
+        60 /
+        totalDistanceKm;
+    }
+
+    // =========================================================
+    // LEADERBOARD
+    // Rank by total activity distance.
+    // =========================================================
+
+    const leaderboard =
+      await prisma.activity.groupBy({
+        by: ["userId"],
+
         _sum: {
-          distanceKm: "desc",
+          distanceKm: true,
         },
-      },
-    });
 
-    const rankIndex = leaderboard.findIndex(
-      (item) => item.userId === userId
-    );
+        orderBy: {
+          _sum: {
+            distanceKm: "desc",
+          },
+        },
+      });
+
+    const rankIndex =
+      leaderboard.findIndex(
+        (item) =>
+          item.userId === userId,
+      );
 
     const leaderboardRank =
-      rankIndex === -1 ? null : rankIndex + 1;
+      rankIndex === -1
+        ? null
+        : rankIndex + 1;
 
-    // Remove nested progress object from the user response
-    const { progress, ...userData } = user;
+    // =========================================================
+    // REMOVE NESTED PROGRESS OBJECT
+    // =========================================================
+
+    const {
+      progress,
+      ...userData
+    } = user;
+
+    // =========================================================
+    // FORMAT ACTIVITIES
+    //
+    // IMPORTANT:
+    // We spread the complete activity first:
+    //
+    // ...activity
+    //
+    // This means kmSplits and every other returned Activity
+    // field stay in the response.
+    //
+    // We only normalize common numeric values afterward.
+    // =========================================================
+
+    const formattedActivities =
+      activities.map((activity) => ({
+        // KEEP EVERYTHING
+        ...activity,
+
+        // Normalize known numeric fields
+        // without removing anything else.
+
+        distanceKm:
+          activity.distanceKm != null
+            ? Number(
+                activity.distanceKm,
+              )
+            : 0,
+
+        durationSec:
+          activity.durationSec != null
+            ? Number(
+                activity.durationSec,
+              )
+            : 0,
+
+        movingTime:
+          activity.movingTime != null
+            ? Number(
+                activity.movingTime,
+              )
+            : 0,
+
+        avgPace:
+          activity.avgPace != null
+            ? Number(
+                activity.avgPace,
+              )
+            : 0,
+
+        avgSpeed:
+          activity.avgSpeed != null
+            ? Number(
+                activity.avgSpeed,
+              )
+            : 0,
+
+        topSpeed:
+          activity.topSpeed != null
+            ? Number(
+                activity.topSpeed,
+              )
+            : 0,
+
+        calories:
+          activity.calories != null
+            ? Number(
+                activity.calories,
+              )
+            : 0,
+
+        // kmSplits is NOT changed.
+        // It stays exactly as stored by Prisma.
+
+        kmSplits:
+          activity.kmSplits ?? [],
+
+        // Territory relation also stays.
+        territories:
+          activity.territories ?? [],
+      }));
+
+    // =========================================================
+    // RESPONSE
+    // =========================================================
 
     return res.status(200).json({
       success: true,
+
       user: {
         ...userData,
 
+        // =====================================================
+        // USER TOTAL STATS
+        // =====================================================
+
         stats: {
-          totalDistanceKm: Number(totalDistanceKm.toFixed(2)),
+          totalDistanceKm: Number(
+            totalDistanceKm.toFixed(2),
+          ),
+
           totalActivities,
+
+          totalDurationSec,
+
+          totalMovingTimeSec,
+
+          totalCalories:
+            Math.round(
+              totalCalories,
+            ),
+
+          averagePace:
+            Number(
+              averagePace.toFixed(2),
+            ),
+
           leaderboardRank,
 
-          // Same format as your area leaderboard
-          totalXp: Number(progress?.totalXp ?? 0),
-          level: Number(progress?.level ?? 0),
+          totalXp: Number(
+            progress?.totalXp ?? 0,
+          ),
+
+          level: Number(
+            progress?.level ?? 0,
+          ),
         },
+
+        // =====================================================
+        // MULTIPLE ACTIVITIES
+        //
+        // Latest -> oldest
+        // Every Activity field is included.
+        // =====================================================
+
+        activities:
+          formattedActivities,
       },
     });
   } catch (error) {
-    console.error("GET_USER_DETAIL_BY_ID_ERROR:", error);
+    console.error(
+      "GET_USER_DETAIL_BY_ID_ERROR:",
+      error,
+    );
 
     return res.status(500).json({
       success: false,
-      message: "Something went wrong",
+
+      message:
+        "Something went wrong",
+
       error:
-        process.env.NODE_ENV === "development"
+        process.env.NODE_ENV ===
+        "development"
           ? error.message
           : undefined,
     });
   }
 };
-
-
 
 export const googleAuth = async (req, res) => {
   try {
