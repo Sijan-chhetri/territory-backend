@@ -4,6 +4,8 @@ import prisma from "../../config/prisma.js";
 
 import { sendClanEventInvitations } from "./clanEventEmail.service.js";
 
+import { sendFCMToUser } from "../../config/fcm.service.js";
+
 
 
 const getUserClanMembership = async (userId) => {
@@ -278,18 +280,95 @@ export const createClanEvent = async (req, res) => {
 
     /**
      * |--------------------------------------------------------------------------
+     * | SEND PUSH NOTIFICATIONS TO CLAN MEMBERS ONLY
+     * |--------------------------------------------------------------------------
+     *
+     * Only members belonging to this clan are notified.
+     * The event creator is excluded.
+     * Notification failure does not undo event creation.
+     */
+
+    /**
+ * |--------------------------------------------------------------------------
+ * | SEND PUSH NOTIFICATIONS TO CLAN MEMBERS ONLY
+ * |--------------------------------------------------------------------------
+ */
+
+const membersToNotify = clanMembers.filter(
+  (member) => member.userId !== userId
+);
+
+let notificationResult = {
+  attempted: membersToNotify.length,
+  sent: 0,
+  failed: 0,
+};
+
+try {
+  const pushResults = await Promise.all(
+    membersToNotify.map(async (member) => {
+      const result = await sendFCMToUser({
+        userId: member.userId,
+
+        title: `New Event in ${event.clan.name}`,
+
+        message: event.location
+          ? `${event.title} • ${event.location}`
+          : event.title,
+
+        data: {
+          type: "CLAN_EVENT_CREATED",
+          eventId: event.id,
+          clanId: event.clan.id,
+          title: event.title,
+        },
+      });
+
+      return {
+        userId: member.userId,
+        success: Boolean(result),
+      };
+    })
+  );
+
+  for (const result of pushResults) {
+    if (result.success) {
+      notificationResult.sent++;
+    } else {
+      notificationResult.failed++;
+    }
+  }
+
+  console.log(
+    `Clan event notifications: ${notificationResult.sent} sent, ${notificationResult.failed} failed`
+  );
+} catch (notificationError) {
+  console.error(
+    "CLAN_EVENT_NOTIFICATION_ERROR:",
+    notificationError
+  );
+}
+
+    /**
+     * |--------------------------------------------------------------------------
      * | RESPONSE
      * |--------------------------------------------------------------------------
      */
 
     return res.status(201).json({
       success: true,
+
       message: "Clan event created successfully",
 
       invitationMessage:
         emailResult.sent > 0
           ? `Invitations sent to ${emailResult.sent} clan members`
           : "Event created successfully, but no email invitations were sent",
+
+      notificationMessage:
+        notificationResult.sent > 0
+          ? `Notifications sent to ${notificationResult.sent} clan members`
+          : "No push notifications were sent",
 
       data: {
         ...event,
@@ -304,13 +383,24 @@ export const createClanEvent = async (req, res) => {
         sent: emailResult.sent,
         failed: emailResult.failed,
       },
+
+      pushNotifications: {
+        eligibleMembers: membersToNotify.length,
+        attempted: notificationResult.attempted,
+        sent: notificationResult.sent,
+        failed: notificationResult.failed,
+      },
     });
   } catch (error) {
-    console.error("CREATE_CLAN_EVENT_ERROR:", error);
+    console.error(
+      "CREATE_CLAN_EVENT_ERROR:",
+      error
+    );
 
     return res.status(500).json({
       success: false,
       message: "Failed to create clan event",
+
       error:
         process.env.NODE_ENV === "development"
           ? error.message
