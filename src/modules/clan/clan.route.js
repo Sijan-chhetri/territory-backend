@@ -1,5 +1,8 @@
 import express from "express";
 import authMiddleware from "../../middlewares/auth.js";
+import {
+  uploadClanImage,
+} from "../../middlewares/clanImageUpload.js";
 
 import {
   createClan,
@@ -44,7 +47,14 @@ router.delete("/leave", authMiddleware, leaveClan);
 /**
  * Clan creation and listing
  */
-router.post("/", authMiddleware, createClan);
+router.post(
+  "/",
+  authMiddleware,
+  uploadClanImage.single("image"),
+  createClan
+);
+
+
 router.patch(
   "/:clanId",
   authMiddleware,

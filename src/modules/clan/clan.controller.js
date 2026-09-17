@@ -1295,7 +1295,19 @@ export const getClanDetailsbyId = async (req, res) => {
  * |--------------------------------------------------------------------------
  */
 
-export const createClan = async (req, res) => {
+
+
+import {
+  uploadClanImageToS3,
+  deleteClanImageFromS3,
+} from "../../config/s3.js";
+
+export const createClan = async (
+  req,
+  res
+) => {
+  let uploadedImageKey = null;
+
   try {
     const userId = req.user.id;
 
@@ -1306,9 +1318,14 @@ export const createClan = async (req, res) => {
       logo,
       banner,
       country,
-      imageUrl,
       isPrivate,
     } = req.body;
+
+    /**
+     * |--------------------------------------------------------------------------
+     * | VALIDATION
+     * |--------------------------------------------------------------------------
+     */
 
     if (!name || !name.trim()) {
       return res.status(400).json({
@@ -1317,7 +1334,6 @@ export const createClan = async (req, res) => {
       });
     }
 
-
     if (!country || !country.trim()) {
       return res.status(400).json({
         success: false,
@@ -1325,7 +1341,12 @@ export const createClan = async (req, res) => {
       });
     }
 
-    // Generate slug automatically if not provided
+    /**
+     * |--------------------------------------------------------------------------
+     * | GENERATE SLUG
+     * |--------------------------------------------------------------------------
+     */
+
     const generateSlug = (text) => {
       return text
         .toString()
@@ -1336,77 +1357,209 @@ export const createClan = async (req, res) => {
         .replace(/-+/g, "-");
     };
 
-    let baseSlug = slug && slug.trim() ? generateSlug(slug) : generateSlug(name);
+    const baseSlug =
+      slug && slug.trim()
+        ? generateSlug(slug)
+        : generateSlug(name);
+
     let finalSlug = baseSlug;
     let counter = 1;
 
-    // Make slug unique
+    /**
+     * |--------------------------------------------------------------------------
+     * | MAKE SLUG UNIQUE
+     * |--------------------------------------------------------------------------
+     */
+
     while (
       await prisma.clan.findUnique({
-        where: { slug: finalSlug },
+        where: {
+          slug: finalSlug,
+        },
       })
     ) {
-      finalSlug = `${baseSlug}-${counter}`;
+      finalSlug =
+        `${baseSlug}-${counter}`;
+
       counter++;
     }
 
-    const existingClanByName = await prisma.clan.findFirst({
-      where: {
-        name: {
-          equals: name.trim(),
-          mode: "insensitive",
+    /**
+     * |--------------------------------------------------------------------------
+     * | CHECK CLAN NAME
+     * |--------------------------------------------------------------------------
+     */
+
+    const existingClanByName =
+      await prisma.clan.findFirst({
+        where: {
+          name: {
+            equals: name.trim(),
+            mode: "insensitive",
+          },
         },
-      },
-    });
+      });
 
     if (existingClanByName) {
       return res.status(400).json({
         success: false,
-        message: "Clan name already exists",
+        message:
+          "Clan name already exists",
       });
     }
 
-    const clan = await prisma.$transaction(async (tx) => {
-      const createdClan = await tx.clan.create({
-        data: {
-          name: name.trim(),
-          slug: finalSlug,
-          description: description?.trim() || "",
-          logo: logo || null,
-          banner: banner || null,
-          country: country.trim(),
-          imageUrl: imageUrl?.trim() || null,
-          isPrivate: isPrivate ?? false,
-          captainId: userId,
-        },
-      });
+    /**
+     * |--------------------------------------------------------------------------
+     * | OPTIONAL CLAN IMAGE
+     * |--------------------------------------------------------------------------
+     */
 
-      await tx.clanMember.create({
-        data: {
-          clanId: createdClan.id,
-          userId,
-          role: "LEADER",
-        },
-      });
+    let clanImageUrl = null;
 
-      return createdClan;
-    });
+    if (req.file) {
+      const uploadedImage =
+        await uploadClanImageToS3(
+          req.file
+        );
+
+      if (uploadedImage) {
+        clanImageUrl =
+          uploadedImage.url;
+
+        uploadedImageKey =
+          uploadedImage.key;
+      }
+    }
+
+    /**
+     * |--------------------------------------------------------------------------
+     * | PARSE IS PRIVATE
+     * |--------------------------------------------------------------------------
+     *
+     * multipart/form-data sends values as strings.
+     */
+
+    let parsedIsPrivate = false;
+
+    if (typeof isPrivate === "boolean") {
+      parsedIsPrivate = isPrivate;
+    } else if (
+      typeof isPrivate === "string"
+    ) {
+      parsedIsPrivate =
+        isPrivate.toLowerCase() ===
+        "true";
+    }
+
+    /**
+     * |--------------------------------------------------------------------------
+     * | CREATE CLAN
+     * |--------------------------------------------------------------------------
+     */
+
+    const clan =
+      await prisma.$transaction(
+        async (tx) => {
+          const createdClan =
+            await tx.clan.create({
+              data: {
+                name: name.trim(),
+
+                slug: finalSlug,
+
+                description:
+                  description?.trim() ||
+                  "",
+
+                logo:
+                  logo?.trim() ||
+                  null,
+
+                banner:
+                  banner?.trim() ||
+                  null,
+
+                country:
+                  country.trim(),
+
+                /**
+                 * S3 IMAGE URL
+                 */
+                imageUrl:
+                  clanImageUrl,
+
+                isPrivate:
+                  parsedIsPrivate,
+
+                captainId:
+                  userId,
+              },
+            });
+
+          /**
+           * Automatically make creator
+           * the clan leader.
+           */
+          await tx.clanMember.create({
+            data: {
+              clanId:
+                createdClan.id,
+
+              userId,
+
+              role: "LEADER",
+            },
+          });
+
+          return createdClan;
+        }
+      );
+
+    /**
+     * |--------------------------------------------------------------------------
+     * | RESPONSE
+     * |--------------------------------------------------------------------------
+     */
 
     return res.status(201).json({
       success: true,
-      message: "Clan created successfully",
+
+      message:
+        "Clan created successfully",
+
       data: clan,
     });
   } catch (error) {
-    console.log("CREATE_CLAN_ERROR:", error);
+    console.error(
+      "CREATE_CLAN_ERROR:",
+      error
+    );
+
+    /**
+     * If image was successfully uploaded to S3,
+     * but clan creation failed, remove the orphaned
+     * image from S3.
+     */
+    if (uploadedImageKey) {
+      await deleteClanImageFromS3(
+        uploadedImageKey
+      );
+    }
 
     return res.status(500).json({
       success: false,
-      message: "Failed to create clan",
+
+      message:
+        "Failed to create clan",
+
+      error:
+        process.env.NODE_ENV ===
+        "development"
+          ? error.message
+          : undefined,
     });
   }
 };
-
 
 
 export const editClan = async (req, res) => {
