@@ -2,6 +2,7 @@
 import { Prisma } from "@prisma/client";
 import prisma from "../../config/prisma.js";
 import { sendClanEventInvitations } from "../clanEvent/clanEventEmail.service.js";
+import { sendFCMToUser } from "../../services/fcm.service.js";
 
 
 
@@ -2564,11 +2565,16 @@ const sendCurrentClanEventsToNewMember = async ({
 };
 
 
-
 export const joinClanDirectly = async (req, res) => {
   try {
     const userId = req.user.id;
     const { clanId } = req.params;
+
+    /**
+     * |--------------------------------------------------------------------------
+     * | VALIDATION
+     * |--------------------------------------------------------------------------
+     */
 
     if (!clanId?.trim()) {
       return res.status(400).json({
@@ -2576,6 +2582,12 @@ export const joinClanDirectly = async (req, res) => {
         message: "Clan ID is required",
       });
     }
+
+    /**
+     * |--------------------------------------------------------------------------
+     * | FIND CLAN
+     * |--------------------------------------------------------------------------
+     */
 
     const clan = await prisma.clan.findUnique({
       where: {
@@ -2598,24 +2610,31 @@ export const joinClanDirectly = async (req, res) => {
       });
     }
 
-    /*
+    /**
+     * |--------------------------------------------------------------------------
+     * | CHECK EXISTING MEMBERSHIP
+     * |--------------------------------------------------------------------------
+     *
      * A user can only belong to one clan.
      */
-    const existingMembership = await prisma.clanMember.findFirst({
-      where: {
-        userId,
-      },
 
-      select: {
-        id: true,
-        clanId: true,
-        role: true,
-      },
-    });
+    const existingMembership =
+      await prisma.clanMember.findFirst({
+        where: {
+          userId,
+        },
+
+        select: {
+          id: true,
+          clanId: true,
+          role: true,
+        },
+      });
 
     if (existingMembership) {
       return res.status(400).json({
         success: false,
+
         message:
           existingMembership.clanId === clanId
             ? "You are already a member of this clan"
@@ -2623,10 +2642,12 @@ export const joinClanDirectly = async (req, res) => {
       });
     }
 
-    /*
-     * Include the user's email because it will be used to send
-     * invitations for existing clan events.
+    /**
+     * |--------------------------------------------------------------------------
+     * | CREATE CLAN MEMBERSHIP
+     * |--------------------------------------------------------------------------
      */
+
     const member = await prisma.clanMember.create({
       data: {
         clanId,
@@ -2656,10 +2677,15 @@ export const joinClanDirectly = async (req, res) => {
       },
     });
 
-    /*
+    /**
+     * |--------------------------------------------------------------------------
+     * | SEND EXISTING EVENT EMAILS
+     * |--------------------------------------------------------------------------
+     *
      * Email failure must never cancel or undo the successful
      * clan membership creation.
      */
+
     let eventEmailResult = {
       eventsFound: 0,
       attempted: 0,
@@ -2677,9 +2703,132 @@ export const joinClanDirectly = async (req, res) => {
     } catch (emailError) {
       console.error(
         "JOIN_CLAN_EXISTING_EVENT_EMAIL_ERROR:",
-        emailError,
+        emailError
       );
     }
+
+    /**
+     * |--------------------------------------------------------------------------
+     * | FIND CURRENT / UPCOMING CLAN EVENTS
+     * |--------------------------------------------------------------------------
+     *
+     * Only upcoming events belonging to the clan the user
+     * just joined will be included.
+     */
+
+    const upcomingEvents =
+      await prisma.clanEvent.findMany({
+        where: {
+          clanId,
+
+          startsAt: {
+            gt: new Date(),
+          },
+        },
+
+        orderBy: {
+          startsAt: "asc",
+        },
+
+        select: {
+          id: true,
+          title: true,
+          description: true,
+          location: true,
+          startsAt: true,
+          endsAt: true,
+          maxParticipants: true,
+
+          clan: {
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+            },
+          },
+        },
+      });
+
+    /**
+     * |--------------------------------------------------------------------------
+     * | SEND EVENT NOTIFICATIONS TO NEW MEMBER
+     * |--------------------------------------------------------------------------
+     *
+     * Only the user who just joined receives these notifications.
+     *
+     * Notification failure must never undo clan membership.
+     */
+
+    let eventNotificationResult = {
+      eventsFound: upcomingEvents.length,
+      attempted: 0,
+      sent: 0,
+      failed: 0,
+    };
+
+    try {
+      const notificationResults =
+        await Promise.all(
+          upcomingEvents.map(async (event) => {
+            eventNotificationResult.attempted += 1;
+
+            const result = await sendFCMToUser({
+              userId,
+
+              title: `Upcoming Event in ${clan.name}`,
+
+              message: event.location
+                ? `${event.title} • ${event.location}`
+                : event.title,
+
+              data: {
+                type: "CLAN_EVENT_CREATED",
+                eventId: event.id,
+                clanId: clan.id,
+                title: event.title,
+              },
+            });
+
+            return {
+              eventId: event.id,
+              success: Boolean(result),
+            };
+          })
+        );
+
+      for (const result of notificationResults) {
+        if (result.success) {
+          eventNotificationResult.sent += 1;
+        } else {
+          eventNotificationResult.failed += 1;
+        }
+      }
+
+      console.log(
+        `Existing clan event notifications for user ${userId}:`,
+        {
+          eventsFound:
+            eventNotificationResult.eventsFound,
+          attempted:
+            eventNotificationResult.attempted,
+          sent:
+            eventNotificationResult.sent,
+          failed:
+            eventNotificationResult.failed,
+        }
+      );
+    } catch (notificationError) {
+      console.error(
+        "JOIN_CLAN_EXISTING_EVENT_NOTIFICATION_ERROR:",
+        notificationError
+      );
+    }
+
+    /**
+     * |--------------------------------------------------------------------------
+     * | CREATE EMAIL MESSAGE
+     * |--------------------------------------------------------------------------
+     */
 
     let eventInvitationMessage;
 
@@ -2696,33 +2845,91 @@ export const joinClanDirectly = async (req, res) => {
         "You joined successfully, but the existing event emails could not be sent";
     }
 
+    /**
+     * |--------------------------------------------------------------------------
+     * | CREATE NOTIFICATION MESSAGE
+     * |--------------------------------------------------------------------------
+     */
+
+    let eventNotificationMessage;
+
+    if (upcomingEvents.length === 0) {
+      eventNotificationMessage =
+        "The clan currently has no upcoming events";
+    } else if (eventNotificationResult.sent > 0) {
+      eventNotificationMessage =
+        eventNotificationResult.sent === 1
+          ? "You have been notified about 1 upcoming clan event"
+          : `You have been notified about ${eventNotificationResult.sent} upcoming clan events`;
+    } else {
+      eventNotificationMessage =
+        "You joined successfully, but event notifications could not be sent";
+    }
+
+    /**
+     * |--------------------------------------------------------------------------
+     * | RESPONSE
+     * |--------------------------------------------------------------------------
+     */
+
     return res.status(200).json({
       success: true,
+
       message: "Joined clan successfully",
+
       eventInvitationMessage,
+
+      eventNotificationMessage,
 
       data: member,
 
       eventEmails: {
-        eventsFound: eventEmailResult.eventsFound,
-        attempted: eventEmailResult.attempted,
-        sent: eventEmailResult.sent,
-        failed: eventEmailResult.failed,
+        eventsFound:
+          eventEmailResult.eventsFound,
+
+        attempted:
+          eventEmailResult.attempted,
+
+        sent:
+          eventEmailResult.sent,
+
+        failed:
+          eventEmailResult.failed,
+      },
+
+      eventNotifications: {
+        eventsFound:
+          eventNotificationResult.eventsFound,
+
+        attempted:
+          eventNotificationResult.attempted,
+
+        sent:
+          eventNotificationResult.sent,
+
+        failed:
+          eventNotificationResult.failed,
       },
     });
   } catch (error) {
-    console.error("JOIN_CLAN_DIRECTLY_ERROR:", error);
+    console.error(
+      "JOIN_CLAN_DIRECTLY_ERROR:",
+      error
+    );
 
     if (error?.code === "P2002") {
       return res.status(409).json({
         success: false,
-        message: "You are already a member of a clan",
+        message:
+          "You are already a member of a clan",
       });
     }
 
     return res.status(500).json({
       success: false,
+
       message: "Failed to join clan",
+
       error:
         process.env.NODE_ENV === "development"
           ? error.message
@@ -2730,9 +2937,6 @@ export const joinClanDirectly = async (req, res) => {
     });
   }
 };
-
-
-
 
 
 
