@@ -6081,191 +6081,557 @@ export const getLifetimeActivityStats = async (req, res) => {
   try {
     const userId = req.user.id;
 
+    // =========================================================
+    // HELPERS
+    // =========================================================
+
     const round = (value, decimals = 2) => {
       const number = Number(value ?? 0);
+
+      if (!Number.isFinite(number)) {
+        return 0;
+      }
+
       return Number(number.toFixed(decimals));
     };
 
-    const activities = await prisma.activity.findMany({
-      where: {
-        userId,
-      },
-      orderBy: {
-        startedAt: 'asc',
-      },
-      select: {
-        id: true,
-        mode: true,
-        distanceKm: true,
-        durationSec: true,
-        movingTime: true,
-        calories: true,
-        elevationGain: true,
-        startedAt: true,
-        endedAt: true,
-      },
-    });
+    const normalizeMode = (mode) => {
+      const value = String(mode ?? "")
+        .trim()
+        .toLowerCase();
 
-    const formattedActivities = activities.map((activity) => {
-      const movingTimeSec = Math.max(0, Number(activity.movingTime ?? 0));
+      if (value === "run" || value === "running") {
+        return "Run";
+      }
 
-      return {
-        id: activity.id,
-        mode: activity.mode,
-        distanceKm: round(activity.distanceKm, 3),
-        durationSec: Number(activity.durationSec ?? 0),
-        movingTimeSec,
-        calories: round(activity.calories, 0),
-        elevationGainM: round(activity.elevationGain, 1),
-        startedAt: activity.startedAt,
-        endedAt: activity.endedAt,
-      };
-    });
+      if (value === "walk" || value === "walking") {
+        return "Walk";
+      }
 
-    const totalDistanceKm = formattedActivities.reduce(
-      (sum, activity) => sum + activity.distanceKm,
-      0
-    );
+      if (
+        value === "cycle" ||
+        value === "cycling" ||
+        value === "bike" ||
+        value === "biking"
+      ) {
+        return "Cycle";
+      }
 
-    const totalDurationSec = formattedActivities.reduce(
-      (sum, activity) => sum + activity.durationSec,
-      0
-    );
+      return mode || "Unknown";
+    };
 
-    const totalMovingTimeSec = formattedActivities.reduce(
-      (sum, activity) => sum + activity.movingTimeSec,
-      0
-    );
+    // =========================================================
+    // CALCULATE STATS FOR ONE ACTIVITY TYPE
+    // =========================================================
 
-    const totalCalories = formattedActivities.reduce(
-      (sum, activity) => sum + activity.calories,
-      0
-    );
+    const calculateStats = (activities) => {
+      if (!activities.length) {
+        return {
+          summary: {
+            activities: 0,
+            activeDays: 0,
+            distanceKm: 0,
+            durationSec: 0,
+            movingTimeSec: 0,
+            calories: 0,
+            elevationGainM: 0,
+          },
 
-    const totalElevationGainM = formattedActivities.reduce(
-      (sum, activity) => sum + activity.elevationGainM,
-      0
-    );
+          averages: {
+            distancePerActivityKm: 0,
+            distancePerActiveDayKm: 0,
+            paceMinPerKm: 0,
+            speedKmh: 0,
+          },
 
-    const activeDaySet = new Set();
+          records: {
+            longestActivity: null,
+            fastestActivity: null,
+          },
 
-    formattedActivities.forEach((activity) => {
-      if (activity.startedAt) {
-        const dateKey = new Date(activity.startedAt)
+          activityPeriod: {
+            firstActivity: null,
+            latestActivity: null,
+          },
+
+          activeDays: [],
+
+          activities: [],
+        };
+      }
+
+      // ---------------------------------------------------------
+      // TOTALS
+      // ---------------------------------------------------------
+
+      const totalDistanceKm = activities.reduce(
+        (sum, activity) =>
+          sum + Number(activity.distanceKm ?? 0),
+        0
+      );
+
+      const totalDurationSec = activities.reduce(
+        (sum, activity) =>
+          sum + Number(activity.durationSec ?? 0),
+        0
+      );
+
+      const totalMovingTimeSec = activities.reduce(
+        (sum, activity) =>
+          sum + Number(activity.movingTimeSec ?? 0),
+        0
+      );
+
+      const totalCalories = activities.reduce(
+        (sum, activity) =>
+          sum + Number(activity.calories ?? 0),
+        0
+      );
+
+      const totalElevationGainM = activities.reduce(
+        (sum, activity) =>
+          sum + Number(activity.elevationGainM ?? 0),
+        0
+      );
+
+      // ---------------------------------------------------------
+      // ACTIVE DAYS
+      // ---------------------------------------------------------
+
+      const activeDaySet = new Set();
+
+      activities.forEach((activity) => {
+        if (!activity.startedAt) {
+          return;
+        }
+
+        const date = new Date(activity.startedAt);
+
+        if (Number.isNaN(date.getTime())) {
+          return;
+        }
+
+        const dateKey = date
           .toISOString()
           .slice(0, 10);
 
         activeDaySet.add(dateKey);
-      }
-    });
+      });
 
-    const activeDays = [...activeDaySet].sort();
+      const activeDays = [...activeDaySet].sort();
 
-    let longestRun = null;
-    let fastestRun = null;
+      // ---------------------------------------------------------
+      // RECORDS
+      // ---------------------------------------------------------
 
-    formattedActivities.forEach((activity) => {
-      const distance = Number(activity.distanceKm ?? 0);
-      const movingTimeSec = Number(activity.movingTimeSec ?? 0);
+      let longestActivity = null;
+      let fastestActivity = null;
 
-      if (!longestRun || distance > longestRun.distanceKm) {
-        longestRun = activity;
-      }
+      activities.forEach((activity) => {
+        const distanceKm = Number(
+          activity.distanceKm ?? 0
+        );
 
-      if (distance > 0 && movingTimeSec > 0) {
-        const paceMinPerKm = movingTimeSec / 60 / distance;
+        const movingTimeSec = Number(
+          activity.movingTimeSec ?? 0
+        );
 
-        if (!fastestRun || paceMinPerKm < fastestRun.paceMinPerKm) {
-          fastestRun = {
-            ...activity,
-            paceMinPerKm: round(paceMinPerKm, 2),
-          };
+        // LONGEST
+        if (
+          distanceKm > 0 &&
+          (
+            !longestActivity ||
+            distanceKm >
+              longestActivity.distanceKm
+          )
+        ) {
+          longestActivity = activity;
         }
-      }
-    });
 
-    const firstActivity =
-      formattedActivities.length > 0
-        ? formattedActivities[0].startedAt
-        : null;
+        // FASTEST
+        if (
+          distanceKm > 0 &&
+          movingTimeSec > 0
+        ) {
+          const paceMinPerKm =
+            movingTimeSec /
+            60 /
+            distanceKm;
 
-    const latestActivity =
-      formattedActivities.length > 0
-        ? formattedActivities[formattedActivities.length - 1].startedAt
-        : null;
+          const speedKmh =
+            distanceKm /
+            (movingTimeSec / 3600);
+
+          if (
+            !fastestActivity ||
+            paceMinPerKm <
+              fastestActivity.paceMinPerKm
+          ) {
+            fastestActivity = {
+              ...activity,
+
+              paceMinPerKm: round(
+                paceMinPerKm,
+                2
+              ),
+
+              speedKmh: round(
+                speedKmh,
+                2
+              ),
+            };
+          }
+        }
+      });
+
+      // ---------------------------------------------------------
+      // AVERAGE PACE
+      // ---------------------------------------------------------
+
+      const averagePaceMinPerKm =
+        totalDistanceKm > 0 &&
+        totalMovingTimeSec > 0
+          ? totalMovingTimeSec /
+            60 /
+            totalDistanceKm
+          : 0;
+
+      // ---------------------------------------------------------
+      // AVERAGE SPEED
+      // ---------------------------------------------------------
+
+      const averageSpeedKmh =
+        totalDistanceKm > 0 &&
+        totalMovingTimeSec > 0
+          ? totalDistanceKm /
+            (totalMovingTimeSec / 3600)
+          : 0;
+
+      // ---------------------------------------------------------
+      // FIRST + LATEST ACTIVITY
+      // ---------------------------------------------------------
+
+      const firstActivity =
+        activities.length > 0
+          ? activities[0].startedAt
+          : null;
+
+      const latestActivity =
+        activities.length > 0
+          ? activities[
+              activities.length - 1
+            ].startedAt
+          : null;
+
+      // ---------------------------------------------------------
+      // RETURN
+      // ---------------------------------------------------------
+
+      return {
+        summary: {
+          activities: activities.length,
+
+          activeDays: activeDays.length,
+
+          distanceKm: round(
+            totalDistanceKm,
+            3
+          ),
+
+          durationSec:
+            totalDurationSec,
+
+          movingTimeSec:
+            totalMovingTimeSec,
+
+          calories: round(
+            totalCalories,
+            0
+          ),
+
+          elevationGainM: round(
+            totalElevationGainM,
+            1
+          ),
+        },
+
+        averages: {
+          distancePerActivityKm:
+            activities.length > 0
+              ? round(
+                  totalDistanceKm /
+                    activities.length,
+                  3
+                )
+              : 0,
+
+          distancePerActiveDayKm:
+            activeDays.length > 0
+              ? round(
+                  totalDistanceKm /
+                    activeDays.length,
+                  3
+                )
+              : 0,
+
+          paceMinPerKm: round(
+            averagePaceMinPerKm,
+            2
+          ),
+
+          speedKmh: round(
+            averageSpeedKmh,
+            2
+          ),
+        },
+
+        records: {
+          longestActivity:
+            longestActivity
+              ? {
+                  id:
+                    longestActivity.id,
+
+                  distanceKm:
+                    longestActivity.distanceKm,
+
+                  date:
+                    longestActivity.startedAt,
+                }
+              : null,
+
+          fastestActivity:
+            fastestActivity
+              ? {
+                  id:
+                    fastestActivity.id,
+
+                  paceMinPerKm:
+                    fastestActivity.paceMinPerKm,
+
+                  speedKmh:
+                    fastestActivity.speedKmh,
+
+                  distanceKm:
+                    fastestActivity.distanceKm,
+
+                  date:
+                    fastestActivity.startedAt,
+                }
+              : null,
+        },
+
+        activityPeriod: {
+          firstActivity,
+          latestActivity,
+        },
+
+        activeDays,
+
+        activities,
+      };
+    };
+
+    // =========================================================
+    // FETCH ALL USER ACTIVITIES
+    // =========================================================
+
+    const activities =
+      await prisma.activity.findMany({
+        where: {
+          userId,
+        },
+
+        orderBy: {
+          startedAt: "asc",
+        },
+
+        select: {
+          id: true,
+          mode: true,
+          distanceKm: true,
+          durationSec: true,
+          movingTime: true,
+          calories: true,
+          elevationGain: true,
+          startedAt: true,
+          endedAt: true,
+        },
+      });
+
+    // =========================================================
+    // FORMAT ACTIVITIES
+    // =========================================================
+
+    const formattedActivities =
+      activities.map((activity) => {
+        const distanceKm = Math.max(
+          0,
+          Number(
+            activity.distanceKm ?? 0
+          )
+        );
+
+        const durationSec = Math.max(
+          0,
+          Number(
+            activity.durationSec ?? 0
+          )
+        );
+
+        const movingTimeSec =
+          Math.max(
+            0,
+            Number(
+              activity.movingTime ?? 0
+            )
+          );
+
+        const paceMinPerKm =
+          distanceKm > 0 &&
+          movingTimeSec > 0
+            ? movingTimeSec /
+              60 /
+              distanceKm
+            : 0;
+
+        const speedKmh =
+          distanceKm > 0 &&
+          movingTimeSec > 0
+            ? distanceKm /
+              (movingTimeSec / 3600)
+            : 0;
+
+        return {
+          id: activity.id,
+
+          mode: normalizeMode(
+            activity.mode
+          ),
+
+          distanceKm: round(
+            distanceKm,
+            3
+          ),
+
+          durationSec,
+
+          movingTimeSec,
+
+          paceMinPerKm: round(
+            paceMinPerKm,
+            2
+          ),
+
+          speedKmh: round(
+            speedKmh,
+            2
+          ),
+
+          calories: round(
+            activity.calories,
+            0
+          ),
+
+          elevationGainM: round(
+            activity.elevationGain,
+            1
+          ),
+
+          startedAt:
+            activity.startedAt,
+
+          endedAt:
+            activity.endedAt,
+        };
+      });
+
+    // =========================================================
+    // SEPARATE RUN / WALK / CYCLE
+    // =========================================================
+
+    const runActivities =
+      formattedActivities.filter(
+        (activity) =>
+          activity.mode === "Run"
+      );
+
+    const walkActivities =
+      formattedActivities.filter(
+        (activity) =>
+          activity.mode === "Walk"
+      );
+
+    const cycleActivities =
+      formattedActivities.filter(
+        (activity) =>
+          activity.mode === "Cycle"
+      );
+
+    // =========================================================
+    // CALCULATE STATS
+    // =========================================================
+
+    const overallStats =
+      calculateStats(
+        formattedActivities
+      );
+
+    const runStats =
+      calculateStats(
+        runActivities
+      );
+
+    const walkStats =
+      calculateStats(
+        walkActivities
+      );
+
+    const cycleStats =
+      calculateStats(
+        cycleActivities
+      );
+
+    // =========================================================
+    // RESPONSE
+    // =========================================================
 
     return res.status(200).json({
       success: true,
-      message: 'Lifetime activity stats loaded',
 
-      summary: {
-        activities: formattedActivities.length,
-        activeDays: activeDays.length,
-        distanceKm: round(totalDistanceKm, 3),
-        durationSec: totalDurationSec,
-        movingTimeSec: totalMovingTimeSec,
-        calories: round(totalCalories, 0),
-        elevationGainM: round(totalElevationGainM, 1),
+      message:
+        "Lifetime activity stats loaded",
+
+      overall: overallStats,
+
+      activityTypes: {
+        Run: runStats,
+        Walk: walkStats,
+        Cycle: cycleStats,
       },
-
-      averages: {
-        distancePerActivityKm:
-          formattedActivities.length > 0
-            ? round(totalDistanceKm / formattedActivities.length, 3)
-            : 0,
-
-        distancePerActiveDayKm:
-          activeDays.length > 0
-            ? round(totalDistanceKm / activeDays.length, 3)
-            : 0,
-
-        paceMinPerKm:
-          totalDistanceKm > 0 && totalMovingTimeSec > 0
-            ? round(totalMovingTimeSec / 60 / totalDistanceKm, 2)
-            : 0,
-      },
-
-      records: {
-        longestRun: longestRun
-          ? {
-            id: longestRun.id,
-            distanceKm: longestRun.distanceKm,
-            date: longestRun.startedAt,
-          }
-          : null,
-
-        fastestRun: fastestRun
-          ? {
-            id: fastestRun.id,
-            paceMinPerKm: fastestRun.paceMinPerKm,
-            distanceKm: fastestRun.distanceKm,
-            date: fastestRun.startedAt,
-          }
-          : null,
-      },
-
-      activityPeriod: {
-        firstActivity,
-        latestActivity,
-      },
-
-      activeDays,
-
-      activities: formattedActivities,
     });
   } catch (error) {
-    console.error('GET_LIFETIME_ACTIVITY_STATS ERROR:', error);
+    console.error(
+      "GET_LIFETIME_ACTIVITY_STATS ERROR:",
+      error
+    );
 
     return res.status(500).json({
       success: false,
-      message: 'Failed to fetch lifetime activity stats',
+
+      message:
+        "Failed to fetch lifetime activity stats",
+
       error:
-        process.env.NODE_ENV === 'development'
+        process.env.NODE_ENV ===
+        "development"
           ? error.message
           : undefined,
     });
   }
 };
+
+
 
 
 export const getActivityGraphStats = async (req, res) => {
