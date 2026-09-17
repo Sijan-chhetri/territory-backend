@@ -2637,8 +2637,8 @@ export const joinClanDirectly = async (req, res) => {
 
         message:
           existingMembership.clanId === clanId
-            ? "You are already a member of this clan"
-            : "You are already a member of another clan",
+            ? "You are already a member of this club"
+            : "You are already a member of another club",
       });
     }
 

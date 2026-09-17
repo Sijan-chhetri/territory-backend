@@ -157,7 +157,7 @@ export const createManualClubWar = async (req, res) => {
     if (!myClanMember) {
       return res.status(403).json({
         success: false,
-        message: "Only the clan leader can challenge another clan.",
+        message: "Only the clan leader can challenge another club.",
       });
     }
 
@@ -166,7 +166,7 @@ export const createManualClubWar = async (req, res) => {
     if (challengerClanId === opponentClanId) {
       return res.status(400).json({
         success: false,
-        message: "You cannot challenge your own clan.",
+        message: "You cannot challenge your own club.",
       });
     }
 
