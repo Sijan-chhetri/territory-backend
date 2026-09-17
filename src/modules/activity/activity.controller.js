@@ -5034,122 +5034,492 @@ export const getWeeklyActivityStats = async (req, res) => {
   try {
     const userId = req.user.id;
 
+    // =========================================================
+    // FIND WEEK START
+    // Sunday -> Saturday
+    // =========================================================
+
     let weekStart;
 
     if (req.query.weekStart) {
       weekStart = new Date(req.query.weekStart);
+
+      if (Number.isNaN(weekStart.getTime())) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid weekStart date",
+        });
+      }
     } else {
       const today = new Date();
-      const day = today.getDay();
-      const diff = day === 0 ? -6 : 1 - day;
 
       weekStart = new Date(today);
-      weekStart.setDate(today.getDate() + diff);
+
+      // getDay():
+      // Sunday = 0
+      // Monday = 1
+      // Tuesday = 2
+      // ...
+      // Saturday = 6
+      weekStart.setDate(
+        today.getDate() - today.getDay(),
+      );
     }
 
     weekStart.setHours(0, 0, 0, 0);
 
+    // =========================================================
+    // WEEK END
+    // =========================================================
+
     const weekEnd = new Date(weekStart);
-    weekEnd.setDate(weekStart.getDate() + 6);
-    weekEnd.setHours(23, 59, 59, 999);
 
-    const activities = await prisma.activity.findMany({
-      where: {
-        userId,
-        startedAt: {
-          gte: weekStart,
-          lte: weekEnd,
+    weekEnd.setDate(
+      weekStart.getDate() + 6,
+    );
+
+    weekEnd.setHours(
+      23,
+      59,
+      59,
+      999,
+    );
+
+    // =========================================================
+    // GET ALL ACTIVITIES FROM THIS WEEK
+    // =========================================================
+
+    const activities =
+      await prisma.activity.findMany({
+        where: {
+          userId,
+
+          startedAt: {
+            gte: weekStart,
+            lte: weekEnd,
+          },
         },
-      },
-      orderBy: {
-        startedAt: 'asc',
-      },
-      select: {
-        id: true,
-        mode: true,
-        distanceKm: true,
-        durationSec: true,
-        movingTime: true,
-        startedAt: true,
-        endedAt: true,
-      },
-    });
 
-    const totalDistanceKm = activities.reduce(
-      (sum, activity) => sum + Number(activity.distanceKm ?? 0),
-      0
-    );
+        orderBy: {
+          startedAt: "asc",
+        },
 
-    const totalDurationSec = activities.reduce(
-      (sum, activity) => sum + Number(activity.durationSec ?? 0),
-      0
-    );
+        select: {
+          id: true,
+          mode: true,
+          distanceKm: true,
+          durationSec: true,
+          movingTime: true,
 
-    const totalMovingTimeSec = activities.reduce(
-      (sum, activity) => sum + Number(activity.movingTime ?? 0),
-      0
-    );
+          // Add these if they exist in your Activity model
+          avgPace: true,
+          avgSpeed: true,
+          topSpeed: true,
+          calories: true,
 
-    // Count one active day only once
+          startedAt: true,
+          endedAt: true,
+        },
+      });
+
+    // =========================================================
+    // HELPERS
+    // =========================================================
+
+    const getDateKey = (dateValue) => {
+      const date = new Date(dateValue);
+
+      const year = date.getFullYear();
+
+      const month = String(
+        date.getMonth() + 1,
+      ).padStart(2, "0");
+
+      const day = String(
+        date.getDate(),
+      ).padStart(2, "0");
+
+      return `${year}-${month}-${day}`;
+    };
+
+    const getDayName = (date) => {
+      return date.toLocaleDateString(
+        "en-US",
+        {
+          weekday: "long",
+        },
+      );
+    };
+
+    // =========================================================
+    // TOTAL WEEKLY STATS
+    // =========================================================
+
+    const totalDistanceKm =
+      activities.reduce(
+        (sum, activity) =>
+          sum +
+          Number(
+            activity.distanceKm ?? 0,
+          ),
+        0,
+      );
+
+    const totalDurationSec =
+      activities.reduce(
+        (sum, activity) =>
+          sum +
+          Number(
+            activity.durationSec ?? 0,
+          ),
+        0,
+      );
+
+    const totalMovingTimeSec =
+      activities.reduce(
+        (sum, activity) =>
+          sum +
+          Number(
+            activity.movingTime ?? 0,
+          ),
+        0,
+      );
+
+    const totalCalories =
+      activities.reduce(
+        (sum, activity) =>
+          sum +
+          Number(
+            activity.calories ?? 0,
+          ),
+        0,
+      );
+
+    // =========================================================
+    // ACTIVE DAYS
+    // =========================================================
+
     const activeDaySet = new Set();
 
-    activities.forEach((activity) => {
-      const dateKey = new Date(activity.startedAt).toISOString().slice(0, 10);
-      activeDaySet.add(dateKey);
-    });
+    activities.forEach(
+      (activity) => {
+        activeDaySet.add(
+          getDateKey(
+            activity.startedAt,
+          ),
+        );
+      },
+    );
 
-    const activeDays = [...activeDaySet].sort();
+    const activeDays = [
+      ...activeDaySet,
+    ].sort();
 
-    // Streak inside selected week based on startedAt
+    // =========================================================
+    // STREAK
+    // =========================================================
+
     let currentStreak = 0;
     let maxStreak = 0;
 
-    for (let i = 0; i < 7; i++) {
-      const day = new Date(weekStart);
-      day.setDate(weekStart.getDate() + i);
+    for (
+      let i = 0;
+      i < 7;
+      i++
+    ) {
+      const day = new Date(
+        weekStart,
+      );
 
-      const dateKey = day.toISOString().slice(0, 10);
+      day.setDate(
+        weekStart.getDate() + i,
+      );
 
-      if (activeDaySet.has(dateKey)) {
+      const dateKey =
+        getDateKey(day);
+
+      if (
+        activeDaySet.has(dateKey)
+      ) {
         currentStreak++;
-        maxStreak = Math.max(maxStreak, currentStreak);
+
+        maxStreak = Math.max(
+          maxStreak,
+          currentStreak,
+        );
       } else {
         currentStreak = 0;
       }
     }
 
-    return res.status(200).json({
-      success: true,
-      message: 'Weekly activity stats loaded',
-      week: {
-        start: weekStart,
-        end: weekEnd,
-      },
-      stats: {
-        totalActivities: activities.length,
-        totalActiveDays: activeDays.length,
-        streak: maxStreak,
-        totalDistanceKm,
-        totalDurationSec,
-        totalMovingTimeSec,
-      },
-      activeDays,
-      activities,
-    });
-  } catch (error) {
-    console.error('GET_WEEKLY_ACTIVITY_STATS ERROR:', error);
+    // =========================================================
+    // DAILY BREAKDOWN
+    //
+    // Sunday
+    // Monday
+    // Tuesday
+    // Wednesday
+    // Thursday
+    // Friday
+    // Saturday
+    // =========================================================
 
-    return res.status(500).json({
-      success: false,
-      message: 'Failed to fetch weekly activity stats',
-      error:
-        process.env.NODE_ENV === 'development'
-          ? error.message
-          : undefined,
-    });
+    const dailyStats = [];
+
+    for (
+      let i = 0;
+      i < 7;
+      i++
+    ) {
+      const day = new Date(
+        weekStart,
+      );
+
+      day.setDate(
+        weekStart.getDate() + i,
+      );
+
+      day.setHours(
+        0,
+        0,
+        0,
+        0,
+      );
+
+      const dateKey =
+        getDateKey(day);
+
+      // =======================================================
+      // ACTIVITIES FOR THIS DAY
+      // =======================================================
+
+      const dayActivities =
+        activities.filter(
+          (activity) =>
+            getDateKey(
+              activity.startedAt,
+            ) === dateKey,
+        );
+
+      // =======================================================
+      // DAY TOTAL DISTANCE
+      // =======================================================
+
+      const dayDistanceKm =
+        dayActivities.reduce(
+          (sum, activity) =>
+            sum +
+            Number(
+              activity.distanceKm ??
+                0,
+            ),
+          0,
+        );
+
+      // =======================================================
+      // DAY TOTAL DURATION
+      // =======================================================
+
+      const dayDurationSec =
+        dayActivities.reduce(
+          (sum, activity) =>
+            sum +
+            Number(
+              activity.durationSec ??
+                0,
+            ),
+          0,
+        );
+
+      // =======================================================
+      // DAY MOVING TIME
+      // =======================================================
+
+      const dayMovingTimeSec =
+        dayActivities.reduce(
+          (sum, activity) =>
+            sum +
+            Number(
+              activity.movingTime ??
+                0,
+            ),
+          0,
+        );
+
+      // =======================================================
+      // DAY CALORIES
+      // =======================================================
+
+      const dayCalories =
+        dayActivities.reduce(
+          (sum, activity) =>
+            sum +
+            Number(
+              activity.calories ??
+                0,
+            ),
+          0,
+        );
+
+      // =======================================================
+      // AVG PACE FOR DAY
+      //
+      // Calculate from distance + moving time instead of
+      // averaging individual activity pace values.
+      // =======================================================
+
+      let averagePace = 0;
+
+      if (
+        dayDistanceKm > 0 &&
+        dayMovingTimeSec > 0
+      ) {
+        averagePace =
+          dayMovingTimeSec /
+          60 /
+          dayDistanceKm;
+      }
+
+      // =======================================================
+      // AVG SPEED FOR DAY
+      // =======================================================
+
+      let averageSpeed = 0;
+
+      if (
+        dayDistanceKm > 0 &&
+        dayMovingTimeSec > 0
+      ) {
+        averageSpeed =
+          dayDistanceKm /
+          (dayMovingTimeSec /
+            3600);
+      }
+
+      dailyStats.push({
+        day: getDayName(day),
+
+        date: dateKey,
+
+        isActive:
+          dayActivities.length > 0,
+
+        stats: {
+          totalActivities:
+            dayActivities.length,
+
+          totalDistanceKm:
+            Number(
+              dayDistanceKm.toFixed(
+                2,
+              ),
+            ),
+
+          totalDurationSec:
+            dayDurationSec,
+
+          totalMovingTimeSec:
+            dayMovingTimeSec,
+
+          calories:
+            Math.round(
+              dayCalories,
+            ),
+
+          averagePace:
+            Number(
+              averagePace.toFixed(
+                2,
+              ),
+            ),
+
+          averageSpeed:
+            Number(
+              averageSpeed.toFixed(
+                2,
+              ),
+            ),
+        },
+
+        // Actual activities performed this day
+        activities:
+          dayActivities,
+      });
+    }
+
+    // =========================================================
+    // RESPONSE
+    // =========================================================
+
+    return res
+      .status(200)
+      .json({
+        success: true,
+
+        message:
+          "Weekly activity stats loaded",
+
+        week: {
+          start: weekStart,
+          end: weekEnd,
+        },
+
+        stats: {
+          totalActivities:
+            activities.length,
+
+          totalActiveDays:
+            activeDays.length,
+
+          streak: maxStreak,
+
+          totalDistanceKm:
+            Number(
+              totalDistanceKm.toFixed(
+                2,
+              ),
+            ),
+
+          totalDurationSec,
+
+          totalMovingTimeSec,
+
+          totalCalories:
+            Math.round(
+              totalCalories,
+            ),
+        },
+
+        activeDays,
+
+        // Sunday -> Saturday with individual activities
+        dailyStats,
+
+        // Keep full weekly list too
+        activities,
+      });
+  } catch (error) {
+    console.error(
+      "GET_WEEKLY_ACTIVITY_STATS ERROR:",
+      error,
+    );
+
+    return res
+      .status(500)
+      .json({
+        success: false,
+
+        message:
+          "Failed to fetch weekly activity stats",
+
+        error:
+          process.env.NODE_ENV ===
+          "development"
+            ? error.message
+            : undefined,
+      });
   }
 };
-
 
 // ─────────────────────────────────────────────
 // Get Personal Records
