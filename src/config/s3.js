@@ -14,17 +14,13 @@ import path from "path";
 // ======================================================
 
 const endpoint = process.env.S3_ENDPOINT;
-const region =
-  process.env.S3_REGION || "us-east-1";
+const region = process.env.S3_REGION || "us-east-1";
 
-const accessKey =
-  process.env.S3_ACCESS_KEY;
+const accessKey = process.env.S3_ACCESS_KEY;
 
-const secretKey =
-  process.env.S3_SECRET_KEY;
+const secretKey = process.env.S3_SECRET_KEY;
 
-const bucketName =
-  process.env.S3_BUCKET_NAME;
+const bucketName = process.env.S3_BUCKET_NAME;
 
 // ======================================================
 // VALIDATE CONFIG
@@ -39,27 +35,19 @@ console.log("S3 CONFIG CHECK:", {
 });
 
 if (!endpoint) {
-  throw new Error(
-    "Missing S3_ENDPOINT environment variable"
-  );
+  throw new Error("Missing S3_ENDPOINT environment variable");
 }
 
 if (!bucketName) {
-  throw new Error(
-    "Missing S3_BUCKET_NAME environment variable"
-  );
+  throw new Error("Missing S3_BUCKET_NAME environment variable");
 }
 
 if (!accessKey) {
-  throw new Error(
-    "Missing S3_ACCESS_KEY environment variable"
-  );
+  throw new Error("Missing S3_ACCESS_KEY environment variable");
 }
 
 if (!secretKey) {
-  throw new Error(
-    "Missing S3_SECRET_KEY environment variable"
-  );
+  throw new Error("Missing S3_SECRET_KEY environment variable");
 }
 
 // ======================================================
@@ -111,14 +99,7 @@ const getExtension = (file) => {
     .replace(".", "")
     .toLowerCase();
 
-  const allowedExtensions = [
-    "jpg",
-    "jpeg",
-    "png",
-    "webp",
-    "heic",
-    "heif",
-  ];
+  const allowedExtensions = ["jpg", "jpeg", "png", "webp", "heic", "heif"];
 
   if (allowedExtensions.includes(extension)) {
     return extension;
@@ -130,10 +111,7 @@ const getExtension = (file) => {
 const getContentType = (file, extension) => {
   // If Flutter sent a real image MIME type,
   // use it directly.
-  if (
-    file.mimetype &&
-    file.mimetype.startsWith("image/")
-  ) {
+  if (file.mimetype && file.mimetype.startsWith("image/")) {
     return file.mimetype;
   }
 
@@ -165,85 +143,77 @@ const getContentType = (file, extension) => {
 // UPLOAD CLAN IMAGE
 // ======================================================
 
-export const uploadClanImageToS3 =
-  async (file) => {
-    if (!file) {
-      return null;
-    }
+export const uploadClanImageToS3 = async (file) => {
+  if (!file) {
+    return null;
+  }
 
-    const extension =
-      getExtension(file);
+  const extension = getExtension(file);
 
-    const contentType =
-      getContentType(
-        file,
-        extension
-      );
+  const contentType = getContentType(file, extension);
 
-    const key =
-      `clans/images/${Date.now()}-${crypto.randomUUID()}.${extension}`;
+  const key = `clans/images/${Date.now()}-${crypto.randomUUID()}.${extension}`;
 
-    console.log("S3 UPLOAD:", {
-      bucket: bucketName,
-      key,
-      originalName: file.originalname,
-      incomingMimeType: file.mimetype,
-      storedContentType: contentType,
-      size: file.size,
-    });
+  console.log("S3 UPLOAD:", {
+    bucket: bucketName,
+    key,
+    originalName: file.originalname,
+    incomingMimeType: file.mimetype,
+    storedContentType: contentType,
+    size: file.size,
+  });
 
-    await s3.send(
-      new PutObjectCommand({
-        Bucket: bucketName,
-        Key: key,
-        Body: file.buffer,
-        ContentType: contentType,
-      })
-    );
+  // await s3.send(
+  //   new PutObjectCommand({
+  //     Bucket: bucketName,
+  //     Key: key,
+  //     Body: file.buffer,
+  //     ContentType: contentType,
+  //   })
+  // );
+  await s3.send(
+    new PutObjectCommand({
+      Bucket: bucketName,
+      Key: key,
+      Body: file.buffer,
+      ContentType: contentType,
 
-    const cleanEndpoint =
-      endpoint.replace(/\/$/, "");
+      // Club logos need to be readable by the mobile app
+      ACL: "public-read",
+    }),
+  );
 
-    const imageUrl =
-      `${cleanEndpoint}/${bucketName}/${key}`;
+  const cleanEndpoint = endpoint.replace(/\/$/, "");
 
-    console.log(
-      "CLAN_IMAGE_UPLOADED:",
-      imageUrl
-    );
+  const imageUrl = `${cleanEndpoint}/${bucketName}/${key}`;
 
-    return {
-      key,
-      url: imageUrl,
-    };
+  console.log("CLAN_IMAGE_UPLOADED:", imageUrl);
+
+  return {
+    key,
+    url: imageUrl,
   };
+};
 
 // ======================================================
 // DELETE CLAN IMAGE
 // ======================================================
 
-export const deleteClanImageFromS3 =
-  async (key) => {
-    if (!key) {
-      return;
-    }
+export const deleteClanImageFromS3 = async (key) => {
+  if (!key) {
+    return;
+  }
 
-    try {
-      await s3.send(
-        new DeleteObjectCommand({
-          Bucket: bucketName,
-          Key: key,
-        })
-      );
+  try {
+    await s3.send(
+      new DeleteObjectCommand({
+        Bucket: bucketName,
+        Key: key,
+      }),
+    );
 
-      console.log(
-        "CLAN_IMAGE_DELETED:",
-        key
-      );
-    } catch (error) {
-      console.error(
-        "DELETE_CLAN_IMAGE_ERROR:",
-        error
-      );
-    }
-  };
+    console.log("CLAN_IMAGE_DELETED:", key);
+  } catch (error) {
+    console.error("DELETE_CLAN_IMAGE_ERROR:", error);
+  }
+};

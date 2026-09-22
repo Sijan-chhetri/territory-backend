@@ -1,10 +1,7 @@
-
 import { Prisma } from "@prisma/client";
 import prisma from "../../config/prisma.js";
 import { sendClanEventInvitations } from "../clanEvent/clanEventEmail.service.js";
 import { sendFCMToUser } from "../../config/fcm.service.js";
-
-
 
 /**
  * |--------------------------------------------------------------------------
@@ -14,7 +11,6 @@ import { sendFCMToUser } from "../../config/fcm.service.js";
 
 export const getClanJoinRequests = async (req, res) => {
   try {
-
     const currentUserId = req.user.id;
 
     const { clanId } = req.params;
@@ -22,14 +18,14 @@ export const getClanJoinRequests = async (req, res) => {
     // check clan exists
     const clan = await prisma.clan.findUnique({
       where: {
-        id: clanId
-      }
+        id: clanId,
+      },
     });
 
     if (!clan) {
       return res.status(404).json({
         success: false,
-        message: "Clan not found"
+        message: "Clan not found",
       });
     }
 
@@ -40,21 +36,21 @@ export const getClanJoinRequests = async (req, res) => {
       where: {
         clanId,
         userId: currentUserId,
-        role: "LEADER"
-      }
+        role: "LEADER",
+      },
     });
 
     if (!isCaptain && !isLeader) {
       return res.status(403).json({
         success: false,
-        message: "Unauthorized"
+        message: "Unauthorized",
       });
     }
 
     const requests = await prisma.clanJoinRequest.findMany({
       where: {
         clanId,
-        status: "PENDING"
+        status: "PENDING",
       },
       include: {
         user: {
@@ -63,33 +59,27 @@ export const getClanJoinRequests = async (req, res) => {
             username: true,
             fullName: true,
             // profilePicture: true,
-          }
-        }
+          },
+        },
       },
       orderBy: {
-        createdAt: "desc"
-      }
+        createdAt: "desc",
+      },
     });
 
     return res.status(200).json({
       success: true,
-      data: requests
+      data: requests,
     });
-
   } catch (error) {
     console.log(error);
 
     return res.status(500).json({
       success: false,
-      message: "Failed to fetch join requests"
+      message: "Failed to fetch join requests",
     });
   }
 };
-
-
-
-
-
 
 // controllers/clan.controller.js
 
@@ -115,7 +105,7 @@ const toNumber = (value) => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
-// promote demote, kick 
+// promote demote, kick
 
 /**
  * Get the acting member and target member.
@@ -136,11 +126,11 @@ const getClanMemberships = async ({
   });
 
   const actingMember = memberships.find(
-    (member) => member.userId === actingUserId
+    (member) => member.userId === actingUserId,
   );
 
   const targetMember = memberships.find(
-    (member) => member.userId === targetUserId
+    (member) => member.userId === targetUserId,
   );
 
   return {
@@ -725,8 +715,6 @@ export const kickClanMember = async (req, res) => {
   }
 };
 
-
-
 /**
  * GET /api/clans/:clanId/details
  *
@@ -803,7 +791,7 @@ export const getClanDetailsbyId = async (req, res) => {
 
     const currentUserMembership = currentUserId
       ? clan.members.find(
-          (member) => String(member.userId) === String(currentUserId)
+          (member) => String(member.userId) === String(currentUserId),
         )
       : null;
 
@@ -843,7 +831,7 @@ export const getClanDetailsbyId = async (req, res) => {
                   )
                 GROUP BY t."userId";
               `,
-            []
+            [],
           );
 
     /*
@@ -868,7 +856,7 @@ export const getClanDetailsbyId = async (req, res) => {
                   AND a."include_in_clan" = true
                 GROUP BY a."userId";
               `,
-            []
+            [],
           );
 
     const territoryStatsByUser = new Map(
@@ -878,7 +866,7 @@ export const getClanDetailsbyId = async (req, res) => {
           totalAreaKm2: toNumber(row.totalAreaKm2),
           territoryCount: toNumber(row.territoryCount),
         },
-      ])
+      ]),
     );
 
     const activityStatsByUser = new Map(
@@ -888,7 +876,7 @@ export const getClanDetailsbyId = async (req, res) => {
           totalDistanceKm: toNumber(row.totalDistanceKm),
           totalActivities: toNumber(row.totalActivities),
         },
-      ])
+      ]),
     );
 
     /*
@@ -917,8 +905,7 @@ export const getClanDetailsbyId = async (req, res) => {
           contribution: {
             territoryCount: toNumber(territoryStats.territoryCount),
             totalAreaKm2: toNumber(territoryStats.totalAreaKm2),
-            totalAreaM2:
-              toNumber(territoryStats.totalAreaKm2) * 1_000_000,
+            totalAreaM2: toNumber(territoryStats.totalAreaKm2) * 1_000_000,
             totalDistanceKm: toNumber(activityStats.totalDistanceKm),
             totalActivities: toNumber(activityStats.totalActivities),
           },
@@ -932,10 +919,7 @@ export const getClanDetailsbyId = async (req, res) => {
           return areaDifference;
         }
 
-        return (
-          b.contribution.totalDistanceKm -
-          a.contribution.totalDistanceKm
-        );
+        return b.contribution.totalDistanceKm - a.contribution.totalDistanceKm;
       })
       .map((member, index) => ({
         rank: index + 1,
@@ -959,7 +943,7 @@ export const getClanDetailsbyId = async (req, res) => {
         totalAreaKm2: 0,
         totalDistanceKm: 0,
         totalActivities: 0,
-      }
+      },
     );
 
     /*
@@ -998,7 +982,7 @@ export const getClanDetailsbyId = async (req, res) => {
                 ORDER BY t."capturedAt" DESC
                 LIMIT 10;
               `,
-            []
+            [],
           );
 
     /*
@@ -1037,19 +1021,15 @@ export const getClanDetailsbyId = async (req, res) => {
           },
           take: 12,
         }),
-      []
+      [],
     );
 
     const now = new Date();
 
     const formattedEvents = clanEvents.map((event) => {
-      const startsAt = event.startsAt
-        ? new Date(event.startsAt)
-        : null;
+      const startsAt = event.startsAt ? new Date(event.startsAt) : null;
 
-      const endsAt = event.endsAt
-        ? new Date(event.endsAt)
-        : null;
+      const endsAt = event.endsAt ? new Date(event.endsAt) : null;
 
       let displayStatus = event.status ?? "UPCOMING";
 
@@ -1079,29 +1059,23 @@ export const getClanDetailsbyId = async (req, res) => {
         status: displayStatus,
         participantCount: event._count?.participants ?? 0,
         isCurrentUserJoined:
-          Array.isArray(event.participants) &&
-          event.participants.length > 0,
+          Array.isArray(event.participants) && event.participants.length > 0,
       };
     });
 
     const upcomingEvents = formattedEvents
       .filter(
-        (event) =>
-          event.status === "UPCOMING" ||
-          event.status === "ONGOING"
+        (event) => event.status === "UPCOMING" || event.status === "ONGOING",
       )
       .sort(
         (a, b) =>
-          new Date(a.startsAt).getTime() -
-          new Date(b.startsAt).getTime()
+          new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
       )
       .slice(0, 5);
 
     const recentEvents = formattedEvents
       .filter(
-        (event) =>
-          event.status === "COMPLETED" ||
-          event.status === "CANCELLED"
+        (event) => event.status === "COMPLETED" || event.status === "CANCELLED",
       )
       .slice(0, 5);
 
@@ -1125,7 +1099,7 @@ export const getClanDetailsbyId = async (req, res) => {
                   createdAt: true,
                 },
               }),
-            null
+            null,
           )
         : null;
 
@@ -1135,32 +1109,31 @@ export const getClanDetailsbyId = async (req, res) => {
     let management = null;
 
     if (isLeader) {
-      const [pendingJoinRequests, pendingInvites] =
-        await Promise.all([
-          safeQuery(
-            "COUNT_CLAN_JOIN_REQUESTS",
-            () =>
-              prisma.clanJoinRequest.count({
-                where: {
-                  clanId,
-                  status: "PENDING",
-                },
-              }),
-            0
-          ),
+      const [pendingJoinRequests, pendingInvites] = await Promise.all([
+        safeQuery(
+          "COUNT_CLAN_JOIN_REQUESTS",
+          () =>
+            prisma.clanJoinRequest.count({
+              where: {
+                clanId,
+                status: "PENDING",
+              },
+            }),
+          0,
+        ),
 
-          safeQuery(
-            "COUNT_CLAN_INVITES",
-            () =>
-              prisma.clanInvite.count({
-                where: {
-                  clanId,
-                  status: "PENDING",
-                },
-              }),
-            0
-          ),
-        ]);
+        safeQuery(
+          "COUNT_CLAN_INVITES",
+          () =>
+            prisma.clanInvite.count({
+              where: {
+                clanId,
+                status: "PENDING",
+              },
+            }),
+          0,
+        ),
+      ]);
 
       management = {
         pendingJoinRequests,
@@ -1201,8 +1174,7 @@ export const getClanDetailsbyId = async (req, res) => {
           totalMembers: clan._count.members,
           territoryCount: dashboardStats.territoryCount,
           totalAreaKm2: dashboardStats.totalAreaKm2,
-          totalAreaM2:
-            dashboardStats.totalAreaKm2 * 1_000_000,
+          totalAreaM2: dashboardStats.totalAreaKm2 * 1_000_000,
           totalDistanceKm: dashboardStats.totalDistanceKm,
           totalActivities: dashboardStats.totalActivities,
         },
@@ -1222,9 +1194,7 @@ export const getClanDetailsbyId = async (req, res) => {
             canCreateEvent: isLeader,
             canCreateWar: isLeader,
             canJoin:
-              Boolean(currentUserId) &&
-              !isMember &&
-              !currentUserJoinRequest,
+              Boolean(currentUserId) && !isMember && !currentUserJoinRequest,
             canLeave: isMember && !isCaptain,
           },
 
@@ -1242,28 +1212,26 @@ export const getClanDetailsbyId = async (req, res) => {
           recent: recentEvents,
         },
 
-        recentTerritories: recentTerritories.map(
-          (territory) => ({
-            id: territory.id,
+        recentTerritories: recentTerritories.map((territory) => ({
+          id: territory.id,
+          userId: territory.userId,
+          name: territory.name,
+          areaKm2: toNumber(territory.areaKm2),
+          areaM2: toNumber(territory.areaKm2) * 1_000_000,
+          capturedAt: territory.capturedAt,
+
+          owner: {
             userId: territory.userId,
-            name: territory.name,
-            areaKm2: toNumber(territory.areaKm2),
-            areaM2: toNumber(territory.areaKm2) * 1_000_000,
-            capturedAt: territory.capturedAt,
+            username: territory.username,
+            fullName: territory.fullName,
+          },
 
-            owner: {
-              userId: territory.userId,
-              username: territory.username,
-              fullName: territory.fullName,
-            },
-
-            activity: {
-              mode: territory.mode,
-              distanceKm: toNumber(territory.distanceKm),
-              includeInClan: territory.includeInClan,
-            },
-          })
-        ),
+          activity: {
+            mode: territory.mode,
+            distanceKm: toNumber(territory.distanceKm),
+            includeInClan: territory.includeInClan,
+          },
+        })),
       },
     });
   } catch (error) {
@@ -1272,22 +1240,10 @@ export const getClanDetailsbyId = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Failed to fetch clan details",
-      error:
-        process.env.NODE_ENV === "development"
-          ? error.message
-          : undefined,
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 };
-
-
-
-
-
-
-
-
-
 
 /**
  * |--------------------------------------------------------------------------
@@ -1295,31 +1251,16 @@ export const getClanDetailsbyId = async (req, res) => {
  * |--------------------------------------------------------------------------
  */
 
+import { uploadClanImageToS3, deleteClanImageFromS3 } from "../../config/s3.js";
 
-
-import {
-  uploadClanImageToS3,
-  deleteClanImageFromS3,
-} from "../../config/s3.js";
-
-export const createClan = async (
-  req,
-  res
-) => {
+export const createClan = async (req, res) => {
   let uploadedImageKey = null;
 
   try {
     const userId = req.user.id;
 
-    let {
-      name,
-      slug,
-      description,
-      logo,
-      banner,
-      country,
-      isPrivate,
-    } = req.body;
+    let { name, slug, description, logo, banner, country, isPrivate } =
+      req.body;
 
     /**
      * |--------------------------------------------------------------------------
@@ -1358,9 +1299,7 @@ export const createClan = async (
     };
 
     const baseSlug =
-      slug && slug.trim()
-        ? generateSlug(slug)
-        : generateSlug(name);
+      slug && slug.trim() ? generateSlug(slug) : generateSlug(name);
 
     let finalSlug = baseSlug;
     let counter = 1;
@@ -1378,8 +1317,7 @@ export const createClan = async (
         },
       })
     ) {
-      finalSlug =
-        `${baseSlug}-${counter}`;
+      finalSlug = `${baseSlug}-${counter}`;
 
       counter++;
     }
@@ -1390,21 +1328,19 @@ export const createClan = async (
      * |--------------------------------------------------------------------------
      */
 
-    const existingClanByName =
-      await prisma.clan.findFirst({
-        where: {
-          name: {
-            equals: name.trim(),
-            mode: "insensitive",
-          },
+    const existingClanByName = await prisma.clan.findFirst({
+      where: {
+        name: {
+          equals: name.trim(),
+          mode: "insensitive",
         },
-      });
+      },
+    });
 
     if (existingClanByName) {
       return res.status(400).json({
         success: false,
-        message:
-          "Clan name already exists",
+        message: "Clan name already exists",
       });
     }
 
@@ -1417,17 +1353,12 @@ export const createClan = async (
     let clanImageUrl = null;
 
     if (req.file) {
-      const uploadedImage =
-        await uploadClanImageToS3(
-          req.file
-        );
+      const uploadedImage = await uploadClanImageToS3(req.file);
 
       if (uploadedImage) {
-        clanImageUrl =
-          uploadedImage.url;
+        clanImageUrl = uploadedImage.url;
 
-        uploadedImageKey =
-          uploadedImage.key;
+        uploadedImageKey = uploadedImage.key;
       }
     }
 
@@ -1443,12 +1374,8 @@ export const createClan = async (
 
     if (typeof isPrivate === "boolean") {
       parsedIsPrivate = isPrivate;
-    } else if (
-      typeof isPrivate === "string"
-    ) {
-      parsedIsPrivate =
-        isPrivate.toLowerCase() ===
-        "true";
+    } else if (typeof isPrivate === "string") {
+      parsedIsPrivate = isPrivate.toLowerCase() === "true";
     }
 
     /**
@@ -1457,63 +1384,48 @@ export const createClan = async (
      * |--------------------------------------------------------------------------
      */
 
-    const clan =
-      await prisma.$transaction(
-        async (tx) => {
-          const createdClan =
-            await tx.clan.create({
-              data: {
-                name: name.trim(),
+    const clan = await prisma.$transaction(async (tx) => {
+      const createdClan = await tx.clan.create({
+        data: {
+          name: name.trim(),
 
-                slug: finalSlug,
+          slug: finalSlug,
 
-                description:
-                  description?.trim() ||
-                  "",
+          description: description?.trim() || "",
 
-                logo:
-                  logo?.trim() ||
-                  null,
+          logo: logo?.trim() || null,
 
-                banner:
-                  banner?.trim() ||
-                  null,
+          banner: banner?.trim() || null,
 
-                country:
-                  country.trim(),
-
-                /**
-                 * S3 IMAGE URL
-                 */
-                imageUrl:
-                  clanImageUrl,
-
-                isPrivate:
-                  parsedIsPrivate,
-
-                captainId:
-                  userId,
-              },
-            });
+          country: country.trim(),
 
           /**
-           * Automatically make creator
-           * the clan leader.
+           * S3 IMAGE URL
            */
-          await tx.clanMember.create({
-            data: {
-              clanId:
-                createdClan.id,
+          imageUrl: clanImageUrl,
 
-              userId,
+          isPrivate: parsedIsPrivate,
 
-              role: "LEADER",
-            },
-          });
+          captainId: userId,
+        },
+      });
 
-          return createdClan;
-        }
-      );
+      /**
+       * Automatically make creator
+       * the clan leader.
+       */
+      await tx.clanMember.create({
+        data: {
+          clanId: createdClan.id,
+
+          userId,
+
+          role: "LEADER",
+        },
+      });
+
+      return createdClan;
+    });
 
     /**
      * |--------------------------------------------------------------------------
@@ -1524,16 +1436,12 @@ export const createClan = async (
     return res.status(201).json({
       success: true,
 
-      message:
-        "Clan created successfully",
+      message: "Clan created successfully",
 
       data: clan,
     });
   } catch (error) {
-    console.error(
-      "CREATE_CLAN_ERROR:",
-      error
-    );
+    console.error("CREATE_CLAN_ERROR:", error);
 
     /**
      * If image was successfully uploaded to S3,
@@ -1541,28 +1449,235 @@ export const createClan = async (
      * image from S3.
      */
     if (uploadedImageKey) {
-      await deleteClanImageFromS3(
-        uploadedImageKey
-      );
+      await deleteClanImageFromS3(uploadedImageKey);
     }
 
     return res.status(500).json({
       success: false,
 
-      message:
-        "Failed to create clan",
+      message: "Failed to create clan",
 
-      error:
-        process.env.NODE_ENV ===
-        "development"
-          ? error.message
-          : undefined,
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 };
 
+// export const editClan = async (req, res) => {
+//   try {
+//     const userId = req.user.id;
+//     const { clanId } = req.params;
+
+//     const {
+//       name,
+//       slug,
+//       description,
+//       logo,
+//       banner,
+//       country,
+//       imageUrl,
+//       isPrivate,
+//     } = req.body;
+
+//     if (!clanId) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Clan ID is required",
+//       });
+//     }
+
+//     const existingClan = await prisma.clan.findUnique({
+//       where: {
+//         id: clanId,
+//       },
+//       include: {
+//         members: {
+//           where: {
+//             userId,
+//           },
+//           select: {
+//             role: true,
+//           },
+//           take: 1,
+//         },
+//       },
+//     });
+
+//     if (!existingClan) {
+//       return res.status(404).json({
+//         success: false,
+//         message: "Clan not found",
+//       });
+//     }
+
+//     const currentMember = existingClan.members[0];
+
+//     const canEditClan =
+//       existingClan.captainId === userId ||
+//       currentMember?.role === "LEADER";
+
+//     if (!canEditClan) {
+//       return res.status(403).json({
+//         success: false,
+//         message: "Only the clan leader can edit this clan",
+//       });
+//     }
+
+//     const updateData = {};
+
+//     /*
+//      * Update clan name
+//      */
+//     if (name !== undefined) {
+//       const normalizedName = String(name).trim();
+
+//       if (!normalizedName) {
+//         return res.status(400).json({
+//           success: false,
+//           message: "Clan name cannot be empty",
+//         });
+//       }
+
+//       const duplicateClanName = await prisma.clan.findFirst({
+//         where: {
+//           id: {
+//             not: clanId,
+//           },
+//           name: {
+//             equals: normalizedName,
+//             mode: "insensitive",
+//           },
+//         },
+//         select: {
+//           id: true,
+//         },
+//       });
+
+//       if (duplicateClanName) {
+//         return res.status(409).json({
+//           success: false,
+//           message: "Clan name already exists",
+//         });
+//       }
+
+//       updateData.name = normalizedName;
+//     }
+
+//     /*
+//      * Update country
+//      */
+//     if (country !== undefined) {
+//       const normalizedCountry = String(country).trim();
+
+//       if (!normalizedCountry) {
+//         return res.status(400).json({
+//           success: false,
+//           message: "Country cannot be empty",
+//         });
+//       }
+
+//       updateData.country = normalizedCountry;
+//     }
+
+//     /*
+//      * Update slug only when it is included in the request.
+//      *
+//      * When slug is not provided, the existing slug remains unchanged,
+//      * even if the clan name changes.
+//      */
+//     if (slug !== undefined) {
+//       const requestedSlug = String(slug).trim();
+
+//       if (!requestedSlug) {
+//         return res.status(400).json({
+//           success: false,
+//           message: "Clan slug cannot be empty",
+//         });
+//       }
+
+//       updateData.slug = await generateUniqueClanSlug({
+//         prismaClient: prisma,
+//         value: requestedSlug,
+//         excludeClanId: clanId,
+//       });
+//     }
+
+//     /*
+//      * Fields that may be cleared.
+//      */
+//     if (description !== undefined) {
+//       updateData.description =
+//         description === null ? "" : String(description).trim();
+//     }
+
+//     if (logo !== undefined) {
+//       updateData.logo = normalizeOptionalImage(logo);
+//     }
+
+//     if (banner !== undefined) {
+//       updateData.banner = normalizeOptionalImage(banner);
+//     }
+
+//     if (imageUrl !== undefined) {
+//       updateData.imageUrl = normalizeOptionalImage(imageUrl);
+//     }
+
+//     if (isPrivate !== undefined) {
+//       if (typeof isPrivate !== "boolean") {
+//         return res.status(400).json({
+//           success: false,
+//           message: "isPrivate must be true or false",
+//         });
+//       }
+
+//       updateData.isPrivate = isPrivate;
+//     }
+
+//     if (Object.keys(updateData).length === 0) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "No clan changes were provided",
+//       });
+//     }
+
+//     const updatedClan = await prisma.clan.update({
+//       where: {
+//         id: clanId,
+//       },
+//       data: updateData,
+//     });
+
+//     return res.status(200).json({
+//       success: true,
+//       message: "Clan updated successfully",
+//       data: updatedClan,
+//     });
+//   } catch (error) {
+//     console.error("EDIT_CLAN_ERROR:", error);
+
+//     if (error?.code === "P2025") {
+//       return res.status(404).json({
+//         success: false,
+//         message: "Clan not found",
+//       });
+//     }
+
+//     if (error?.code === "P2002") {
+//       return res.status(409).json({
+//         success: false,
+//         message: "Clan name or slug already exists",
+//       });
+//     }
+
+//     return res.status(500).json({
+//       success: false,
+//       message: "Failed to update clan",
+//     });
+//   }
+// };
 
 export const editClan = async (req, res) => {
+  let uploadedImageKey = null;
+
   try {
     const userId = req.user.id;
     const { clanId } = req.params;
@@ -1584,6 +1699,10 @@ export const editClan = async (req, res) => {
         message: "Clan ID is required",
       });
     }
+
+    // ============================================================
+    // GET EXISTING CLAN
+    // ============================================================
 
     const existingClan = await prisma.clan.findUnique({
       where: {
@@ -1609,11 +1728,14 @@ export const editClan = async (req, res) => {
       });
     }
 
+    // ============================================================
+    // CHECK PERMISSION
+    // ============================================================
+
     const currentMember = existingClan.members[0];
 
     const canEditClan =
-      existingClan.captainId === userId ||
-      currentMember?.role === "LEADER";
+      existingClan.captainId === userId || currentMember?.role === "LEADER";
 
     if (!canEditClan) {
       return res.status(403).json({
@@ -1624,9 +1746,10 @@ export const editClan = async (req, res) => {
 
     const updateData = {};
 
-    /*
-     * Update clan name
-     */
+    // ============================================================
+    // NAME
+    // ============================================================
+
     if (name !== undefined) {
       const normalizedName = String(name).trim();
 
@@ -1662,9 +1785,10 @@ export const editClan = async (req, res) => {
       updateData.name = normalizedName;
     }
 
-    /*
-     * Update country
-     */
+    // ============================================================
+    // COUNTRY
+    // ============================================================
+
     if (country !== undefined) {
       const normalizedCountry = String(country).trim();
 
@@ -1678,12 +1802,10 @@ export const editClan = async (req, res) => {
       updateData.country = normalizedCountry;
     }
 
-    /*
-     * Update slug only when it is included in the request.
-     *
-     * When slug is not provided, the existing slug remains unchanged,
-     * even if the clan name changes.
-     */
+    // ============================================================
+    // SLUG
+    // ============================================================
+
     if (slug !== undefined) {
       const requestedSlug = String(slug).trim();
 
@@ -1701,13 +1823,18 @@ export const editClan = async (req, res) => {
       });
     }
 
-    /*
-     * Fields that may be cleared.
-     */
+    // ============================================================
+    // DESCRIPTION
+    // ============================================================
+
     if (description !== undefined) {
       updateData.description =
         description === null ? "" : String(description).trim();
     }
+
+    // ============================================================
+    // LEGACY LOGO / BANNER FIELDS
+    // ============================================================
 
     if (logo !== undefined) {
       updateData.logo = normalizeOptionalImage(logo);
@@ -1717,20 +1844,64 @@ export const editClan = async (req, res) => {
       updateData.banner = normalizeOptionalImage(banner);
     }
 
+    // ============================================================
+    // IMAGE URL SENT DIRECTLY
+    // ============================================================
+
     if (imageUrl !== undefined) {
       updateData.imageUrl = normalizeOptionalImage(imageUrl);
     }
 
+    // ============================================================
+    // NEW CLUB LOGO FILE
+    // ============================================================
+
+    if (req.file) {
+      const uploadedImage = await uploadClanImageToS3(req.file);
+
+      if (!uploadedImage || !uploadedImage.url) {
+        return res.status(500).json({
+          success: false,
+          message: "Failed to upload club logo",
+        });
+      }
+
+      uploadedImageKey = uploadedImage.key ?? null;
+
+      // New uploaded logo takes priority
+      // over imageUrl from req.body.
+      updateData.imageUrl = uploadedImage.url;
+    }
+
+    // ============================================================
+    // PRIVATE STATUS
+    // ============================================================
+
     if (isPrivate !== undefined) {
-      if (typeof isPrivate !== "boolean") {
+      let normalizedIsPrivate = isPrivate;
+
+      // Multipart/form-data sends values as strings.
+      if (typeof isPrivate === "string") {
+        if (isPrivate.toLowerCase() === "true") {
+          normalizedIsPrivate = true;
+        } else if (isPrivate.toLowerCase() === "false") {
+          normalizedIsPrivate = false;
+        }
+      }
+
+      if (typeof normalizedIsPrivate !== "boolean") {
         return res.status(400).json({
           success: false,
           message: "isPrivate must be true or false",
         });
       }
 
-      updateData.isPrivate = isPrivate;
+      updateData.isPrivate = normalizedIsPrivate;
     }
+
+    // ============================================================
+    // CHECK IF ANYTHING CHANGED
+    // ============================================================
 
     if (Object.keys(updateData).length === 0) {
       return res.status(400).json({
@@ -1738,6 +1909,10 @@ export const editClan = async (req, res) => {
         message: "No clan changes were provided",
       });
     }
+
+    // ============================================================
+    // UPDATE CLAN
+    // ============================================================
 
     const updatedClan = await prisma.clan.update({
       where: {
@@ -1753,6 +1928,16 @@ export const editClan = async (req, res) => {
     });
   } catch (error) {
     console.error("EDIT_CLAN_ERROR:", error);
+
+    // If S3 upload succeeded but database update failed,
+    // remove the newly uploaded unused image.
+    if (uploadedImageKey) {
+      try {
+        await deleteClanImageFromS3(uploadedImageKey);
+      } catch (cleanupError) {
+        console.error("EDIT_CLAN_IMAGE_CLEANUP_ERROR:", cleanupError);
+      }
+    }
 
     if (error?.code === "P2025") {
       return res.status(404).json({
@@ -1774,8 +1959,6 @@ export const editClan = async (req, res) => {
     });
   }
 };
-
-
 /**
  * |--------------------------------------------------------------------------
  * | GET ALL CLANS
@@ -1784,7 +1967,6 @@ export const editClan = async (req, res) => {
 
 export const getAllClans = async (req, res) => {
   try {
-
     const clans = await prisma.clan.findMany({
       include: {
         captain: {
@@ -1792,30 +1974,29 @@ export const getAllClans = async (req, res) => {
             id: true,
             username: true,
             fullName: true,
-          }
+          },
         },
         _count: {
           select: {
-            members: true
-          }
-        }
+            members: true,
+          },
+        },
       },
       orderBy: {
-        totalXp: "desc"
-      }
+        totalXp: "desc",
+      },
     });
 
     return res.status(200).json({
       success: true,
-      data: clans
+      data: clans,
     });
-
   } catch (error) {
     console.log(error);
 
     return res.status(500).json({
       success: false,
-      message: "Failed to fetch clans"
+      message: "Failed to fetch clans",
     });
   }
 };
@@ -1828,7 +2009,6 @@ export const getAllClans = async (req, res) => {
 
 export const requestToJoinClan = async (req, res) => {
   try {
-
     const userId = req.user.id;
 
     const { clanId } = req.params;
@@ -1836,14 +2016,14 @@ export const requestToJoinClan = async (req, res) => {
     const existingMember = await prisma.clanMember.findFirst({
       where: {
         clanId,
-        userId
-      }
+        userId,
+      },
     });
 
     if (existingMember) {
       return res.status(400).json({
         success: false,
-        message: "Already a clan member"
+        message: "Already a clan member",
       });
     }
 
@@ -1851,14 +2031,14 @@ export const requestToJoinClan = async (req, res) => {
       where: {
         clanId,
         userId,
-        status: "PENDING"
-      }
+        status: "PENDING",
+      },
     });
 
     if (existingRequest) {
       return res.status(400).json({
         success: false,
-        message: "Join request already sent"
+        message: "Join request already sent",
       });
     }
 
@@ -1866,21 +2046,20 @@ export const requestToJoinClan = async (req, res) => {
       data: {
         clanId,
         userId,
-      }
+      },
     });
 
     return res.status(201).json({
       success: true,
       message: "Join request sent",
-      data: request
+      data: request,
     });
-
   } catch (error) {
     console.log(error);
 
     return res.status(500).json({
       success: false,
-      message: "Failed to request join"
+      message: "Failed to request join",
     });
   }
 };
@@ -1893,77 +2072,72 @@ export const requestToJoinClan = async (req, res) => {
 
 export const acceptClanJoinRequest = async (req, res) => {
   try {
-
     const currentUserId = req.user.id;
 
     const { requestId } = req.params;
 
     const request = await prisma.clanJoinRequest.findUnique({
       where: {
-        id: requestId
+        id: requestId,
       },
       include: {
-        clan: true
-      }
+        clan: true,
+      },
     });
 
     if (!request) {
       return res.status(404).json({
         success: false,
-        message: "Request not found"
+        message: "Request not found",
       });
     }
 
-    const isCaptain =
-      request.clan.captainId === currentUserId;
+    const isCaptain = request.clan.captainId === currentUserId;
 
     const clanMember = await prisma.clanMember.findFirst({
       where: {
         clanId: request.clanId,
         userId: currentUserId,
-        role: "LEADER"
-      }
+        role: "LEADER",
+      },
     });
 
     if (!isCaptain && !clanMember) {
       return res.status(403).json({
         success: false,
-        message: "Unauthorized"
+        message: "Unauthorized",
       });
     }
 
     await prisma.$transaction(async (tx) => {
-
       await tx.clanMember.create({
         data: {
           clanId: request.clanId,
           userId: request.userId,
-          role: "RUNNER"
-        }
+          role: "RUNNER",
+        },
       });
 
       await tx.clanJoinRequest.update({
         where: {
-          id: requestId
+          id: requestId,
         },
         data: {
-          status: "ACCEPTED"
-        }
+          status: "ACCEPTED",
+        },
       });
-
     });
 
     return res.status(200).json({
       success: true,
-      message: "Join request accepted"
+      message: "Join request accepted",
     });
-
   } catch (error) {
     console.log(error);
 
     return res.status(500).json({
       success: false,
-      message: "Failed to accept request"
+      message: "Failed to accept request",
     });
   }
 };
@@ -1976,65 +2150,62 @@ export const acceptClanJoinRequest = async (req, res) => {
 
 export const rejectClanJoinRequest = async (req, res) => {
   try {
-
     const currentUserId = req.user.id;
 
     const { requestId } = req.params;
 
     const request = await prisma.clanJoinRequest.findUnique({
       where: {
-        id: requestId
+        id: requestId,
       },
       include: {
-        clan: true
-      }
+        clan: true,
+      },
     });
 
     if (!request) {
       return res.status(404).json({
         success: false,
-        message: "Request not found"
+        message: "Request not found",
       });
     }
 
-    const isCaptain =
-      request.clan.captainId === currentUserId;
+    const isCaptain = request.clan.captainId === currentUserId;
 
     const clanLeader = await prisma.clanMember.findFirst({
       where: {
         clanId: request.clanId,
         userId: currentUserId,
-        role: "LEADER"
-      }
+        role: "LEADER",
+      },
     });
 
     if (!isCaptain && !clanLeader) {
       return res.status(403).json({
         success: false,
-        message: "Unauthorized"
+        message: "Unauthorized",
       });
     }
 
     await prisma.clanJoinRequest.update({
       where: {
-        id: requestId
+        id: requestId,
       },
       data: {
-        status: "REJECTED"
-      }
+        status: "REJECTED",
+      },
     });
 
     return res.status(200).json({
       success: true,
-      message: "Join request rejected"
+      message: "Join request rejected",
     });
-
   } catch (error) {
     console.log(error);
 
     return res.status(500).json({
       success: false,
-      message: "Failed to reject request"
+      message: "Failed to reject request",
     });
   }
 };
@@ -2047,63 +2218,59 @@ export const rejectClanJoinRequest = async (req, res) => {
 
 export const acceptClanInvite = async (req, res) => {
   try {
-
     const userId = req.user.id;
 
     const { inviteId } = req.params;
 
     const invite = await prisma.clanInvite.findUnique({
       where: {
-        id: inviteId
-      }
+        id: inviteId,
+      },
     });
 
     if (!invite) {
       return res.status(404).json({
         success: false,
-        message: "Invite not found"
+        message: "Invite not found",
       });
     }
 
     if (invite.invitedUserId !== userId) {
       return res.status(403).json({
         success: false,
-        message: "Unauthorized"
+        message: "Unauthorized",
       });
     }
 
     await prisma.$transaction(async (tx) => {
-
       await tx.clanMember.create({
         data: {
           clanId: invite.clanId,
           userId,
-          role: "RUNNER"
-        }
+          role: "RUNNER",
+        },
       });
 
       await tx.clanInvite.update({
         where: {
-          id: inviteId
+          id: inviteId,
         },
         data: {
-          status: "ACCEPTED"
-        }
+          status: "ACCEPTED",
+        },
       });
-
     });
 
     return res.status(200).json({
       success: true,
-      message: "Clan invite accepted"
+      message: "Clan invite accepted",
     });
-
   } catch (error) {
     console.log(error);
 
     return res.status(500).json({
       success: false,
-      message: "Failed to accept invite"
+      message: "Failed to accept invite",
     });
   }
 };
@@ -2116,56 +2283,52 @@ export const acceptClanInvite = async (req, res) => {
 
 export const rejectClanInvite = async (req, res) => {
   try {
-
     const userId = req.user.id;
 
     const { inviteId } = req.params;
 
     const invite = await prisma.clanInvite.findUnique({
       where: {
-        id: inviteId
-      }
+        id: inviteId,
+      },
     });
 
     if (!invite) {
       return res.status(404).json({
         success: false,
-        message: "Invite not found"
+        message: "Invite not found",
       });
     }
 
     if (invite.invitedUserId !== userId) {
       return res.status(403).json({
         success: false,
-        message: "Unauthorized"
+        message: "Unauthorized",
       });
     }
 
     await prisma.clanInvite.update({
       where: {
-        id: inviteId
+        id: inviteId,
       },
       data: {
-        status: "REJECTED"
-      }
+        status: "REJECTED",
+      },
     });
 
     return res.status(200).json({
       success: true,
-      message: "Clan invite rejected"
+      message: "Clan invite rejected",
     });
-
   } catch (error) {
     console.log(error);
 
     return res.status(500).json({
       success: false,
-      message: "Failed to reject invite"
+      message: "Failed to reject invite",
     });
   }
 };
-
-
 
 /**
  * |--------------------------------------------------------------------------
@@ -2175,12 +2338,11 @@ export const rejectClanInvite = async (req, res) => {
 
 export const getMyJoinedClans = async (req, res) => {
   try {
-
     const userId = req.user.id;
 
     const joinedClans = await prisma.clanMember.findMany({
       where: {
-        userId
+        userId,
       },
       include: {
         clan: {
@@ -2191,41 +2353,39 @@ export const getMyJoinedClans = async (req, res) => {
                 username: true,
                 fullName: true,
                 // profilePicture: true,
-              }
+              },
             },
             _count: {
               select: {
-                members: true
-              }
-            }
-          }
-        }
+                members: true,
+              },
+            },
+          },
+        },
       },
       orderBy: {
-        joinedAt: "desc"
-      }
+        joinedAt: "desc",
+      },
     });
 
     return res.status(200).json({
       success: true,
       count: joinedClans.length,
-      data: joinedClans.map(member => ({
+      data: joinedClans.map((member) => ({
         role: member.role,
         joinedAt: member.joinedAt,
-        clan: member.clan
-      }))
+        clan: member.clan,
+      })),
     });
-
   } catch (error) {
     console.log(error);
 
     return res.status(500).json({
       success: false,
-      message: "Failed to fetch joined clans"
+      message: "Failed to fetch joined clans",
     });
   }
 };
-
 
 /**
  * |--------------------------------------------------------------------------
@@ -2245,6 +2405,7 @@ export const getClanTerritories = async (req, res) => {
         slug: true,
         logo: true,
         banner: true,
+        imageUrl: true,
         territoryCount: true,
         totalAreaKm2: true,
       },
@@ -2344,16 +2505,16 @@ export const getClanTerritories = async (req, res) => {
 
         activity: territory.activityId
           ? {
-            id: territory.activityId,
-            mode: territory.mode,
-            distanceKm: territory.distanceKm,
-            durationSec: territory.durationSec,
-            avgPace: territory.avgPace,
-            avgSpeed: territory.avgSpeed,
-            calories: territory.calories,
-            startedAt: territory.startedAt,
-            endedAt: territory.endedAt,
-          }
+              id: territory.activityId,
+              mode: territory.mode,
+              distanceKm: territory.distanceKm,
+              durationSec: territory.durationSec,
+              avgPace: territory.avgPace,
+              avgSpeed: territory.avgSpeed,
+              calories: territory.calories,
+              startedAt: territory.startedAt,
+              endedAt: territory.endedAt,
+            }
           : null,
       },
     }));
@@ -2373,13 +2534,10 @@ export const getClanTerritories = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Failed to fetch clan territories",
-      error:
-        process.env.NODE_ENV === "development" ? error.message : undefined,
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 };
-
-
 
 /**
  * |--------------------------------------------------------------------------
@@ -2395,7 +2553,8 @@ export const getAllClanTerritories = async (req, res) => {
         c.name AS "clanName",
         c.slug AS "clanSlug",
         c.logo AS "clanLogo",
-        c.banner AS "clanBanner",
+c.banner AS "clanBanner",
+c."imageUrl" AS "clanImageUrl",
 
         t.id AS "territoryId",
         t."userId",
@@ -2462,6 +2621,7 @@ export const getAllClanTerritories = async (req, res) => {
           slug: territory.clanSlug,
           logo: territory.clanLogo,
           banner: territory.clanBanner,
+          imageUrl: territory.clanImageUrl,
         },
 
         territoryId: territory.territoryId,
@@ -2525,7 +2685,6 @@ export const getAllClanTerritories = async (req, res) => {
   }
 };
 
-
 export const getMyClanStatus = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -2544,6 +2703,7 @@ export const getMyClanStatus = async (req, res) => {
             slug: true,
             logo: true,
             banner: true,
+            imageUrl: true,
           },
         },
       },
@@ -2557,12 +2717,13 @@ export const getMyClanStatus = async (req, res) => {
 
       clan: member
         ? {
-          id: member.clan.id,
-          name: member.clan.name,
-          slug: member.clan.slug,
-          logo: member.clan.logo,
-          banner: member.clan.banner,
-        }
+            id: member.clan.id,
+            name: member.clan.name,
+            slug: member.clan.slug,
+            logo: member.clan.logo,
+            banner: member.clan.banner,
+            imageUrl: member.clan.imageUrl,
+          }
         : null,
     });
   } catch (error) {
@@ -2575,19 +2736,13 @@ export const getMyClanStatus = async (req, res) => {
   }
 };
 
-
-
 /**
  * |--------------------------------------------------------------------------
  * | JOIN CLAN DIRECTLY
  * |--------------------------------------------------------------------------
  */
 
-
-const sendCurrentClanEventsToNewMember = async ({
-  clanId,
-  member,
-}) => {
+const sendCurrentClanEventsToNewMember = async ({ clanId, member }) => {
   const now = new Date();
 
   const events = await prisma.clanEvent.findMany({
@@ -2707,16 +2862,12 @@ const sendCurrentClanEventsToNewMember = async ({
         message: error.message,
       });
 
-      console.error(
-        `NEW_MEMBER_EVENT_EMAIL_ERROR [${event.id}]:`,
-        error,
-      );
+      console.error(`NEW_MEMBER_EVENT_EMAIL_ERROR [${event.id}]:`, error);
     }
   }
 
   return result;
 };
-
 
 export const joinClanDirectly = async (req, res) => {
   try {
@@ -2771,18 +2922,17 @@ export const joinClanDirectly = async (req, res) => {
      * A user can only belong to one clan.
      */
 
-    const existingMembership =
-      await prisma.clanMember.findFirst({
-        where: {
-          userId,
-        },
+    const existingMembership = await prisma.clanMember.findFirst({
+      where: {
+        userId,
+      },
 
-        select: {
-          id: true,
-          clanId: true,
-          role: true,
-        },
-      });
+      select: {
+        id: true,
+        clanId: true,
+        role: true,
+      },
+    });
 
     if (existingMembership) {
       return res.status(400).json({
@@ -2848,16 +2998,12 @@ export const joinClanDirectly = async (req, res) => {
     };
 
     try {
-      eventEmailResult =
-        await sendCurrentClanEventsToNewMember({
-          clanId,
-          member,
-        });
+      eventEmailResult = await sendCurrentClanEventsToNewMember({
+        clanId,
+        member,
+      });
     } catch (emailError) {
-      console.error(
-        "JOIN_CLAN_EXISTING_EVENT_EMAIL_ERROR:",
-        emailError
-      );
+      console.error("JOIN_CLAN_EXISTING_EVENT_EMAIL_ERROR:", emailError);
     }
 
     /**
@@ -2869,38 +3015,37 @@ export const joinClanDirectly = async (req, res) => {
      * just joined will be included.
      */
 
-    const upcomingEvents =
-      await prisma.clanEvent.findMany({
-        where: {
-          clanId,
+    const upcomingEvents = await prisma.clanEvent.findMany({
+      where: {
+        clanId,
 
-          startsAt: {
-            gt: new Date(),
+        startsAt: {
+          gt: new Date(),
+        },
+      },
+
+      orderBy: {
+        startsAt: "asc",
+      },
+
+      select: {
+        id: true,
+        title: true,
+        description: true,
+        location: true,
+        startsAt: true,
+        endsAt: true,
+        maxParticipants: true,
+
+        clan: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
           },
         },
-
-        orderBy: {
-          startsAt: "asc",
-        },
-
-        select: {
-          id: true,
-          title: true,
-          description: true,
-          location: true,
-          startsAt: true,
-          endsAt: true,
-          maxParticipants: true,
-
-          clan: {
-            select: {
-              id: true,
-              name: true,
-              slug: true,
-            },
-          },
-        },
-      });
+      },
+    });
 
     /**
      * |--------------------------------------------------------------------------
@@ -2920,34 +3065,33 @@ export const joinClanDirectly = async (req, res) => {
     };
 
     try {
-      const notificationResults =
-        await Promise.all(
-          upcomingEvents.map(async (event) => {
-            eventNotificationResult.attempted += 1;
+      const notificationResults = await Promise.all(
+        upcomingEvents.map(async (event) => {
+          eventNotificationResult.attempted += 1;
 
-            const result = await sendFCMToUser({
-              userId,
+          const result = await sendFCMToUser({
+            userId,
 
-              title: `Upcoming Event in ${clan.name}`,
+            title: `Upcoming Event in ${clan.name}`,
 
-              message: event.location
-                ? `${event.title} • ${event.location}`
-                : event.title,
+            message: event.location
+              ? `${event.title} • ${event.location}`
+              : event.title,
 
-              data: {
-                type: "CLAN_EVENT_CREATED",
-                eventId: event.id,
-                clanId: clan.id,
-                title: event.title,
-              },
-            });
-
-            return {
+            data: {
+              type: "CLAN_EVENT_CREATED",
               eventId: event.id,
-              success: Boolean(result),
-            };
-          })
-        );
+              clanId: clan.id,
+              title: event.title,
+            },
+          });
+
+          return {
+            eventId: event.id,
+            success: Boolean(result),
+          };
+        }),
+      );
 
       for (const result of notificationResults) {
         if (result.success) {
@@ -2957,23 +3101,16 @@ export const joinClanDirectly = async (req, res) => {
         }
       }
 
-      console.log(
-        `Existing clan event notifications for user ${userId}:`,
-        {
-          eventsFound:
-            eventNotificationResult.eventsFound,
-          attempted:
-            eventNotificationResult.attempted,
-          sent:
-            eventNotificationResult.sent,
-          failed:
-            eventNotificationResult.failed,
-        }
-      );
+      console.log(`Existing clan event notifications for user ${userId}:`, {
+        eventsFound: eventNotificationResult.eventsFound,
+        attempted: eventNotificationResult.attempted,
+        sent: eventNotificationResult.sent,
+        failed: eventNotificationResult.failed,
+      });
     } catch (notificationError) {
       console.error(
         "JOIN_CLAN_EXISTING_EVENT_NOTIFICATION_ERROR:",
-        notificationError
+        notificationError,
       );
     }
 
@@ -2986,8 +3123,7 @@ export const joinClanDirectly = async (req, res) => {
     let eventInvitationMessage;
 
     if (eventEmailResult.eventsFound === 0) {
-      eventInvitationMessage =
-        "The clan currently has no upcoming events";
+      eventInvitationMessage = "The clan currently has no upcoming events";
     } else if (eventEmailResult.sent > 0) {
       eventInvitationMessage =
         eventEmailResult.sent === 1
@@ -3007,8 +3143,7 @@ export const joinClanDirectly = async (req, res) => {
     let eventNotificationMessage;
 
     if (upcomingEvents.length === 0) {
-      eventNotificationMessage =
-        "The clan currently has no upcoming events";
+      eventNotificationMessage = "The clan currently has no upcoming events";
     } else if (eventNotificationResult.sent > 0) {
       eventNotificationMessage =
         eventNotificationResult.sent === 1
@@ -3037,44 +3172,32 @@ export const joinClanDirectly = async (req, res) => {
       data: member,
 
       eventEmails: {
-        eventsFound:
-          eventEmailResult.eventsFound,
+        eventsFound: eventEmailResult.eventsFound,
 
-        attempted:
-          eventEmailResult.attempted,
+        attempted: eventEmailResult.attempted,
 
-        sent:
-          eventEmailResult.sent,
+        sent: eventEmailResult.sent,
 
-        failed:
-          eventEmailResult.failed,
+        failed: eventEmailResult.failed,
       },
 
       eventNotifications: {
-        eventsFound:
-          eventNotificationResult.eventsFound,
+        eventsFound: eventNotificationResult.eventsFound,
 
-        attempted:
-          eventNotificationResult.attempted,
+        attempted: eventNotificationResult.attempted,
 
-        sent:
-          eventNotificationResult.sent,
+        sent: eventNotificationResult.sent,
 
-        failed:
-          eventNotificationResult.failed,
+        failed: eventNotificationResult.failed,
       },
     });
   } catch (error) {
-    console.error(
-      "JOIN_CLAN_DIRECTLY_ERROR:",
-      error
-    );
+    console.error("JOIN_CLAN_DIRECTLY_ERROR:", error);
 
     if (error?.code === "P2002") {
       return res.status(409).json({
         success: false,
-        message:
-          "You are already a member of a clan",
+        message: "You are already a member of a clan",
       });
     }
 
@@ -3083,15 +3206,10 @@ export const joinClanDirectly = async (req, res) => {
 
       message: "Failed to join clan",
 
-      error:
-        process.env.NODE_ENV === "development"
-          ? error.message
-          : undefined,
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 };
-
-
 
 /**
  * |--------------------------------------------------------------------------
@@ -3150,7 +3268,7 @@ export const getClanDetails = async (req, res) => {
     const memberUserIds = clan.members.map((member) => member.userId);
 
     const currentUserMembership = clan.members.find(
-      (member) => member.userId === currentUserId
+      (member) => member.userId === currentUserId,
     );
 
     let territoryStats = {
@@ -3252,6 +3370,7 @@ export const getClanDetails = async (req, res) => {
           description: clan.description,
           logo: clan.logo,
           banner: clan.banner,
+          imageUrl: clan.imageUrl,
           isPrivate: clan.isPrivate,
           captainId: clan.captainId,
           captain: clan.captain,
@@ -3311,8 +3430,6 @@ export const getClanDetails = async (req, res) => {
   }
 };
 
-
-
 /**
  * |--------------------------------------------------------------------------
  * | LEAVE CLAN
@@ -3367,9 +3484,6 @@ export const getClanDetails = async (req, res) => {
 //     });
 //   }
 // };
-
-
-
 
 // export const leaveClan = async (req, res) => {
 //   try {
@@ -3500,8 +3614,7 @@ export const leaveClan = async (req, res) => {
 
       const clanId = membership.clanId;
 
-      const isLeader =
-        membership.clan.captainId === userId;
+      const isLeader = membership.clan.captainId === userId;
 
       // =========================================================
       // FIND ANOTHER MEMBER
@@ -3673,36 +3786,23 @@ export const leaveClan = async (req, res) => {
 
           wasLastMember: false,
 
-          newLeaderId:
-            isLeader && otherMember
-              ? otherMember.userId
-              : null,
+          newLeaderId: isLeader && otherMember ? otherMember.userId : null,
 
           clanActivityDeleted: false,
         },
       };
     });
 
-    return res
-      .status(result.status)
-      .json(result.body);
+    return res.status(result.status).json(result.body);
   } catch (error) {
-    console.error(
-      "LEAVE_CLAN_ERROR:",
-      error,
-    );
+    console.error("LEAVE_CLAN_ERROR:", error);
 
     return res.status(500).json({
       success: false,
 
-      message:
-        "Failed to leave clan",
+      message: "Failed to leave clan",
 
-      error:
-        process.env.NODE_ENV ===
-        "development"
-          ? error.message
-          : undefined,
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 };
@@ -3783,7 +3883,6 @@ export const getClanMembers = async (req, res) => {
   }
 };
 
-
 /**
  * |--------------------------------------------------------------------------
  * | GET CLAN MEMBERS WITH ACTIVITIES AND TERRITORIES
@@ -3805,6 +3904,7 @@ export const getClanMembersFull = async (req, res) => {
         slug: true,
         logo: true,
         banner: true,
+        imageUrl: true,
       },
     });
 
@@ -3961,12 +4061,12 @@ export const getClanMembersFull = async (req, res) => {
 
       const totalDistanceKm = userActivities.reduce(
         (sum, activity) => sum + Number(activity.distanceKm || 0),
-        0
+        0,
       );
 
       const totalAreaKm2 = userTerritories.reduce(
         (sum, territory) => sum + Number(territory.areaKm2 || 0),
-        0
+        0,
       );
 
       return {
@@ -4009,7 +4109,6 @@ export const getClanMembersFull = async (req, res) => {
     });
   }
 };
-
 
 /**
  * ============================================================================
@@ -4065,7 +4164,6 @@ export const cancelFriendRequest = async (req, res) => {
   }
 };
 
-
 /**
  * |--------------------------------------------------------------------------
  * | CHECK IF CURRENT USER IS A CLAN LEADER
@@ -4096,6 +4194,7 @@ export const checkIfClanLeader = async (req, res) => {
             captainId: true,
             logo: true,
             banner: true,
+            imageUrl: true,
           },
         },
       },
@@ -4133,6 +4232,7 @@ export const checkIfClanLeader = async (req, res) => {
         slug: membership.clan.slug,
         logo: membership.clan.logo,
         banner: membership.clan.banner,
+        imageUrl: membership.clan.imageUrl,
       },
     });
   } catch (error) {
@@ -4141,10 +4241,7 @@ export const checkIfClanLeader = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Failed to check clan leader status",
-      error:
-        process.env.NODE_ENV === "development"
-          ? error.message
-          : undefined,
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 };

@@ -58,7 +58,8 @@ router.post(
 router.patch(
   "/:clanId",
   authMiddleware,
-  editClan
+  uploadClanImage.single("image"),
+  editClan,
 );
 
 router.get("/", authMiddleware, getAllClans);
