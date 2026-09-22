@@ -3584,6 +3584,7 @@ export const getClanDetails = async (req, res) => {
 //   }
 // };
 
+
 export const leaveClan = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -3607,13 +3608,12 @@ export const leaveClan = async (req, res) => {
           status: 404,
           body: {
             success: false,
-            message: "You are not in any clan",
+            message: "You are not in any club",
           },
         };
       }
 
       const clanId = membership.clanId;
-
       const isLeader = membership.clan.captainId === userId;
 
       // =========================================================
@@ -3632,74 +3632,62 @@ export const leaveClan = async (req, res) => {
         },
       });
 
-      // If there is no other member, this user is the final member.
+      // If no other member exists, this is the last member.
       const isLastMember = !otherMember;
 
       // =========================================================
       // LAST MEMBER LEAVING
+      // DELETE THE ENTIRE CLUB
       // =========================================================
 
       if (isLastMember) {
-        /*
-         * Delete clan activity because clan now has
-         * no active members.
-         */
+        // Delete club activity
         await tx.clanActivity.deleteMany({
           where: {
             clanId,
           },
         });
 
-        /*
-         * Delete pending join requests.
-         */
+        // Delete pending join requests
         await tx.clanJoinRequest.deleteMany({
           where: {
             clanId,
           },
         });
 
-        /*
-         * Delete pending invites.
-         */
+        // Delete pending invites
         await tx.clanInvite.deleteMany({
           where: {
             clanId,
           },
         });
 
-        /*
-         * Remove final membership.
-         */
+        // Delete the final member
         await tx.clanMember.delete({
           where: {
             id: membership.id,
           },
         });
 
-        /*
-         * IMPORTANT:
-         *
-         * DO NOT SET captainId TO NULL.
-         *
-         * Your current Prisma schema has a required captain
-         * relation, so captainId cannot be null.
-         *
-         * We also DO NOT delete:
-         *
-         * - Clan
-         * - ClanTerritory
-         * - Territory
-         */
+        // =====================================================
+        // DELETE CLUB
+        // =====================================================
+
+        await tx.clan.delete({
+          where: {
+            id: clanId,
+          },
+        });
+
         return {
           status: 200,
           body: {
             success: true,
             message:
-              "Successfully left the clan. Clan activity has been cleared.",
+              "You left the club. The club was deleted because no members remained.",
             clanId,
             wasLastMember: true,
-            clanActivityDeleted: true,
+            clubDeleted: true,
           },
         };
       }
@@ -3709,12 +3697,7 @@ export const leaveClan = async (req, res) => {
       // =========================================================
 
       if (isLeader && otherMember) {
-        /*
-         * Transfer captain relation to oldest remaining member.
-         *
-         * Since Prisma exposes captain as the relation field,
-         * use connect instead of captainId.
-         */
+        // Transfer captain to oldest remaining member
         await tx.clan.update({
           where: {
             id: clanId,
@@ -3728,9 +3711,7 @@ export const leaveClan = async (req, res) => {
           },
         });
 
-        /*
-         * Promote their ClanMember role.
-         */
+        // Promote new captain/leader
         await tx.clanMember.update({
           where: {
             id: otherMember.id,
@@ -3742,7 +3723,7 @@ export const leaveClan = async (req, res) => {
       }
 
       // =========================================================
-      // DELETE LEAVING USER'S MEMBERSHIP
+      // DELETE LEAVING USER MEMBERSHIP
       // =========================================================
 
       await tx.clanMember.delete({
@@ -3752,7 +3733,7 @@ export const leaveClan = async (req, res) => {
       });
 
       // =========================================================
-      // CLEAN USER-SPECIFIC REQUESTS / INVITES
+      // CLEAN USER-SPECIFIC REQUESTS
       // =========================================================
 
       await tx.clanJoinRequest.deleteMany({
@@ -3779,16 +3760,19 @@ export const leaveClan = async (req, res) => {
           success: true,
 
           message: isLeader
-            ? "You left the clan. A new leader has been promoted."
-            : "Successfully left the clan",
+            ? "You left the club. A new leader has been promoted."
+            : "Successfully left the club",
 
           clanId,
 
           wasLastMember: false,
 
-          newLeaderId: isLeader && otherMember ? otherMember.userId : null,
+          clubDeleted: false,
 
-          clanActivityDeleted: false,
+          newLeaderId:
+            isLeader && otherMember
+              ? otherMember.userId
+              : null,
         },
       };
     });
@@ -3799,10 +3783,12 @@ export const leaveClan = async (req, res) => {
 
     return res.status(500).json({
       success: false,
+      message: "Failed to leave club",
 
-      message: "Failed to leave clan",
-
-      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+      error:
+        process.env.NODE_ENV === "development"
+          ? error.message
+          : undefined,
     });
   }
 };
