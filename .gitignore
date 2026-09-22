@@ -6,3 +6,4 @@ node_modules
 src/config/firebase_service.json
 /src/scripts/*
 firebase_service.json
+src/config/firebase.js

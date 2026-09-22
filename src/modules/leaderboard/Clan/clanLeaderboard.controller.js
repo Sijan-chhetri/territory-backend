@@ -45,6 +45,7 @@ export const getClanTerritoryLeaderboard = async (req, res) => {
         c.slug,
         c.logo,
         c.banner,
+        c."image_url" AS "imageUrl",
 
         COALESCE(ms."runnerCount", 0)::int AS "runnerCount",
         COALESCE(ast."totalActivities", 0)::int AS "totalActivities",
@@ -81,6 +82,7 @@ export const getClanTerritoryLeaderboard = async (req, res) => {
       slug: item.slug,
       logo: item.logo,
       banner: item.banner,
+      imageUrl: item.imageUrl,
 
       runnerCount: Number(item.runnerCount ?? 0),
       totalActivities: Number(item.totalActivities ?? 0),
@@ -108,8 +110,6 @@ export const getClanTerritoryLeaderboard = async (req, res) => {
   }
 };
 
-
-
 const mapClanLeaderboard = (leaderboard) => {
   return leaderboard.map((item, index) => ({
     rank: index + 1,
@@ -118,6 +118,7 @@ const mapClanLeaderboard = (leaderboard) => {
     slug: item.slug,
     logo: item.logo,
     banner: item.banner,
+    imageUrl: item.imageUrl,
     country: item.country,
 
     runnerCount: Number(item.runnerCount ?? 0),
@@ -186,6 +187,7 @@ export const getGlobalClanAreaLeaderboard = async (req, res) => {
         c.slug,
         c.logo,
         c.banner,
+        c."image_url" AS "imageUrl",
         c.country,
 
         COALESCE(ms."runnerCount", 0)::int AS "runnerCount",
@@ -269,6 +271,7 @@ export const getGlobalClanDistanceLeaderboard = async (req, res) => {
         c.slug,
         c.logo,
         c.banner,
+        c."image_url" AS "imageUrl",
         c.country,
 
         COALESCE(ms."runnerCount", 0)::int AS "runnerCount",
@@ -361,6 +364,7 @@ export const getLocalClanAreaLeaderboard = async (req, res) => {
         c.slug,
         c.logo,
         c.banner,
+        c."image_url" AS "imageUrl",
         c.country,
 
         COALESCE(ms."runnerCount", 0)::int AS "runnerCount",
@@ -456,6 +460,7 @@ export const getLocalClanDistanceLeaderboard = async (req, res) => {
         c.slug,
         c.logo,
         c.banner,
+        c."image_url" AS "imageUrl",
         c.country,
 
         COALESCE(ms."runnerCount", 0)::int AS "runnerCount",
