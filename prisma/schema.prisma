@@ -53,12 +53,88 @@ model User {
   clanEventParticipants   ClanEventParticipant[]
   createdClubWars         ClubWar[]              @relation("CreatedClubWars")
   passwordResetOtps       PasswordResetOtp[]
+  avatars                 UserAvatar[]
 
   @@index([email])
   @@index([username])
   @@index([googleId])
   @@index([appleId])
   @@map("users")
+}
+
+enum AvatarType {
+  HEAD
+  BODY
+  TSHIRT
+  PANTS
+  SHOES
+  HAIR
+  EYE
+  EYEBROW
+  GLASSES
+}
+
+enum AvatarStatus {
+  LOCKED
+  FREE
+  UNLOCKED
+}
+
+// ======================================================
+// MASTER AVATAR TABLE
+// Stores every avatar asset only ONCE
+// ======================================================
+model Avatar {
+  id String @id @default(uuid())
+
+  type AvatarType
+  file String
+
+  // Default state of this avatar
+  status AvatarStatus @default(FREE)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users UserAvatar[]
+
+  // Prevent same avatar from being added twice
+  @@unique([type, file])
+  @@index([type])
+  @@index([status])
+  @@map("avatars")
+}
+
+// ======================================================
+// USER AVATAR TABLE
+// Which avatars belong to / are unlocked by which user
+// ======================================================
+model UserAvatar {
+  id String @id @default(uuid())
+
+  userId   String
+  avatarId String
+
+  // whether user has currently selected/equipped this item
+  isEquipped Boolean @default(false)
+
+  // User-specific status
+  status AvatarStatus @default(LOCKED)
+
+  unlockedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  avatar Avatar @relation(fields: [avatarId], references: [id], onDelete: Cascade)
+
+  // User cannot have duplicate relation to same avatar
+  @@unique([userId, avatarId])
+  @@index([userId])
+  @@index([avatarId])
+  @@index([status])
+  @@map("user_avatars")
 }
 
 model Clan {
@@ -118,8 +194,6 @@ model Clan {
   @@index([rank])
   @@map("clans")
 }
-
-
 
 model ClanMember {
   id       String   @id @default(uuid())

@@ -2554,7 +2554,7 @@ export const getAllClanTerritories = async (req, res) => {
         c.slug AS "clanSlug",
         c.logo AS "clanLogo",
 c.banner AS "clanBanner",
-c."imageUrl" AS "clanImageUrl",
+c."image_url" AS "clanImageUrl",
 
         t.id AS "territoryId",
         t."userId",
