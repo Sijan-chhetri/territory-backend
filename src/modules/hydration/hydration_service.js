@@ -187,6 +187,8 @@ function buildMessages({
   return messages;
 }
 
+
+
 export async function fetchActivityWeather({
   latitude,
   longitude,
@@ -396,6 +398,8 @@ export function calculateHydrationRecommendation({
   };
 }
 
+
+
 export async function getHydrationRecommendation(input) {
   let weather = null;
   let weatherError = null;
@@ -421,3 +425,4 @@ export async function getHydrationRecommendation(input) {
     weatherError,
   };
 }
+
