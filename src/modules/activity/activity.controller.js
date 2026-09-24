@@ -4509,6 +4509,9 @@ export const getTodayStats = async (req, res) => {
     const endOfDay = new Date();
     endOfDay.setHours(23, 59, 59, 999);
 
+    // =========================================================
+    // ACTIVITY STATS
+    // =========================================================
     const activityStats = await prisma.activity.aggregate({
       where: {
         userId,
@@ -4532,16 +4535,14 @@ export const getTodayStats = async (req, res) => {
         elevationGain: true,
       },
 
-      _avg: {
-        avgPace: true,
-        avgSpeed: true,
-      },
-
       _max: {
         topSpeed: true,
       },
     });
 
+    // =========================================================
+    // TERRITORY STATS
+    // =========================================================
     const territoryStats = await prisma.territory.aggregate({
       where: {
         userId,
@@ -4561,42 +4562,104 @@ export const getTodayStats = async (req, res) => {
       },
     });
 
+    // =========================================================
+    // TOTAL VALUES
+    // =========================================================
+
+    const totalDistanceKm =
+      Number(activityStats._sum.distanceKm ?? 0);
+
+    const totalDurationSec =
+      Number(activityStats._sum.durationSec ?? 0);
+
+    const totalMovingTimeSec =
+      Number(activityStats._sum.movingTime ?? 0);
+
+    const totalStopTimeSec =
+      Number(activityStats._sum.stopTime ?? 0);
+
+    // =========================================================
+    // CALCULATE REAL WEIGHTED AVERAGE PACE
+    //
+    // Pace = total moving time / total distance
+    //
+    // This is NOT:
+    // (pace1 + pace2 + pace3) / numberOfActivities
+    // =========================================================
+
+    let averagePace = null;
+
+    if (
+      totalDistanceKm > 0 &&
+      totalMovingTimeSec > 0
+    ) {
+      // seconds per kilometer
+      const paceSecondsPerKm =
+        totalMovingTimeSec / totalDistanceKm;
+
+      // Convert seconds/km -> minutes/km
+      averagePace =
+        paceSecondsPerKm / 60;
+    }
+
+    // =========================================================
+    // CALCULATE REAL WEIGHTED AVERAGE SPEED
+    //
+    // speed = total distance / total time
+    // =========================================================
+
+    let averageSpeed = null;
+
+    if (
+      totalDistanceKm > 0 &&
+      totalMovingTimeSec > 0
+    ) {
+      const movingHours =
+        totalMovingTimeSec / 3600;
+
+      averageSpeed =
+        totalDistanceKm / movingHours;
+    }
+
+    // =========================================================
+    // RESPONSE
+    // =========================================================
+
     return res.status(200).json({
       success: true,
 
       date: startOfDay,
 
       stats: {
-
         totalActivities:
           activityStats._count.id,
 
-        totalDistanceKm:
-          Number(activityStats._sum.distanceKm ?? 0),
+        totalDistanceKm,
 
-        totalDurationSec:
-          Number(activityStats._sum.durationSec ?? 0),
+        totalDurationSec,
 
-        totalMovingTimeSec:
-          Number(activityStats._sum.movingTime ?? 0),
+        totalMovingTimeSec,
 
-        totalStopTimeSec:
-          Number(activityStats._sum.stopTime ?? 0),
+        totalStopTimeSec,
 
         totalCalories:
-          Number(activityStats._sum.calories ?? 0),
+          Number(
+            activityStats._sum.calories ?? 0
+          ),
 
         totalElevationGain:
-          Number(activityStats._sum.elevationGain ?? 0),
+          Number(
+            activityStats._sum.elevationGain ?? 0
+          ),
 
-        averagePace:
-          activityStats._avg.avgPace,
+        // Weighted using total time + total distance
+        averagePace,
 
         averagePaceFormatted:
-          formatPace(activityStats._avg.avgPace),
+          formatPace(averagePace),
 
-        averageSpeed:
-          activityStats._avg.avgSpeed,
+        // Weighted using total distance + total moving time
+        averageSpeed,
 
         topSpeed:
           activityStats._max.topSpeed,
@@ -4605,7 +4668,9 @@ export const getTodayStats = async (req, res) => {
           territoryStats._count.id,
 
         totalAreaKm2:
-          Number(territoryStats._sum.areaKm2 ?? 0),
+          Number(
+            territoryStats._sum.areaKm2 ?? 0
+          ),
       },
     });
 
@@ -4618,13 +4683,14 @@ export const getTodayStats = async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      message: "Failed to fetch today's stats",
+      message:
+        "Failed to fetch today's stats",
+
       error:
         process.env.NODE_ENV === "development"
           ? error.message
           : undefined,
     });
-
   }
 };
 
