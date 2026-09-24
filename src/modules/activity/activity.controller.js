@@ -151,1216 +151,11 @@ export const getMyActivities = async (req, res) => {
 
 
 
-//previous finish activity
-// export const finishActivity = async (req, res) => {
-//   try {
-//     const userId = req.user.id;
-
-//     const {
-//       mode,
-//       distanceKm,
-//       durationSec,
-//       stopTime,
-//       elapsedTime,
-//       movingTime,
-//       avgPace,
-//       topPace,
-//       avgSpeed,
-//       topSpeed,
-//       calories,
-//       elevationGain,
-//       startedAt,
-//       endedAt,
-//       routeEncoded,
-//       coordinates,
-//       kmSplits: clientKmSplits,
-//       includeInClan,
-//       notes,
-//       areaKm2
-//     } = req.body;
-
-//     const safeRouteEncoded = validateRouteEncoded(routeEncoded);
-
-//     let resolvedCoords = normalizeCoordinates(coordinates);
-
-//     if ((!resolvedCoords || resolvedCoords.length < 2) && safeRouteEncoded) {
-//       let decoded;
-
-//       try {
-//         decoded = polyline.decode(safeRouteEncoded);
-//       } catch (error) {
-//         return res.status(400).json({
-//           success: false,
-//           message: 'Invalid routeEncoded. Could not decode polyline.',
-//           error:
-//             process.env.NODE_ENV === 'development'
-//               ? error.message
-//               : undefined,
-//         });
-//       }
-
-//       resolvedCoords = decoded.map(([lat, lng]) => ({ lat, lng }));
-//       resolvedCoords = normalizeCoordinates(resolvedCoords);
-//     }
-
-//     if (!resolvedCoords || resolvedCoords.length < 2) {
-//       return res.status(400).json({
-//         success: false,
-//         message: 'Not enough GPS points — provide coordinates or routeEncoded',
-//       });
-//     }
-
-//     const routeGeoJson = buildLineGeoJsonFromCoords(resolvedCoords);
-//     const routeGeoJsonString = JSON.stringify(routeGeoJson);
-
-//     const kmSplits =
-//       clientKmSplits?.length > 0
-//         ? clientKmSplits
-//         : computeKmSplits(resolvedCoords);
-
-//     // 1. Save original activity.
-//     // Important: activity route is NEVER subtracted.
-//     const activity = await prisma.activity.create({
-//       data: {
-//         userId,
-//         mode,
-//         distanceKm,
-//         durationSec,
-//         stopTime,
-//         elapsedTime,
-//         movingTime,
-//         avgPace,
-//         topPace,
-//         avgSpeed,
-//         topSpeed,
-//         calories,
-//         elevationGain,
-//         startedAt: new Date(startedAt),
-//         endedAt: new Date(endedAt),
-//         routeEncoded: safeRouteEncoded,
-//         kmSplits,
-//         includeInClan: includeInClan ?? false,
-//         notes: notes ?? null,
-//       },
-//     });
-
-//     // 2. Save activity routeGeometry safely.
-//     await prisma.$executeRaw`
-//       UPDATE activities
-//       SET "routeGeometry" = ST_SetSRID(
-//         ST_GeomFromGeoJSON(${routeGeoJsonString}),
-//         4326
-//       )
-//       WHERE id = ${activity.id};
-//     `;
-
-
-//     const frontendAreaKm2 =
-//       areaKm2 !== undefined &&
-//         areaKm2 !== null &&
-//         !Number.isNaN(Number(areaKm2)) &&
-//         Number(areaKm2) > 0
-//         ? Number(areaKm2)
-//         : null;
-
-//     // 3. Create raw territory from route buffer.
-//     // At this point, it is still full buffered route.
-//     // captureTerritory() will subtract enemy territory from this.
-//     const territoryResult = await prisma.$queryRaw`
-//       WITH new_route AS (
-//         SELECT ST_SetSRID(
-//           ST_GeomFromGeoJSON(${routeGeoJsonString}),
-//           4326
-//         ) AS route
-//       ),
-//       new_area AS (
-//   SELECT
-//     ST_MakeValid(
-//       ST_SnapToGrid(
-//         ST_Buffer(
-//           route::geography,
-//           1,
-//           'endcap=flat join=round quad_segs=2'
-//         )::geometry,
-//         0.0000001
-//       )
-//     ) AS territory,
-//     route
-//   FROM new_route
-// ),
-//       inserted AS (
-//         INSERT INTO territories (
-//           id,
-//           "userId",
-//           "activityId",
-//           boundary,
-//           center,
-//           "routeEncoded",
-//           "routeSegmentsEncoded",
-//           "routeGeometry",
-//           "areaKm2",
-//           "capturedAt",
-//           "createdAt",
-//           "updatedAt"
-//         )
-//         SELECT
-//           gen_random_uuid(),
-//           ${userId},
-//           ${activity.id},
-//           territory,
-//           ST_PointOnSurface(territory),
-//           ${safeRouteEncoded},
-//           ${JSON.stringify(getRouteSegmentsFromEncoded(safeRouteEncoded))}::jsonb,
-//           route,
-//           COALESCE(${frontendAreaKm2}, ST_Area(territory::geography) / 1000000),
-//           NOW(),
-//           NOW(),
-//           NOW()
-//         FROM new_area
-//         WHERE territory IS NOT NULL
-//           AND NOT ST_IsEmpty(territory)
-//         RETURNING id
-//       )
-//       SELECT id FROM inserted;
-//     `;
-
-//     if (!territoryResult || territoryResult.length === 0) {
-//       return res.status(201).json({
-//         success: true,
-//         message: 'Activity completed, but no territory was created.',
-//         activity,
-//         territory: null,
-//         captureEvents: [],
-//       });
-//     }
-
-//     const territoryId = territoryResult[0].id;
-
-//     // 4. Subtract other users' existing territories from this new territory.
-//     // This affects Territory only. Activity route stays original.
-//     await captureTerritory({
-//       userId,
-//       activityId: activity.id,
-//       newTerritoryId: territoryId,
-//     });
-
-//     // 5. Merge own territories that touch or overlap.
-//     // This merges territory boundary. It does not corrupt activity route.
-//     await prisma.$queryRaw`
-//       WITH touching AS (
-//         SELECT id
-//         FROM territories
-//         WHERE "userId" = ${userId}
-//           AND id != ${territoryId}
-//           AND boundary IS NOT NULL
-//           AND NOT ST_IsEmpty(boundary)
-//           AND (
-//             ST_Intersects(
-//               boundary,
-//               (SELECT boundary FROM territories WHERE id = ${territoryId})
-//             )
-//             OR ST_Touches(
-//               boundary,
-//               (SELECT boundary FROM territories WHERE id = ${territoryId})
-//             )
-//           )
-//       ),
-//       all_ids AS (
-//         SELECT ${territoryId}::text AS id
-//         UNION ALL
-//         SELECT id::text FROM touching
-//       ),
-//       merged AS (
-//         SELECT
-//           ST_MakeValid(ST_Union(t.boundary)) AS merged_boundary,
-//           ST_LineMerge(ST_Union(t."routeGeometry")) AS merged_route,
-//           COALESCE(${frontendAreaKm2}, ST_Area(ST_Union(t.boundary)::geography) / 1000000) AS merged_area
-//         FROM territories t
-//         WHERE t.id IN (SELECT id FROM all_ids)
-//           AND t.boundary IS NOT NULL
-//           AND NOT ST_IsEmpty(t.boundary)
-//       )
-//       UPDATE territories
-//       SET
-//         boundary = ST_Multi((SELECT merged_boundary FROM merged)),
-//         center = ST_PointOnSurface((SELECT merged_boundary FROM merged)),
-//         "routeGeometry" = (SELECT merged_route FROM merged),
-//         "areaKm2" = (SELECT merged_area FROM merged),
-//         "updatedAt" = NOW()
-//       WHERE id = ${territoryId}
-//       RETURNING id;
-//     `;
-
-//     // 6. Delete old own territories that were merged into the new one.
-//     await prisma.$executeRaw`
-//       DELETE FROM territories
-//       WHERE "userId" = ${userId}
-//         AND id != ${territoryId}
-//         AND (
-//           ST_Intersects(
-//             boundary,
-//             (SELECT boundary FROM territories WHERE id = ${territoryId})
-//           )
-//           OR ST_Touches(
-//             boundary,
-//             (SELECT boundary FROM territories WHERE id = ${territoryId})
-//           )
-//         );
-//     `;
-
-//     // 7. Fetch final territory.
-//     const finalTerritory = await prisma.$queryRaw`
-//       SELECT
-//         id,
-//         "userId",
-//         "activityId",
-//         "areaKm2",
-//         "capturedAt",
-//         "createdAt",
-//         "updatedAt",
-//         "routeEncoded",
-//         "routeSegmentsEncoded",
-//         ST_AsGeoJSON(boundary)::json AS boundary,
-//         ST_AsGeoJSON(center)::json AS center,
-//         ST_AsGeoJSON("routeGeometry")::json AS route
-//       FROM territories
-//       WHERE id = ${territoryId}
-//       LIMIT 1;
-//     `;
-
-//     const recentEvents = await prisma.territoryEvent.findMany({
-//       where: { activityId: activity.id },
-//       orderBy: { createdAt: 'desc' },
-//     });
-
-//     // XP
-//     const MIN_DISTANCE_KM = 0.1;
-//     const XP_PER_KM = 50;
-
-//     const xpEarned = distanceKm > 0 ? Math.round(distanceKm * XP_PER_KM) : 0;
-
-//     if (xpEarned > 0) {
-//       await addXP({
-//         userId,
-//         amount: xpEarned,
-//         type: 'ACTIVITY',
-//         description: `${mode} — ${distanceKm} km`,
-//         activityId: activity.id,
-//       });
-//     }
-
-//     await prisma.userProgress.upsert({
-//       where: { userId },
-//       create: {
-//         userId,
-//         totalDistanceKm: distanceKm,
-//         activitiesCount: distanceKm >= MIN_DISTANCE_KM ? 1 : 0,
-//       },
-//       update: {
-//         totalDistanceKm: { increment: distanceKm },
-//         activitiesCount:
-//           distanceKm >= MIN_DISTANCE_KM ? { increment: 1 } : undefined,
-//       },
-//     });
-
-//     const levelResult = await checkLevelUp(userId);
-//     const newBadges = await checkBadges(userId);
-
-//     const progress = await prisma.userProgress.findUnique({
-//       where: { userId },
-//     });
-
-//     return res.status(201).json({
-//       success: true,
-//       message: 'Activity completed successfully',
-//       activity,
-//       territory: finalTerritory[0] || null,
-//       captureEvents: recentEvents,
-//       progression: {
-//         xpEarned,
-//         leveledUp: levelResult?.leveledUp ?? false,
-//         level: levelResult?.level ?? progress?.level ?? 0,
-//         newBadges,
-//         progress: {
-//           currentXp: progress?.currentXp,
-//           totalXp: progress?.totalXp,
-//           xpToNextLevel: progress?.xpToNextLevel,
-//           level: progress?.level,
-//           totalDistanceKm: progress?.totalDistanceKm,
-//           activitiesCount: progress?.activitiesCount,
-//         },
-//       },
-//     });
-//   } catch (error) {
-//     console.error('FINISH_ACTIVITY ERROR:', error);
-
-//     return res.status(500).json({
-//       success: false,
-//       message: 'Server error',
-//       error: process.env.NODE_ENV === 'development' ? error.message : undefined,
-//     });
-//   }
-// };
-
-
 // ─────────────────────────────────────────────
 // Finish Activity
 // POST /api/activities/finish
 // latest previous code
 // ─────────────────────────────────────────────
-
-// export const finishActivity = async (req, res) => {
-//   try {
-//     const userId = req.user.id;
-
-//     const {
-//       mode,
-//       distanceKm,
-//       durationSec,
-//       stopTime,
-//       elapsedTime,
-//       movingTime,
-//       avgPace,
-//       topPace,
-//       avgSpeed,
-//       topSpeed,
-//       calories,
-//       elevationGain,
-//       startedAt,
-//       endedAt,
-//       routeEncoded,
-//       coordinates,
-//       kmSplits: clientKmSplits,
-//       includeInClan,
-//       notes,
-//       areaKm2
-//     } = req.body;
-
-//     const safeRouteEncoded = validateRouteEncoded(routeEncoded);
-
-//     let resolvedCoords = normalizeCoordinates(coordinates);
-
-//     if ((!resolvedCoords || resolvedCoords.length < 2) && safeRouteEncoded) {
-//       let decoded;
-
-//       try {
-//         decoded = polyline.decode(safeRouteEncoded);
-//       } catch (error) {
-//         return res.status(400).json({
-//           success: false,
-//           message: 'Invalid routeEncoded. Could not decode polyline.',
-//           error:
-//             process.env.NODE_ENV === 'development'
-//               ? error.message
-//               : undefined,
-//         });
-//       }
-
-//       resolvedCoords = decoded.map(([lat, lng]) => ({ lat, lng }));
-//       resolvedCoords = normalizeCoordinates(resolvedCoords);
-//     }
-
-//     if (!resolvedCoords || resolvedCoords.length < 2) {
-//       return res.status(400).json({
-//         success: false,
-//         message: 'Not enough GPS points — provide coordinates or routeEncoded',
-//       });
-//     }
-
-//     const routeGeoJson = buildLineGeoJsonFromCoords(resolvedCoords);
-//     const routeGeoJsonString = JSON.stringify(routeGeoJson);
-
-//     const kmSplits =
-//       clientKmSplits?.length > 0
-//         ? clientKmSplits
-//         : computeKmSplits(resolvedCoords);
-
-//     // 1. Save original activity.
-//     // Important: activity route is NEVER subtracted.
-//     const activity = await prisma.activity.create({
-//       data: {
-//         userId,
-//         mode,
-//         distanceKm,
-//         durationSec,
-//         stopTime,
-//         elapsedTime,
-//         movingTime,
-//         avgPace,
-//         topPace,
-//         avgSpeed,
-//         topSpeed,
-//         calories,
-//         elevationGain,
-//         startedAt: new Date(startedAt),
-//         endedAt: new Date(endedAt),
-//         routeEncoded: safeRouteEncoded,
-//         kmSplits,
-//         includeInClan: includeInClan ?? false,
-//         notes: notes ?? null,
-//       },
-//     });
-
-//     // 2. Save activity routeGeometry safely.
-//     await prisma.$executeRaw`
-//       UPDATE activities
-//       SET "routeGeometry" = ST_SetSRID(
-//         ST_GeomFromGeoJSON(${routeGeoJsonString}),
-//         4326
-//       )
-//       WHERE id = ${activity.id};
-//     `;
-
-
-//     const frontendAreaKm2 =
-//       areaKm2 !== undefined &&
-//         areaKm2 !== null &&
-//         !Number.isNaN(Number(areaKm2)) &&
-//         Number(areaKm2) > 0
-//         ? Number(areaKm2)
-//         : null;
-
-//     // 3. Create raw territory from route buffer.
-//     // At this point, it is still full buffered route.
-//     // captureTerritory() will subtract enemy territory from this.
-//     const territoryResult = await prisma.$queryRaw`
-//       WITH new_route AS (
-//         SELECT ST_SetSRID(
-//           ST_GeomFromGeoJSON(${routeGeoJsonString}),
-//           4326
-//         ) AS route
-//       ),
-//       new_area AS (
-//   SELECT
-//     ST_MakeValid(
-//       ST_SnapToGrid(
-//         ST_Buffer(
-//           route::geography,
-//           5,
-//           'endcap=flat join=round quad_segs=2'
-//         )::geometry,
-//         0.0000001
-//       )
-//     ) AS territory,
-//     route
-//   FROM new_route
-// ),
-//       inserted AS (
-//         INSERT INTO territories (
-//           id,
-//           "userId",
-//           "activityId",
-//           boundary,
-//           center,
-//           "routeEncoded",
-//           "routeSegmentsEncoded",
-//           "routeGeometry",
-//           "areaKm2",
-//           "capturedAt",
-//           "createdAt",
-//           "updatedAt"
-//         )
-//         SELECT
-//           gen_random_uuid(),
-//           ${userId},
-//           ${activity.id},
-//           territory,
-//           ST_PointOnSurface(territory),
-//           ${safeRouteEncoded},
-//           ${JSON.stringify(getRouteSegmentsFromEncoded(safeRouteEncoded))}::jsonb,
-//           route,
-//           COALESCE(${frontendAreaKm2}, ST_Area(territory::geography) / 1000000),
-//           NOW(),
-//           NOW(),
-//           NOW()
-//         FROM new_area
-//         WHERE territory IS NOT NULL
-//           AND NOT ST_IsEmpty(territory)
-//         RETURNING id
-//       )
-//       SELECT id FROM inserted;
-//     `;
-
-//     if (!territoryResult || territoryResult.length === 0) {
-//       return res.status(201).json({
-//         success: true,
-//         message: 'Activity completed, but no territory was created.',
-//         activity,
-//         territory: null,
-//         captureEvents: [],
-//       });
-//     }
-
-//     const territoryId = territoryResult[0].id;
-
-//     // 4. Subtract other users' existing territories from this new territory.
-//     // This affects Territory only. Activity route stays original.
-//     await captureTerritory({
-//       userId,
-//       activityId: activity.id,
-//       newTerritoryId: territoryId,
-//     });
-
-//     // 5. Merge own territories that touch or overlap.
-//     // This merges territory boundary. It does not corrupt activity route.
-//     await prisma.$queryRaw`
-//       WITH touching AS (
-//         SELECT id
-//         FROM territories
-//         WHERE "userId" = ${userId}
-//           AND id != ${territoryId}
-//           AND boundary IS NOT NULL
-//           AND NOT ST_IsEmpty(boundary)
-//           AND (
-//             ST_Intersects(
-//               boundary,
-//               (SELECT boundary FROM territories WHERE id = ${territoryId})
-//             )
-//             OR ST_Touches(
-//               boundary,
-//               (SELECT boundary FROM territories WHERE id = ${territoryId})
-//             )
-//           )
-//       ),
-//       all_ids AS (
-//         SELECT ${territoryId}::text AS id
-//         UNION ALL
-//         SELECT id::text FROM touching
-//       ),
-//       merged AS (
-//         SELECT
-//           ST_MakeValid(ST_Union(t.boundary)) AS merged_boundary,
-//           ST_LineMerge(ST_Union(t."routeGeometry")) AS merged_route,
-//           COALESCE(${frontendAreaKm2}, ST_Area(ST_Union(t.boundary)::geography) / 1000000) AS merged_area
-//         FROM territories t
-//         WHERE t.id IN (SELECT id FROM all_ids)
-//           AND t.boundary IS NOT NULL
-//           AND NOT ST_IsEmpty(t.boundary)
-//       )
-//       UPDATE territories
-//       SET
-//         boundary = ST_Multi((SELECT merged_boundary FROM merged)),
-//         center = ST_PointOnSurface((SELECT merged_boundary FROM merged)),
-//         "routeGeometry" = (SELECT merged_route FROM merged),
-//         "areaKm2" = (SELECT merged_area FROM merged),
-//         "updatedAt" = NOW()
-//       WHERE id = ${territoryId}
-//       RETURNING id;
-//     `;
-
-//     // 6. Delete old own territories that were merged into the new one.
-//     await prisma.$executeRaw`
-//       DELETE FROM territories
-//       WHERE "userId" = ${userId}
-//         AND id != ${territoryId}
-//         AND (
-//           ST_Intersects(
-//             boundary,
-//             (SELECT boundary FROM territories WHERE id = ${territoryId})
-//           )
-//           OR ST_Touches(
-//             boundary,
-//             (SELECT boundary FROM territories WHERE id = ${territoryId})
-//           )
-//         );
-//     `;
-
-//     // 7. Fetch final territory.
-//     const finalTerritory = await prisma.$queryRaw`
-//       SELECT
-//         id,
-//         "userId",
-//         "activityId",
-//         "areaKm2",
-//         "capturedAt",
-//         "createdAt",
-//         "updatedAt",
-//         "routeEncoded",
-//         "routeSegmentsEncoded",
-//         ST_AsGeoJSON(boundary)::json AS boundary,
-//         ST_AsGeoJSON(center)::json AS center,
-//         ST_AsGeoJSON("routeGeometry")::json AS route
-//       FROM territories
-//       WHERE id = ${territoryId}
-//       LIMIT 1;
-//     `;
-
-//     const recentEvents = await prisma.territoryEvent.findMany({
-//       where: { activityId: activity.id },
-//       orderBy: { createdAt: 'desc' },
-//     });
-
-//     // XP
-//     const MIN_DISTANCE_KM = 0.1;
-//     const XP_PER_KM = 50;
-
-//     const xpEarned = distanceKm > 0 ? Math.round(distanceKm * XP_PER_KM) : 0;
-
-//     if (xpEarned > 0) {
-//       await addXP({
-//         userId,
-//         amount: xpEarned,
-//         type: 'ACTIVITY',
-//         description: `${mode} — ${distanceKm} km`,
-//         activityId: activity.id,
-//       });
-//     }
-
-//     await prisma.userProgress.upsert({
-//       where: { userId },
-//       create: {
-//         userId,
-//         totalDistanceKm: distanceKm,
-//         activitiesCount: distanceKm >= MIN_DISTANCE_KM ? 1 : 0,
-//       },
-//       update: {
-//         totalDistanceKm: { increment: distanceKm },
-//         activitiesCount:
-//           distanceKm >= MIN_DISTANCE_KM ? { increment: 1 } : undefined,
-//       },
-//     });
-
-//     const levelResult = await checkLevelUp(userId);
-//     const newBadges = await checkBadges(userId);
-
-//     const progress = await prisma.userProgress.findUnique({
-//       where: { userId },
-//     });
-
-//     return res.status(201).json({
-//       success: true,
-//       message: 'Activity completed successfully',
-//       activity,
-//       territory: finalTerritory[0] || null,
-//       captureEvents: recentEvents,
-//       progression: {
-//         xpEarned,
-//         leveledUp: levelResult?.leveledUp ?? false,
-//         level: levelResult?.level ?? progress?.level ?? 0,
-//         newBadges,
-//         progress: {
-//           currentXp: progress?.currentXp,
-//           totalXp: progress?.totalXp,
-//           xpToNextLevel: progress?.xpToNextLevel,
-//           level: progress?.level,
-//           totalDistanceKm: progress?.totalDistanceKm,
-//           activitiesCount: progress?.activitiesCount,
-//         },
-//       },
-//     });
-//   } catch (error) {
-//     console.error('FINISH_ACTIVITY ERROR:', error);
-
-//     return res.status(500).json({
-//       success: false,
-//       message: 'Server error',
-//       error: process.env.NODE_ENV === 'development' ? error.message : undefined,
-//     });
-//   }
-// };
-
-
-
-
-// final working finish activity
-
-// export const finishActivity = async (req, res) => {
-//   try {
-//     const userId = req.user.id;
-
-//     const {
-//       mode,
-//       distanceKm,
-//       durationSec,
-//       stopTime,
-//       elapsedTime,
-//       movingTime,
-//       avgPace,
-//       topPace,
-//       avgSpeed,
-//       topSpeed,
-//       calories,
-//       elevationGain,
-//       startedAt,
-//       endedAt,
-//       routeEncoded,
-//       coordinates,
-//       kmSplits: clientKmSplits,
-//       includeInClan,
-//       notes,
-//       areaKm2
-//     } = req.body;
-
-//     const safeRouteEncoded = validateRouteEncoded(routeEncoded);
-
-//     let resolvedCoords = normalizeCoordinates(coordinates);
-
-//     if ((!resolvedCoords || resolvedCoords.length < 2) && safeRouteEncoded) {
-//       let decoded;
-
-//       try {
-//         decoded = polyline.decode(safeRouteEncoded);
-//       } catch (error) {
-//         return res.status(400).json({
-//           success: false,
-//           message: 'Invalid routeEncoded. Could not decode polyline.',
-//           error:
-//             process.env.NODE_ENV === 'development'
-//               ? error.message
-//               : undefined,
-//         });
-//       }
-
-//       resolvedCoords = decoded.map(([lat, lng]) => ({ lat, lng }));
-//       resolvedCoords = normalizeCoordinates(resolvedCoords);
-//     }
-
-//     if (!resolvedCoords || resolvedCoords.length < 2) {
-//       return res.status(400).json({
-//         success: false,
-//         message: 'Not enough GPS points — provide coordinates or routeEncoded',
-//       });
-//     }
-
-//     const routeGeoJson = buildLineGeoJsonFromCoords(resolvedCoords);
-//     const routeGeoJsonString = JSON.stringify(routeGeoJson);
-
-//     const kmSplits =
-//       clientKmSplits?.length > 0
-//         ? clientKmSplits
-//         : computeKmSplits(resolvedCoords);
-
-//     // 1. Save original activity.
-//     // Important: activity route is NEVER subtracted.
-//     const activity = await prisma.activity.create({
-//       data: {
-//         userId,
-//         mode,
-//         distanceKm,
-//         durationSec,
-//         stopTime,
-//         elapsedTime,
-//         movingTime,
-//         avgPace,
-//         topPace,
-//         avgSpeed,
-//         topSpeed,
-//         calories,
-//         elevationGain,
-//         startedAt: new Date(startedAt),
-//         endedAt: new Date(endedAt),
-//         routeEncoded: safeRouteEncoded,
-//         kmSplits,
-//         includeInClan: includeInClan ?? false,
-//         notes: notes ?? null,
-//       },
-//     });
-
-//     // 2. Save activity routeGeometry safely.
-//     await prisma.$executeRaw`
-//       UPDATE activities
-//       SET "routeGeometry" = ST_SetSRID(
-//         ST_GeomFromGeoJSON(${routeGeoJsonString}),
-//         4326
-//       )
-//       WHERE id = ${activity.id};
-//     `;
-
-
-//     const frontendAreaKm2 =
-//       areaKm2 !== undefined &&
-//         areaKm2 !== null &&
-//         !Number.isNaN(Number(areaKm2)) &&
-//         Number(areaKm2) > 0
-//         ? Number(areaKm2)
-//         : null;
-
-//     // 3. Create raw territory from route buffer.
-//     // At this point, it is still full buffered route.
-//     // captureTerritory() will subtract enemy territory from this.
-//     const territoryResult = await prisma.$queryRaw`
-//       WITH new_route AS (
-//         SELECT ST_SetSRID(
-//           ST_GeomFromGeoJSON(${routeGeoJsonString}),
-//           4326
-//         ) AS route
-//       ),
-//       new_area AS (
-//   SELECT
-//     ST_Multi(
-//       ST_CollectionExtract(
-//         ST_MakeValid(
-//           ST_MakePolygon(
-//             ST_AddPoint(route, ST_StartPoint(route))
-//           )
-//         ),
-//         3
-//       )
-//     ) AS territory,
-//     route
-//   FROM new_route
-//   WHERE ST_NPoints(route) >= 4
-//     AND ST_DWithin(
-//       ST_StartPoint(route)::geography,
-//       ST_EndPoint(route)::geography,
-//       25
-//     )
-// ),
-//       inserted AS (
-//         INSERT INTO territories (
-//           id,
-//           "userId",
-//           "activityId",
-//           boundary,
-//           center,
-//           "routeEncoded",
-//           "routeSegmentsEncoded",
-//           "routeGeometry",
-//           "areaKm2",
-//           "capturedAt",
-//           "createdAt",
-//           "updatedAt"
-//         )
-//         SELECT
-//           gen_random_uuid(),
-//           ${userId},
-//           ${activity.id},
-//           territory,
-//           ST_PointOnSurface(territory),
-//           ${safeRouteEncoded},
-//           ${JSON.stringify(getRouteSegmentsFromEncoded(safeRouteEncoded))}::jsonb,
-//           route,
-//           COALESCE(${frontendAreaKm2}, 0),
-//           NOW(),
-//           NOW(),
-//           NOW()
-//         FROM new_area
-//         WHERE territory IS NOT NULL
-//           AND NOT ST_IsEmpty(territory)
-//         RETURNING id
-//       )
-//       SELECT id FROM inserted;
-//     `;
-
-//     if (!territoryResult || territoryResult.length === 0) {
-//       return res.status(201).json({
-//         success: true,
-//         message: 'Activity completed, but no territory was created.',
-//         activity,
-//         territory: null,
-//         captureEvents: [],
-//       });
-//     }
-
-//     const territoryId = territoryResult[0].id;
-
-//     // 4. Subtract other users' existing territories from this new territory.
-//     // This affects Territory only. Activity route stays original.
-//     await captureTerritory({
-//       userId,
-//       activityId: activity.id,
-//       newTerritoryId: territoryId,
-//     });
-
-//     // 5. Merge own territories that touch or overlap.
-//     // This merges territory boundary. It does not corrupt activity route.
-
-
-
-
-// //     await prisma.$queryRaw`
-// //   WITH current_activity AS (
-// //     SELECT COALESCE(a."include_in_clan", false) AS "currentIncludeInClan"
-// //     FROM activities a
-// //     WHERE a.id = ${activity.id}
-// //     LIMIT 1
-// //   ),
-// //   touching AS (
-// //     SELECT t.id
-// //     FROM territories t
-// //     JOIN activities ta ON ta.id = t."activityId"
-// //     CROSS JOIN current_activity
-// //     WHERE t."userId" = ${userId}
-// //       AND t.id != ${territoryId}
-// //       AND COALESCE(ta."include_in_clan", false)
-// //           = current_activity."currentIncludeInClan"
-// //       AND t.boundary IS NOT NULL
-// //       AND NOT ST_IsEmpty(t.boundary)
-// //       AND (
-// //         ST_Intersects(
-// //           t.boundary,
-// //           (SELECT boundary FROM territories WHERE id = ${territoryId})
-// //         )
-// //         OR ST_Touches(
-// //           t.boundary,
-// //           (SELECT boundary FROM territories WHERE id = ${territoryId})
-// //         )
-// //       )
-// //   ),
-// //   all_ids AS (
-// //     SELECT ${territoryId}::text AS id
-// //     UNION ALL
-// //     SELECT id::text FROM touching
-// //   ),
-// //   merged AS (
-// //     SELECT
-// //       ST_MakeValid(ST_Union(t.boundary)) AS merged_boundary,
-// //       ST_LineMerge(ST_Union(t."routeGeometry")) AS merged_route,
-// //       COALESCE(${frontendAreaKm2}, ST_Area(ST_Union(t.boundary)::geography) / 1000000) AS merged_area
-// //     FROM territories t
-// //     WHERE t.id IN (SELECT id FROM all_ids)
-// //       AND t.boundary IS NOT NULL
-// //       AND NOT ST_IsEmpty(t.boundary)
-// //   )
-// //   UPDATE territories
-// //   SET
-// //     boundary = ST_Multi((SELECT merged_boundary FROM merged)),
-// //     center = ST_PointOnSurface((SELECT merged_boundary FROM merged)),
-// //     "routeGeometry" = (SELECT merged_route FROM merged),
-// //     "areaKm2" = (SELECT merged_area FROM merged),
-// //     "updatedAt" = NOW()
-// //   WHERE id = ${territoryId}
-// //   RETURNING id;
-// // `;
-
-
-// await prisma.$queryRaw`
-//   WITH current_territory AS (
-//     SELECT
-//       t.id,
-//       t.boundary,
-//       t."areaKm2" AS current_area,
-//       COALESCE(a."include_in_clan", false) AS "currentIncludeInClan"
-//     FROM territories t
-//     JOIN activities a ON a.id = t."activityId"
-//     WHERE t.id = ${territoryId}
-//     LIMIT 1
-//   ),
-
-//   touching AS (
-//     SELECT t.id
-//     FROM territories t
-//     JOIN activities ta ON ta.id = t."activityId"
-//     CROSS JOIN current_territory ct
-//     WHERE t."userId" = ${userId}
-//       AND t.id != ${territoryId}
-//       AND COALESCE(ta."include_in_clan", false)
-//           = ct."currentIncludeInClan"
-//       AND t.boundary IS NOT NULL
-//       AND NOT ST_IsEmpty(t.boundary)
-//       AND (
-//         ST_Intersects(t.boundary, ct.boundary)
-//         OR ST_Touches(t.boundary, ct.boundary)
-//       )
-//   ),
-
-//   old_union AS (
-//     SELECT ST_Union(t.boundary) AS old_boundary
-//     FROM territories t
-//     WHERE t.id IN (SELECT id FROM touching)
-//       AND t.boundary IS NOT NULL
-//       AND NOT ST_IsEmpty(t.boundary)
-//   ),
-
-//   all_ids AS (
-//     SELECT ${territoryId}::text AS id
-//     UNION ALL
-//     SELECT id::text FROM touching
-//   ),
-
-//   merged AS (
-//     SELECT
-//       ST_Multi(
-//         ST_CollectionExtract(
-//           ST_MakeValid(ST_UnaryUnion(ST_Collect(t.boundary))),
-//           3
-//         )
-//       ) AS merged_boundary,
-
-//       ST_LineMerge(ST_Union(t."routeGeometry")) AS merged_route,
-
-//       COALESCE(
-//         (
-//           SELECT SUM(old_t."areaKm2")
-//           FROM territories old_t
-//           WHERE old_t.id IN (SELECT id FROM touching)
-//         ),
-//         0
-//       )
-//       +
-//       (
-//         COALESCE(${frontendAreaKm2}, 0)
-//         *
-//         COALESCE(
-//           (
-//             ST_Area(
-//               ST_Difference(
-//                 ct.boundary,
-//                 COALESCE(
-//                   ou.old_boundary,
-//                   ST_GeomFromText('POLYGON EMPTY', 4326)
-//                 )
-//               )::geography
-//             )
-//             /
-//             NULLIF(ST_Area(ct.boundary::geography), 0)
-//           ),
-//           1
-//         )
-//       ) AS merged_area
-
-//     FROM territories t
-//     CROSS JOIN current_territory ct
-//     LEFT JOIN old_union ou ON true
-//     WHERE t.id IN (SELECT id FROM all_ids)
-//       AND t.boundary IS NOT NULL
-//       AND NOT ST_IsEmpty(t.boundary)
-//     GROUP BY ct.boundary, ou.old_boundary
-//   )
-
-//   UPDATE territories t
-//   SET
-//     boundary = merged.merged_boundary,
-//     center = ST_PointOnSurface(merged.merged_boundary),
-//     "routeGeometry" = merged.merged_route,
-//     "areaKm2" = merged.merged_area,
-//     "updatedAt" = NOW()
-//   FROM merged
-//   WHERE t.id = ${territoryId}
-//     AND merged.merged_boundary IS NOT NULL
-//     AND NOT ST_IsEmpty(merged.merged_boundary)
-//   RETURNING t.id;
-// `;
-
-//     // 6. Delete old own territories that were merged into the new one.
-//     // Only delete territories from the same lane:
-//     // clan activity deletes merged clan territories only
-//     // personal activity deletes merged personal territories only
-//     await prisma.$executeRaw`
-//   WITH current_activity AS (
-//     SELECT COALESCE(a."include_in_clan", false) AS "currentIncludeInClan"
-//     FROM activities a
-//     WHERE a.id = ${activity.id}
-//     LIMIT 1
-//   )
-//   DELETE FROM territories t
-//   USING activities ta, current_activity
-//   WHERE ta.id = t."activityId"
-//     AND t."userId" = ${userId}
-//     AND t.id != ${territoryId}
-//     AND COALESCE(ta."include_in_clan", false)
-//         = current_activity."currentIncludeInClan"
-//     AND t.boundary IS NOT NULL
-//     AND NOT ST_IsEmpty(t.boundary)
-//     AND (
-//       ST_Intersects(
-//         t.boundary,
-//         (SELECT boundary FROM territories WHERE id = ${territoryId})
-//       )
-//       OR ST_Touches(
-//         t.boundary,
-//         (SELECT boundary FROM territories WHERE id = ${territoryId})
-//       )
-//     );
-// `;
-
-//     // 7. Fetch final territory.
-//     const finalTerritory = await prisma.$queryRaw`
-//       SELECT
-//         id,
-//         "userId",
-//         "activityId",
-//         "areaKm2",
-//         "capturedAt",
-//         "createdAt",
-//         "updatedAt",
-//         "routeEncoded",
-//         "routeSegmentsEncoded",
-//         ST_AsGeoJSON(boundary)::json AS boundary,
-//         ST_AsGeoJSON(center)::json AS center,
-//         ST_AsGeoJSON("routeGeometry")::json AS route
-//       FROM territories
-//       WHERE id = ${territoryId}
-//       LIMIT 1;
-//     `;
-
-//     const recentEvents = await prisma.territoryEvent.findMany({
-//       where: { activityId: activity.id },
-//       orderBy: { createdAt: 'desc' },
-//     });
-
-//     // XP
-//     const MIN_DISTANCE_KM = 0.1;
-//     const XP_PER_KM = 50;
-
-//     const xpEarned = distanceKm > 0 ? Math.round(distanceKm * XP_PER_KM) : 0;
-
-//     if (xpEarned > 0) {
-//       await addXP({
-//         userId,
-//         amount: xpEarned,
-//         type: 'ACTIVITY',
-//         description: `${mode} — ${distanceKm} km`,
-//         activityId: activity.id,
-//       });
-//     }
-
-//     await prisma.userProgress.upsert({
-//       where: { userId },
-//       create: {
-//         userId,
-//         totalDistanceKm: distanceKm,
-//         activitiesCount: distanceKm >= MIN_DISTANCE_KM ? 1 : 0,
-//       },
-//       update: {
-//         totalDistanceKm: { increment: distanceKm },
-//         activitiesCount:
-//           distanceKm >= MIN_DISTANCE_KM ? { increment: 1 } : undefined,
-//       },
-//     });
-
-//     const levelResult = await checkLevelUp(userId);
-//     const newBadges = await checkBadges(userId);
-
-//     const progress = await prisma.userProgress.findUnique({
-//       where: { userId },
-//     });
-
-//     return res.status(201).json({
-//       success: true,
-//       message: 'Activity completed successfully',
-//       activity,
-//       territory: finalTerritory[0] || null,
-//       captureEvents: recentEvents,
-//       progression: {
-//         xpEarned,
-//         leveledUp: levelResult?.leveledUp ?? false,
-//         level: levelResult?.level ?? progress?.level ?? 0,
-//         newBadges,
-//         progress: {
-//           currentXp: progress?.currentXp,
-//           totalXp: progress?.totalXp,
-//           xpToNextLevel: progress?.xpToNextLevel,
-//           level: progress?.level,
-//           totalDistanceKm: progress?.totalDistanceKm,
-//           activitiesCount: progress?.activitiesCount,
-//         },
-//       },
-//     });
-//   } catch (error) {
-//     console.error('FINISH_ACTIVITY ERROR:', error);
-
-//     return res.status(500).json({
-//       success: false,
-//       message: 'Server error',
-//       error: process.env.NODE_ENV === 'development' ? error.message : undefined,
-//     });
-//   }
-// };
-
-
-
-
 export const finishActivity = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -1379,7 +174,6 @@ export const finishActivity = async (req, res) => {
       topSpeed,
       calories,
 
-      // Complete activity elevation values
       elevationGain,
       elevationLoss,
       highestElevation,
@@ -1394,7 +188,6 @@ export const finishActivity = async (req, res) => {
       notes,
       areaKm2,
 
-      // Hydration inputs and backward-compatible aliases.
       userWeightKg,
       activityMode,
       averageSpeed,
@@ -1406,16 +199,24 @@ export const finishActivity = async (req, res) => {
     } = req.body;
 
     /*
-     * Convert optional numeric values safely.
+     * ============================================================
+     * SAFE NUMBER
+     * ============================================================
      */
     const toNullableFiniteNumber = (value) => {
-      if (value === undefined || value === null || value === '') {
+      if (
+        value === undefined ||
+        value === null ||
+        value === ''
+      ) {
         return null;
       }
 
       const parsed = Number(value);
 
-      return Number.isFinite(parsed) ? parsed : null;
+      return Number.isFinite(parsed)
+        ? parsed
+        : null;
     };
 
     const safeElevationGain =
@@ -1431,7 +232,9 @@ export const finishActivity = async (req, res) => {
       toNullableFiniteNumber(lowestElevation);
 
     /*
-     * Validate activity.
+     * ============================================================
+     * VALIDATION
+     * ============================================================
      */
     if (!mode) {
       return res.status(400).json({
@@ -1460,12 +263,19 @@ export const finishActivity = async (req, res) => {
       });
     }
 
-    const parsedStartedAt = new Date(startedAt);
-    const parsedEndedAt = new Date(endedAt);
+    const parsedStartedAt =
+      new Date(startedAt);
+
+    const parsedEndedAt =
+      new Date(endedAt);
 
     if (
-      Number.isNaN(parsedStartedAt.getTime()) ||
-      Number.isNaN(parsedEndedAt.getTime())
+      Number.isNaN(
+        parsedStartedAt.getTime(),
+      ) ||
+      Number.isNaN(
+        parsedEndedAt.getTime(),
+      )
     ) {
       return res.status(400).json({
         success: false,
@@ -1474,7 +284,10 @@ export const finishActivity = async (req, res) => {
       });
     }
 
-    if (parsedEndedAt < parsedStartedAt) {
+    if (
+      parsedEndedAt <
+      parsedStartedAt
+    ) {
       return res.status(400).json({
         success: false,
         message:
@@ -1483,14 +296,15 @@ export const finishActivity = async (req, res) => {
     }
 
     /*
-     * User profile / hydration.
+     * ============================================================
+     * USER / HYDRATION
+     * ============================================================
      */
     const userProfile =
       await prisma.user.findUnique({
         where: {
           id: userId,
         },
-
         select: {
           weight: true,
         },
@@ -1537,7 +351,8 @@ export const finishActivity = async (req, res) => {
     const hydrationEndPoint =
       hydrationRoutePoints.length > 0
         ? hydrationRoutePoints[
-            hydrationRoutePoints.length - 1
+            hydrationRoutePoints.length -
+              1
           ]
         : null;
 
@@ -1613,7 +428,9 @@ export const finishActivity = async (req, res) => {
       });
 
     /*
-     * Offline/idempotency check.
+     * ============================================================
+     * OFFLINE DUPLICATE CHECK
+     * ============================================================
      */
     if (clientActivityId) {
       const existingActivity =
@@ -1638,7 +455,9 @@ export const finishActivity = async (req, res) => {
     }
 
     /*
-     * Route.
+     * ============================================================
+     * ROUTE
+     * ============================================================
      */
     const safeRouteEncoded =
       validateRouteEncoded(
@@ -1665,16 +484,18 @@ export const finishActivity = async (req, res) => {
             safeRouteEncoded,
           );
       } catch (error) {
-        return res.status(400).json({
-          success: false,
-          message:
-            'Invalid routeEncoded. Could not decode polyline.',
-          error:
-            process.env.NODE_ENV ===
-            'development'
-              ? error.message
-              : undefined,
-        });
+        return res
+          .status(400)
+          .json({
+            success: false,
+            message:
+              'Invalid routeEncoded. Could not decode polyline.',
+            error:
+              process.env.NODE_ENV ===
+              'development'
+                ? error.message
+                : undefined,
+          });
       }
 
       resolvedCoords =
@@ -1713,7 +534,9 @@ export const finishActivity = async (req, res) => {
       );
 
     /*
-     * KM splits.
+     * ============================================================
+     * KM SPLITS
+     * ============================================================
      */
     const kmSplits =
       Array.isArray(
@@ -1727,22 +550,8 @@ export const finishActivity = async (req, res) => {
 
     /*
      * ============================================================
-     * RESOLVE CLAN AT THE TIME OF ACTIVITY
+     * RESOLVE CLAN AT ACTIVITY TIME
      * ============================================================
-     *
-     * IMPORTANT:
-     *
-     * We save which clan owns the captured territory NOW.
-     *
-     * If this user leaves later:
-     *
-     * User leaves Clan A
-     *        ↓
-     * ClanMember deleted
-     *        ↓
-     * ClanTerritory stays
-     *        ↓
-     * Territory STILL belongs to Clan A.
      */
     const wantsClanCapture =
       includeInClan === true ||
@@ -1775,10 +584,6 @@ export const finishActivity = async (req, res) => {
       activeClanMembership?.clanId ??
       null;
 
-    /*
-     * Do not allow includeInClan=true
-     * when user isn't actually in a clan.
-     */
     const effectiveIncludeInClan =
       wantsClanCapture &&
       capturedClanId !== null;
@@ -1806,7 +611,8 @@ export const finishActivity = async (req, res) => {
             Number(durationSec),
 
           stopTime:
-            stopTime === undefined ||
+            stopTime ===
+              undefined ||
             stopTime === null
               ? null
               : Number(stopTime),
@@ -1830,23 +636,25 @@ export const finishActivity = async (req, res) => {
                 ),
 
           avgPace:
-            Number(avgPace) ||
-            0,
+            Number(avgPace) || 0,
 
           topPace:
-            topPace === undefined ||
+            topPace ===
+              undefined ||
             topPace === null
               ? null
               : Number(topPace),
 
           avgSpeed:
-            avgSpeed === undefined ||
+            avgSpeed ===
+              undefined ||
             avgSpeed === null
               ? null
               : Number(avgSpeed),
 
           topSpeed:
-            topSpeed === undefined ||
+            topSpeed ===
+              undefined ||
             topSpeed === null
               ? null
               : Number(topSpeed),
@@ -1888,7 +696,9 @@ export const finishActivity = async (req, res) => {
       });
 
     /*
-     * Save PostGIS route geometry.
+     * ============================================================
+     * SAVE ACTIVITY ROUTE GEOMETRY
+     * ============================================================
      */
     await prisma.$executeRaw`
       UPDATE activities
@@ -1901,11 +711,15 @@ export const finishActivity = async (req, res) => {
           4326
         )
 
-      WHERE id = ${activity.id};
+      WHERE
+        id =
+          ${activity.id};
     `;
 
     /*
-     * XP.
+     * ============================================================
+     * XP SETTINGS
+     * ============================================================
      */
     const MIN_DISTANCE_KM =
       0.1;
@@ -1925,9 +739,7 @@ export const finishActivity = async (req, res) => {
         : 0;
 
     const normalizedMode =
-      String(
-        mode,
-      ).toUpperCase();
+      String(mode).toUpperCase();
 
     const shouldCaptureTerritory =
       normalizedMode === 'WALK' ||
@@ -1935,12 +747,10 @@ export const finishActivity = async (req, res) => {
 
     /*
      * ============================================================
-     * NON-TERRITORY ACTIVITY
+     * NON TERRITORY ACTIVITY
      * ============================================================
      */
-    if (
-      !shouldCaptureTerritory
-    ) {
+    if (!shouldCaptureTerritory) {
       if (xpEarned > 0) {
         await addXP({
           userId,
@@ -2004,13 +814,11 @@ export const finishActivity = async (req, res) => {
         );
 
       const progress =
-        await prisma.userProgress.findUnique(
-          {
-            where: {
-              userId,
-            },
+        await prisma.userProgress.findUnique({
+          where: {
+            userId,
           },
-        );
+        });
 
       return res
         .status(201)
@@ -2066,26 +874,196 @@ export const finishActivity = async (req, res) => {
     }
 
     /*
-     * Area calculated by Flutter.
+     * ============================================================
+     * TERRITORY SETTINGS
+     * ============================================================
+     *
+     * 10m grid helps repeated laps connect even when GPS
+     * coordinates are slightly different.
+     *
+     * 100m² prevents tiny GPS noise polygons.
      */
-    const frontendAreaKm2 =
-      areaKm2 !== undefined &&
-      areaKm2 !== null &&
-      Number.isFinite(
-        Number(areaKm2),
-      ) &&
-      Number(areaKm2) > 0
-        ? Number(areaKm2)
-        : null;
+    const ROUTE_SNAP_GRID_METERS =
+      10;
+
+    const MIN_CAPTURE_AREA_M2 =
+      100;
+
+    /*
+     * ============================================================
+     * FIND PREVIOUSLY OWNED TERRITORY
+     * ============================================================
+     */
+    let existingOwnedBoundaryGeoJson =
+      null;
+
+    /*
+     * CLAN CAPTURE:
+     * use all territory permanently owned by the clan.
+     */
+    if (capturedClanId) {
+      const existingClanArea =
+        await prisma.$queryRaw`
+          SELECT
+            ST_AsGeoJSON(
+              ST_Multi(
+                ST_CollectionExtract(
+                  ST_MakeValid(
+                    ST_UnaryUnion(
+                      ST_Collect(
+                        t.boundary
+                      )
+                    )
+                  ),
+                  3
+                )
+              )
+            ) AS "boundaryGeoJson"
+
+          FROM territories t
+
+          JOIN clan_territories ct
+            ON
+              ct."territoryId" =
+                t.id
+
+          WHERE
+            ct."clanId" =
+              ${capturedClanId}
+
+            AND
+            t.boundary IS NOT NULL
+
+            AND
+            NOT ST_IsEmpty(
+              t.boundary
+            );
+        `;
+
+      existingOwnedBoundaryGeoJson =
+        existingClanArea?.[0]
+          ?.boundaryGeoJson ??
+        null;
+    }
+
+    /*
+     * PERSONAL CAPTURE:
+     * use user's own personal territory only.
+     */
+    else {
+      const existingPersonalArea =
+        await prisma.$queryRaw`
+          SELECT
+            ST_AsGeoJSON(
+              ST_Multi(
+                ST_CollectionExtract(
+                  ST_MakeValid(
+                    ST_UnaryUnion(
+                      ST_Collect(
+                        t.boundary
+                      )
+                    )
+                  ),
+                  3
+                )
+              )
+            ) AS "boundaryGeoJson"
+
+          FROM territories t
+
+          JOIN activities ta
+            ON
+              ta.id =
+                t."activityId"
+
+          WHERE
+            t."userId" =
+              ${userId}
+
+            AND
+            COALESCE(
+              ta."include_in_clan",
+              false
+            ) = false
+
+            /*
+             * Never use territory permanently
+             * owned by a clan as personal territory.
+             */
+            AND
+            NOT EXISTS (
+              SELECT 1
+
+              FROM clan_territories ct
+
+              WHERE
+                ct."territoryId" =
+                  t.id
+            )
+
+            AND
+            t.boundary IS NOT NULL
+
+            AND
+            NOT ST_IsEmpty(
+              t.boundary
+            );
+        `;
+
+      existingOwnedBoundaryGeoJson =
+        existingPersonalArea?.[0]
+          ?.boundaryGeoJson ??
+        null;
+    }
 
     /*
      * ============================================================
      * CREATE RAW TERRITORY
      * ============================================================
+     *
+     * TERRITORY CAN NOW BE CREATED 3 WAYS:
+     *
+     * ------------------------------------------------------------
+     * METHOD 1
+     * CLOSED LOOP ANYWHERE DURING ACTIVITY
+     * ------------------------------------------------------------
+     *
+     * START
+     *   ↓
+     *
+     * ┌─────────────┐
+     * │             │
+     * │  4 LAPS     │
+     * │             │
+     * └─────────────┘──────────────● STOP
+     *
+     * Even if the user stops outside the loop,
+     * the closed loop is still detected.
+     *
+     * ------------------------------------------------------------
+     * METHOD 2
+     * ACTIVITY START/END WITHIN 100 METERS
+     * ------------------------------------------------------------
+     *
+     * This is the old fallback behavior.
+     *
+     * ------------------------------------------------------------
+     * METHOD 3
+     * NEW ROUTE TOUCHES PREVIOUS OWNED TERRITORY
+     * ------------------------------------------------------------
+     *
+     * Existing territory can act as part of the loop boundary.
      */
     const territoryResult =
       await prisma.$queryRaw`
-        WITH new_route AS (
+        WITH
+
+        /*
+         * ========================================================
+         * ORIGINAL ROUTE
+         * ========================================================
+         */
+        new_route AS (
           SELECT
             ST_SetSRID(
               ST_GeomFromGeoJSON(
@@ -2095,26 +1073,190 @@ export const finishActivity = async (req, res) => {
             ) AS route
         ),
 
-        new_area AS (
+        /*
+         * ========================================================
+         * ROUTE IN METERS
+         * ========================================================
+         */
+        metric_route AS (
           SELECT
+            route,
 
-            ST_Multi(
+            ST_RemoveRepeatedPoints(
+              ST_SnapToGrid(
+                ST_Transform(
+                  route,
+                  3857
+                ),
+
+                ${ROUTE_SNAP_GRID_METERS}
+              )
+            ) AS route_metric
+
+          FROM new_route
+        ),
+
+        /*
+         * ========================================================
+         * EXISTING TERRITORY
+         * ========================================================
+         */
+        existing_area AS (
+          SELECT
+            CASE
+
+              WHEN
+                ${existingOwnedBoundaryGeoJson}::text
+                  IS NULL
+
+              THEN NULL
+
+              ELSE
+                ST_SetSRID(
+                  ST_GeomFromGeoJSON(
+                    ${existingOwnedBoundaryGeoJson}::text
+                  ),
+                  4326
+                )
+
+            END AS territory
+        ),
+
+        metric_existing_area AS (
+          SELECT
+            CASE
+
+              WHEN
+                territory IS NULL
+
+              THEN NULL
+
+              ELSE
+                ST_Transform(
+                  territory,
+                  3857
+                )
+
+            END AS territory_metric
+
+          FROM existing_area
+        ),
+
+        /*
+         * ========================================================
+         * METHOD 1
+         *
+         * FIND CLOSED LOOPS ANYWHERE INSIDE THE ROUTE
+         * ========================================================
+         *
+         * Example:
+         *
+         * runner completes 4 laps
+         * then continues outside and stops.
+         *
+         * ST_Node breaks linework at intersections.
+         *
+         * ST_Polygonize extracts closed faces.
+         *
+         * Open tail is ignored.
+         */
+        route_linework AS (
+          SELECT
+            ST_Node(
+              ST_UnaryUnion(
+                route_metric
+              )
+            ) AS linework
+
+          FROM metric_route
+
+          WHERE
+            route_metric IS NOT NULL
+
+            AND
+            NOT ST_IsEmpty(
+              route_metric
+            )
+
+            AND
+            ST_NPoints(
+              route_metric
+            ) >= 4
+
+            AND
+            ST_Length(
+              route_metric
+            ) >= 500
+        ),
+
+        route_faces AS (
+          SELECT
+            dumped.geom
+              AS territory_metric
+
+          FROM route_linework
+
+          CROSS JOIN LATERAL
+            ST_Dump(
               ST_CollectionExtract(
-                ST_MakeValid(
-                  ST_MakePolygon(
-                    ST_AddPoint(
-                      route,
-                      ST_StartPoint(
-                        route
-                      )
-                    )
-                  )
+                ST_Polygonize(
+                  ARRAY[
+                    linework
+                  ]
                 ),
                 3
               )
-            ) AS territory,
+            ) AS dumped
 
-            route
+          WHERE
+            dumped.geom IS NOT NULL
+
+            AND
+            NOT ST_IsEmpty(
+              dumped.geom
+            )
+
+            /*
+             * Ignore tiny GPS noise loops.
+             */
+            AND
+            ST_Area(
+              dumped.geom
+            ) >=
+              ${MIN_CAPTURE_AREA_M2}
+        ),
+
+        /*
+         * ========================================================
+         * METHOD 2
+         *
+         * START / END WITHIN 100 METERS
+         * ========================================================
+         *
+         * This fallback is only used when METHOD 1 did not
+         * already discover a real internal closed loop.
+         */
+        near_closed_capture AS (
+          SELECT
+            ST_Transform(
+              ST_Multi(
+                ST_CollectionExtract(
+                  ST_MakeValid(
+                    ST_MakePolygon(
+                      ST_AddPoint(
+                        route,
+
+                        ST_StartPoint(
+                          route
+                        )
+                      )
+                    )
+                  ),
+                  3
+                )
+              ),
+              3857
+            ) AS territory_metric
 
           FROM new_route
 
@@ -2128,6 +1270,11 @@ export const finishActivity = async (req, res) => {
               route::geography
             ) >= 500
 
+            /*
+             * IMPORTANT:
+             *
+             * FALLBACK DISTANCE = 100 METERS
+             */
             AND
             ST_DWithin(
               ST_StartPoint(
@@ -2138,10 +1285,298 @@ export const finishActivity = async (req, res) => {
                 route
               )::geography,
 
-              50
+              100
+            )
+
+            /*
+             * Internal detected loops are better because they
+             * correctly ignore an open tail.
+             */
+            AND
+            NOT EXISTS (
+              SELECT 1
+              FROM route_faces
             )
         ),
 
+        /*
+         * ========================================================
+         * METHOD 3
+         *
+         * NEW ROUTE + EXISTING OWNED TERRITORY
+         * ========================================================
+         */
+        attached_linework AS (
+          SELECT
+            ST_Node(
+              ST_UnaryUnion(
+                ST_Collect(
+                  ST_Boundary(
+                    existing.territory_metric
+                  ),
+
+                  route.route_metric
+                )
+              )
+            ) AS linework,
+
+            existing.territory_metric
+              AS existing_metric
+
+          FROM metric_route route
+
+          CROSS JOIN
+            metric_existing_area existing
+
+          WHERE
+            existing.territory_metric
+              IS NOT NULL
+
+            AND
+            NOT ST_IsEmpty(
+              existing.territory_metric
+            )
+
+            AND
+            route.route_metric
+              IS NOT NULL
+
+            AND
+            NOT ST_IsEmpty(
+              route.route_metric
+            )
+
+            /*
+             * Route must actually touch/intersect
+             * previous territory.
+             */
+            AND
+            ST_Intersects(
+              route.route_metric,
+              existing.territory_metric
+            )
+        ),
+
+        attached_faces_raw AS (
+          SELECT
+            dumped.geom
+              AS face_metric,
+
+            attached.existing_metric
+
+          FROM attached_linework attached
+
+          CROSS JOIN LATERAL
+            ST_Dump(
+              ST_CollectionExtract(
+                ST_Polygonize(
+                  ARRAY[
+                    attached.linework
+                  ]
+                ),
+                3
+              )
+            ) AS dumped
+
+          WHERE
+            dumped.geom IS NOT NULL
+
+            AND
+            NOT ST_IsEmpty(
+              dumped.geom
+            )
+        ),
+
+        /*
+         * Remove territory already owned.
+         *
+         * Only the newly enclosed extension
+         * remains.
+         */
+        attached_faces AS (
+          SELECT
+            ST_Difference(
+              face_metric,
+              existing_metric
+            ) AS territory_metric
+
+          FROM attached_faces_raw
+        ),
+
+        /*
+         * ========================================================
+         * COMBINE ALL POSSIBLE CAPTURE PARTS
+         * ========================================================
+         */
+        candidate_parts AS (
+
+          /*
+           * Closed loops anywhere in route.
+           */
+          SELECT
+            territory_metric
+
+          FROM route_faces
+
+          UNION ALL
+
+          /*
+           * Start/end <= 100 meters fallback.
+           */
+          SELECT
+            territory_metric
+
+          FROM near_closed_capture
+
+          WHERE
+            territory_metric IS NOT NULL
+
+            AND
+            NOT ST_IsEmpty(
+              territory_metric
+            )
+
+            AND
+            ST_Area(
+              territory_metric
+            ) >=
+              ${MIN_CAPTURE_AREA_M2}
+
+          UNION ALL
+
+          /*
+           * New area created by touching
+           * previous territory.
+           */
+          SELECT
+            territory_metric
+
+          FROM attached_faces
+
+          WHERE
+            territory_metric IS NOT NULL
+
+            AND
+            NOT ST_IsEmpty(
+              territory_metric
+            )
+
+            AND
+            ST_Area(
+              territory_metric
+            ) >=
+              ${MIN_CAPTURE_AREA_M2}
+        ),
+
+        /*
+         * ========================================================
+         * UNION NEW CAPTURE PARTS
+         * ========================================================
+         */
+        candidate_union AS (
+          SELECT
+            ST_UnaryUnion(
+              ST_Collect(
+                territory_metric
+              )
+            ) AS territory_metric
+
+          FROM candidate_parts
+
+          WHERE
+            territory_metric IS NOT NULL
+
+            AND
+            NOT ST_IsEmpty(
+              territory_metric
+            )
+        ),
+
+        /*
+         * ========================================================
+         * REMOVE ALREADY OWNED AREA
+         * ========================================================
+         *
+         * Re-running inside previous territory should not
+         * duplicate the same area.
+         */
+        only_new_area AS (
+          SELECT
+            CASE
+
+              WHEN
+                candidate.territory_metric
+                  IS NULL
+
+              THEN NULL
+
+              WHEN
+                existing.territory_metric
+                  IS NULL
+
+              THEN
+                candidate.territory_metric
+
+              ELSE
+                ST_Difference(
+                  candidate.territory_metric,
+                  existing.territory_metric
+                )
+
+            END AS territory_metric
+
+          FROM candidate_union candidate
+
+          CROSS JOIN
+            metric_existing_area existing
+        ),
+
+        /*
+         * ========================================================
+         * NORMALIZE NEW AREA
+         * ========================================================
+         */
+        new_area AS (
+          SELECT
+            ST_Transform(
+              ST_Multi(
+                ST_CollectionExtract(
+                  ST_MakeValid(
+                    territory_metric
+                  ),
+                  3
+                )
+              ),
+              4326
+            ) AS territory,
+
+            route.route
+
+          FROM only_new_area
+
+          CROSS JOIN
+            new_route route
+
+          WHERE
+            territory_metric IS NOT NULL
+
+            AND
+            NOT ST_IsEmpty(
+              territory_metric
+            )
+
+            AND
+            ST_Area(
+              territory_metric
+            ) >=
+              ${MIN_CAPTURE_AREA_M2}
+        ),
+
+        /*
+         * ========================================================
+         * INSERT RAW TERRITORY
+         * ========================================================
+         */
         inserted AS (
           INSERT INTO territories (
             id,
@@ -2181,10 +1616,17 @@ export const finishActivity = async (req, res) => {
 
             route,
 
-            COALESCE(
-              ${frontendAreaKm2},
-              0
-            ),
+            /*
+             * PostGIS calculates the real captured area.
+             *
+             * Flutter whole-route area is intentionally
+             * not trusted here because an open stop tail
+             * could make that incorrect.
+             */
+            ST_Area(
+              territory::geography
+            ) /
+            1000000.0,
 
             NOW(),
             NOW(),
@@ -2195,24 +1637,34 @@ export const finishActivity = async (req, res) => {
           WHERE
             territory IS NOT NULL
 
-            AND NOT ST_IsEmpty(
+            AND
+            NOT ST_IsEmpty(
               territory
             )
+
+            AND
+            ST_Area(
+              territory::geography
+            ) >=
+              ${MIN_CAPTURE_AREA_M2}
 
           RETURNING id
         )
 
-        SELECT id
+        SELECT
+          id
+
         FROM inserted;
       `;
 
     /*
-     * No valid closed territory.
+     * ============================================================
+     * NO TERRITORY CREATED
+     * ============================================================
      */
     if (
       !territoryResult ||
-      territoryResult.length ===
-        0
+      territoryResult.length === 0
     ) {
       if (xpEarned > 0) {
         await addXP({
@@ -2277,13 +1729,11 @@ export const finishActivity = async (req, res) => {
         );
 
       const progress =
-        await prisma.userProgress.findUnique(
-          {
-            where: {
-              userId,
-            },
+        await prisma.userProgress.findUnique({
+          where: {
+            userId,
           },
-        );
+        });
 
       return res
         .status(201)
@@ -2345,44 +1795,12 @@ export const finishActivity = async (req, res) => {
      * ============================================================
      * CLAN TERRITORY
      * ============================================================
-     *
-     * RULES:
-     *
-     * 1. Territory belongs to clan, not user.
-     *
-     * 2. Different users in SAME clan can merge territory.
-     *
-     * User 1:
-     *
-     * ███████
-     *
-     * User 2 same clan:
-     *
-     *       ███████
-     *
-     * Result:
-     *
-     * ██████████████
-     *
-     * 3. User leaving does NOT remove territory.
-     *
-     * 4. Different clans DO NOT merge.
      */
     if (capturedClanId) {
       /*
        * ==========================================================
-       * MERGE TERRITORY FROM ALL USERS IN SAME CLAN
+       * RECURSIVELY FIND SAME CLAN CONNECTED TERRITORY
        * ==========================================================
-       *
-       * Notice:
-       *
-       * There is NO:
-       *
-       * t."userId" = ${userId}
-       *
-       * check.
-       *
-       * We use clanId instead.
        */
       await prisma.$queryRaw`
         WITH RECURSIVE
@@ -2396,7 +1814,7 @@ export const finishActivity = async (req, res) => {
 
           WHERE
             t.id =
-            ${territoryId}
+              ${territoryId}
 
           LIMIT 1
         ),
@@ -2411,7 +1829,7 @@ export const finishActivity = async (req, res) => {
           JOIN clan_territories ct
             ON
               ct."territoryId" =
-              t.id
+                t.id
 
           WHERE
             ct."clanId" =
@@ -2431,9 +1849,9 @@ export const finishActivity = async (req, res) => {
         ),
 
         connected AS (
+
           /*
-           * First territories touching the newly
-           * captured territory.
+           * First directly connected clan territory.
            */
           SELECT
             c.id,
@@ -2460,15 +1878,9 @@ export const finishActivity = async (req, res) => {
           UNION
 
           /*
-           * Recursive merge.
+           * Recursively find:
            *
-           * If:
-           *
-           * NEW touches A
-           * A touches B
-           * B touches C
-           *
-           * all become one clan territory.
+           * NEW -> A -> B -> C
            */
           SELECT
             c.id,
@@ -2512,7 +1924,6 @@ export const finishActivity = async (req, res) => {
 
         merged AS (
           SELECT
-
             ST_Multi(
               ST_CollectionExtract(
                 ST_MakeValid(
@@ -2587,19 +1998,14 @@ export const finishActivity = async (req, res) => {
             merged.merged_boundary
           )
 
-        RETURNING t.id;
+        RETURNING
+          t.id;
       `;
 
       /*
        * ==========================================================
-       * DELETE OLD SAME-CLAN TERRITORY ROWS
+       * DELETE OLD SAME CLAN ROWS
        * ==========================================================
-       *
-       * They have already been merged into territoryId.
-       *
-       * Old ClanTerritory links will cascade-delete.
-       *
-       * A fresh ClanTerritory link is created below.
        */
       await prisma.$executeRaw`
         WITH RECURSIVE
@@ -2612,7 +2018,7 @@ export const finishActivity = async (req, res) => {
 
           WHERE
             id =
-            ${territoryId}
+              ${territoryId}
 
           LIMIT 1
         ),
@@ -2627,7 +2033,7 @@ export const finishActivity = async (req, res) => {
           JOIN clan_territories ct
             ON
               ct."territoryId" =
-              t.id
+                t.id
 
           WHERE
             ct."clanId" =
@@ -2647,6 +2053,7 @@ export const finishActivity = async (req, res) => {
         ),
 
         connected AS (
+
           SELECT
             c.id,
             c.boundary
@@ -2700,21 +2107,19 @@ export const finishActivity = async (req, res) => {
 
         DELETE FROM territories
 
-        WHERE id IN (
-          SELECT id
-          FROM connected
-        );
+        WHERE
+          id IN (
+            SELECT
+              id
+
+            FROM connected
+          );
       `;
 
       /*
        * ==========================================================
-       * HANDLE OTHER TERRITORY / STEAL LOGIC
+       * OPPOSING TERRITORY / STEAL LOGIC
        * ==========================================================
-       *
-       * Same clan territory has already been merged.
-       *
-       * captureTerritory now handles remaining opposing
-       * territories.
        */
       await captureTerritory({
         userId,
@@ -2727,7 +2132,9 @@ export const finishActivity = async (req, res) => {
       });
 
       /*
-       * Recalculate geometry area.
+       * ==========================================================
+       * RECALCULATE TERRITORY AREA
+       * ==========================================================
        */
       await prisma.$executeRaw`
         UPDATE territories
@@ -2738,7 +2145,9 @@ export const finishActivity = async (req, res) => {
 
               WHEN
                 boundary IS NULL
+
                 OR
+
                 ST_IsEmpty(
                   boundary
                 )
@@ -2761,9 +2170,6 @@ export const finishActivity = async (req, res) => {
             ${territoryId};
       `;
 
-      /*
-       * Find final territory.
-       */
       const finalClanTerritory =
         await prisma.territory.findUnique({
           where: {
@@ -2781,12 +2187,6 @@ export const finishActivity = async (req, res) => {
        * ==========================================================
        * PERMANENT CLAN OWNERSHIP
        * ==========================================================
-       *
-       * This is what makes territory survive after user leaves.
-       *
-       * ClanMember can disappear later.
-       *
-       * ClanTerritory remains.
        */
       if (finalClanTerritory) {
         await prisma.clanTerritory.upsert({
@@ -2814,12 +2214,6 @@ export const finishActivity = async (req, res) => {
               ) || 0,
           },
 
-          /*
-           * Don't change clanId.
-           *
-           * Don't transfer territory because the
-           * user changes clans later.
-           */
           update: {
             areaKm2:
               Number(
@@ -2875,18 +2269,11 @@ export const finishActivity = async (req, res) => {
      * ============================================================
      * PERSONAL TERRITORY
      * ============================================================
-     *
-     * Personal territories remain tied to user.
-     *
-     * They DO NOT merge with clan territory.
-     *
-     * They only merge with:
-     *
-     * same user
-     * +
-     * personal territory.
      */
     else {
+      /*
+       * Handle stealing/opposition first.
+       */
       await captureTerritory({
         userId,
 
@@ -2898,10 +2285,22 @@ export const finishActivity = async (req, res) => {
       });
 
       /*
-       * Merge user's own PERSONAL territory.
+       * ==========================================================
+       * RECURSIVE PERSONAL TERRITORY MERGE
+       * ==========================================================
+       *
+       * NEW touches A
+       * A touches B
+       * B touches C
+       *
+       * Result:
+       *
+       * NEW + A + B + C
+       *
+       * all become one territory.
        */
-      await prisma.$queryRaw`
-        WITH
+      await prisma.$executeRaw`
+        WITH RECURSIVE
 
         current_territory AS (
           SELECT
@@ -2912,24 +2311,22 @@ export const finishActivity = async (req, res) => {
 
           WHERE
             t.id =
-            ${territoryId}
+              ${territoryId}
 
           LIMIT 1
         ),
 
-        touching AS (
-          SELECT
-            t.id
+        personal_candidates AS (
+          SELECT DISTINCT
+            t.id,
+            t.boundary
 
           FROM territories t
 
           JOIN activities ta
             ON
               ta.id =
-              t."activityId"
-
-          CROSS JOIN
-            current_territory current
+                t."activityId"
 
           WHERE
             t."userId" =
@@ -2946,10 +2343,8 @@ export const finishActivity = async (req, res) => {
             ) = false
 
             /*
-             * Extra protection:
-             *
-             * do not merge something that is already
-             * permanently owned by a clan.
+             * Never merge clan-owned territory
+             * into personal territory.
              */
             AND
             NOT EXISTS (
@@ -2959,7 +2354,7 @@ export const finishActivity = async (req, res) => {
 
               WHERE
                 clan_t."territoryId" =
-                t.id
+                  t.id
             )
 
             AND
@@ -2969,21 +2364,65 @@ export const finishActivity = async (req, res) => {
             NOT ST_IsEmpty(
               t.boundary
             )
+        ),
 
-            AND
-            (
-              ST_Intersects(
-                t.boundary,
-                current.boundary
-              )
+        connected AS (
 
-              OR
+          /*
+           * Territories touching the new capture.
+           */
+          SELECT
+            candidate.id,
+            candidate.boundary
 
-              ST_Touches(
-                t.boundary,
-                current.boundary
-              )
+          FROM personal_candidates candidate
+
+          CROSS JOIN
+            current_territory current
+
+          WHERE
+            ST_Intersects(
+              candidate.boundary,
+              current.boundary
             )
+
+            OR
+
+            ST_Touches(
+              candidate.boundary,
+              current.boundary
+            )
+
+          UNION
+
+          /*
+           * Recursive connected territory.
+           */
+          SELECT
+            candidate.id,
+            candidate.boundary
+
+          FROM personal_candidates candidate
+
+          JOIN connected existing
+            ON
+              candidate.id !=
+                existing.id
+
+              AND
+              (
+                ST_Intersects(
+                  candidate.boundary,
+                  existing.boundary
+                )
+
+                OR
+
+                ST_Touches(
+                  candidate.boundary,
+                  existing.boundary
+                )
+              )
         ),
 
         all_ids AS (
@@ -2991,17 +2430,16 @@ export const finishActivity = async (req, res) => {
             ${territoryId}::text
               AS id
 
-          UNION ALL
+          UNION
 
           SELECT
             id::text
 
-          FROM touching
+          FROM connected
         ),
 
         merged AS (
           SELECT
-
             ST_Multi(
               ST_CollectionExtract(
                 ST_MakeValid(
@@ -3025,7 +2463,9 @@ export const finishActivity = async (req, res) => {
 
           WHERE
             t.id IN (
-              SELECT id
+              SELECT
+                id
+
               FROM all_ids
             )
 
@@ -3036,128 +2476,73 @@ export const finishActivity = async (req, res) => {
             NOT ST_IsEmpty(
               t.boundary
             )
-        )
+        ),
 
-        UPDATE territories t
+        /*
+         * Update the NEW territory row
+         * with the full merged territory.
+         */
+        updated AS (
+          UPDATE territories t
 
-        SET
-          boundary =
-            merged.merged_boundary,
+          SET
+            boundary =
+              merged.merged_boundary,
 
-          center =
-            ST_PointOnSurface(
-              merged.merged_boundary
-            ),
+            center =
+              ST_PointOnSurface(
+                merged.merged_boundary
+              ),
 
-          "routeGeometry" =
-            merged.merged_route,
+            "routeGeometry" =
+              merged.merged_route,
 
-          "areaKm2" =
-            ST_Area(
-              merged.merged_boundary::geography
-            ) /
-            1000000.0,
+            "areaKm2" =
+              ST_Area(
+                merged.merged_boundary::geography
+              ) /
+              1000000.0,
 
-          "updatedAt" =
-            NOW()
+            "updatedAt" =
+              NOW()
 
-        FROM merged
-
-        WHERE
-          t.id =
-            ${territoryId}
-
-          AND
-          merged.merged_boundary
-            IS NOT NULL
-
-          AND
-          NOT ST_IsEmpty(
-            merged.merged_boundary
-          )
-
-        RETURNING t.id;
-      `;
-
-      /*
-       * Delete older PERSONAL territory rows
-       * that were absorbed into the new one.
-       */
-      await prisma.$executeRaw`
-        WITH
-
-        current_territory AS (
-          SELECT
-            boundary
-
-          FROM territories
+          FROM merged
 
           WHERE
-            id =
-            ${territoryId}
+            t.id =
+              ${territoryId}
 
-          LIMIT 1
+            AND
+            merged.merged_boundary
+              IS NOT NULL
+
+            AND
+            NOT ST_IsEmpty(
+              merged.merged_boundary
+            )
+
+          RETURNING
+            t.id
         )
 
+        /*
+         * Delete only previous rows that were
+         * actually absorbed.
+         */
         DELETE FROM territories t
 
-        USING
-          activities ta,
-          current_territory current
-
         WHERE
-          ta.id =
-            t."activityId"
+          t.id IN (
+            SELECT
+              id
+
+            FROM connected
+          )
 
           AND
-          t."userId" =
-            ${userId}
-
-          AND
-          t.id !=
-            ${territoryId}
-
-          AND
-          COALESCE(
-            ta."include_in_clan",
-            false
-          ) = false
-
-          /*
-           * NEVER delete clan territory from personal merge.
-           */
-          AND
-          NOT EXISTS (
+          EXISTS (
             SELECT 1
-
-            FROM clan_territories clan_t
-
-            WHERE
-              clan_t."territoryId" =
-              t.id
-          )
-
-          AND
-          t.boundary IS NOT NULL
-
-          AND
-          NOT ST_IsEmpty(
-            t.boundary
-          )
-
-          AND
-          (
-            ST_Intersects(
-              t.boundary,
-              current.boundary
-            )
-
-            OR
-
-            ST_Touches(
-              t.boundary,
-              current.boundary
-            )
+            FROM updated
           );
       `;
     }
@@ -3190,27 +2575,32 @@ export const finishActivity = async (req, res) => {
 
           ST_AsGeoJSON(
             boundary
-          )::json AS boundary,
+          )::json
+            AS boundary,
 
           ST_AsGeoJSON(
             center
-          )::json AS center,
+          )::json
+            AS center,
 
           ST_AsGeoJSON(
             "routeGeometry"
-          )::json AS route
+          )::json
+            AS route
 
         FROM territories
 
         WHERE
           id =
-          ${territoryId}
+            ${territoryId}
 
         LIMIT 1;
       `;
 
     /*
-     * Capture events.
+     * ============================================================
+     * CAPTURE EVENTS
+     * ============================================================
      */
     const recentEvents =
       await prisma.territoryEvent.findMany({
@@ -3417,6 +2807,7 @@ export const finishActivity = async (req, res) => {
 };
 
 
+
 // export const finishActivity = async (req, res) => {
 //   try {
 //     const userId = req.user.id;
@@ -3449,17 +2840,20 @@ export const finishActivity = async (req, res) => {
 //       includeInClan,
 //       notes,
 //       areaKm2,
+
+//       // Hydration inputs and backward-compatible aliases.
+//       userWeightKg,
+//       activityMode,
+//       averageSpeed,
+//       averagePace,
+//       startLatitude,
+//       startLongitude,
+//       endLatitude,
+//       endLongitude,
 //     } = req.body;
 
 //     /*
 //      * Convert optional numeric values safely.
-//      *
-//      * This supports:
-//      * - numbers
-//      * - numeric strings
-//      * - null/undefined values
-//      *
-//      * Invalid values become null instead of causing Prisma errors.
 //      */
 //     const toNullableFiniteNumber = (value) => {
 //       if (value === undefined || value === null || value === '') {
@@ -3471,13 +2865,20 @@ export const finishActivity = async (req, res) => {
 //       return Number.isFinite(parsed) ? parsed : null;
 //     };
 
-//     const safeElevationGain = toNullableFiniteNumber(elevationGain);
-//     const safeElevationLoss = toNullableFiniteNumber(elevationLoss);
-//     const safeHighestElevation = toNullableFiniteNumber(highestElevation);
-//     const safeLowestElevation = toNullableFiniteNumber(lowestElevation);
+//     const safeElevationGain =
+//       toNullableFiniteNumber(elevationGain);
+
+//     const safeElevationLoss =
+//       toNullableFiniteNumber(elevationLoss);
+
+//     const safeHighestElevation =
+//       toNullableFiniteNumber(highestElevation);
+
+//     const safeLowestElevation =
+//       toNullableFiniteNumber(lowestElevation);
 
 //     /*
-//      * Validate the required basic activity values.
+//      * Validate activity.
 //      */
 //     if (!mode) {
 //       return res.status(400).json({
@@ -3486,14 +2887,20 @@ export const finishActivity = async (req, res) => {
 //       });
 //     }
 
-//     if (!Number.isFinite(Number(distanceKm)) || Number(distanceKm) < 0) {
+//     if (
+//       !Number.isFinite(Number(distanceKm)) ||
+//       Number(distanceKm) < 0
+//     ) {
 //       return res.status(400).json({
 //         success: false,
 //         message: 'A valid distanceKm is required',
 //       });
 //     }
 
-//     if (!Number.isFinite(Number(durationSec)) || Number(durationSec) < 0) {
+//     if (
+//       !Number.isFinite(Number(durationSec)) ||
+//       Number(durationSec) < 0
+//     ) {
 //       return res.status(400).json({
 //         success: false,
 //         message: 'A valid durationSec is required',
@@ -3509,79 +2916,232 @@ export const finishActivity = async (req, res) => {
 //     ) {
 //       return res.status(400).json({
 //         success: false,
-//         message: 'Valid startedAt and endedAt values are required',
+//         message:
+//           'Valid startedAt and endedAt values are required',
 //       });
 //     }
 
 //     if (parsedEndedAt < parsedStartedAt) {
 //       return res.status(400).json({
 //         success: false,
-//         message: 'endedAt cannot be earlier than startedAt',
+//         message:
+//           'endedAt cannot be earlier than startedAt',
 //       });
 //     }
 
 //     /*
-//      * Idempotency check.
-//      *
-//      * Offline activities may attempt to sync more than once.
-//      * clientActivityId prevents duplicate database activities.
+//      * User profile / hydration.
 //      */
-//     if (clientActivityId) {
-//       const existingActivity = await prisma.activity.findFirst({
+//     const userProfile =
+//       await prisma.user.findUnique({
 //         where: {
-//           userId,
-//           clientActivityId,
+//           id: userId,
+//         },
+
+//         select: {
+//           weight: true,
 //         },
 //       });
+
+//     const resolvedUserWeightKg =
+//       toNullableFiniteNumber(
+//         userProfile?.weight,
+//       ) ??
+//       toNullableFiniteNumber(
+//         userWeightKg,
+//       );
+
+//     const hydrationRoutePoints =
+//       Array.isArray(coordinates)
+//         ? coordinates
+//             .map((point) => ({
+//               lat:
+//                 toNullableFiniteNumber(
+//                   point?.lat,
+//                 ),
+
+//               lng:
+//                 toNullableFiniteNumber(
+//                   point?.lng,
+//                 ),
+//             }))
+//             .filter(
+//               (point) =>
+//                 point.lat !== null &&
+//                 point.lng !== null &&
+//                 point.lat >= -90 &&
+//                 point.lat <= 90 &&
+//                 point.lng >= -180 &&
+//                 point.lng <= 180,
+//             )
+//         : [];
+
+//     const hydrationStartPoint =
+//       hydrationRoutePoints.length > 0
+//         ? hydrationRoutePoints[0]
+//         : null;
+
+//     const hydrationEndPoint =
+//       hydrationRoutePoints.length > 0
+//         ? hydrationRoutePoints[
+//             hydrationRoutePoints.length - 1
+//           ]
+//         : null;
+
+//     const resolvedStartLatitude =
+//       toNullableFiniteNumber(
+//         startLatitude,
+//       ) ??
+//       hydrationStartPoint?.lat ??
+//       null;
+
+//     const resolvedStartLongitude =
+//       toNullableFiniteNumber(
+//         startLongitude,
+//       ) ??
+//       hydrationStartPoint?.lng ??
+//       null;
+
+//     const resolvedEndLatitude =
+//       toNullableFiniteNumber(
+//         endLatitude,
+//       ) ??
+//       hydrationEndPoint?.lat ??
+//       null;
+
+//     const resolvedEndLongitude =
+//       toNullableFiniteNumber(
+//         endLongitude,
+//       ) ??
+//       hydrationEndPoint?.lng ??
+//       null;
+
+//     const hydrationLatitude =
+//       resolvedStartLatitude !== null &&
+//       resolvedEndLatitude !== null
+//         ? (
+//             resolvedStartLatitude +
+//             resolvedEndLatitude
+//           ) / 2
+//         : resolvedEndLatitude ??
+//           resolvedStartLatitude;
+
+//     const hydrationLongitude =
+//       resolvedStartLongitude !== null &&
+//       resolvedEndLongitude !== null
+//         ? (
+//             resolvedStartLongitude +
+//             resolvedEndLongitude
+//           ) / 2
+//         : resolvedEndLongitude ??
+//           resolvedStartLongitude;
+
+//     const hydration =
+//       await getHydrationRecommendation({
+//         userWeightKg:
+//           resolvedUserWeightKg,
+
+//         activityMode:
+//           activityMode ?? mode,
+
+//         durationSec,
+
+//         averageSpeed:
+//           averageSpeed ?? avgSpeed,
+
+//         averagePace:
+//           averagePace ?? avgPace,
+
+//         latitude:
+//           hydrationLatitude,
+
+//         longitude:
+//           hydrationLongitude,
+//       });
+
+//     /*
+//      * Offline/idempotency check.
+//      */
+//     if (clientActivityId) {
+//       const existingActivity =
+//         await prisma.activity.findFirst({
+//           where: {
+//             userId,
+//             clientActivityId,
+//           },
+//         });
 
 //       if (existingActivity) {
 //         return res.status(200).json({
 //           success: true,
 //           duplicate: true,
-//           message: 'Activity already synced',
-//           activity: existingActivity,
+//           message:
+//             'Activity already synced',
+//           activity:
+//             existingActivity,
+//           hydration,
 //         });
 //       }
 //     }
 
 //     /*
-//      * Validate encoded route.
+//      * Route.
 //      */
-//     const safeRouteEncoded = validateRouteEncoded(routeEncoded);
+//     const safeRouteEncoded =
+//       validateRouteEncoded(
+//         routeEncoded,
+//       );
 
-//     /*
-//      * First attempt to use the coordinates sent by the mobile app.
-//      */
-//     let resolvedCoords = normalizeCoordinates(coordinates);
+//     let resolvedCoords =
+//       normalizeCoordinates(
+//         coordinates,
+//       );
 
-//     /*
-//      * If coordinates are unavailable, recover them from routeEncoded.
-//      */
-//     if ((!resolvedCoords || resolvedCoords.length < 2) && safeRouteEncoded) {
+//     if (
+//       (
+//         !resolvedCoords ||
+//         resolvedCoords.length < 2
+//       ) &&
+//       safeRouteEncoded
+//     ) {
 //       let decoded;
 
 //       try {
-//         decoded = polyline.decode(safeRouteEncoded);
+//         decoded =
+//           polyline.decode(
+//             safeRouteEncoded,
+//           );
 //       } catch (error) {
 //         return res.status(400).json({
 //           success: false,
-//           message: 'Invalid routeEncoded. Could not decode polyline.',
+//           message:
+//             'Invalid routeEncoded. Could not decode polyline.',
 //           error:
-//             process.env.NODE_ENV === 'development'
+//             process.env.NODE_ENV ===
+//             'development'
 //               ? error.message
 //               : undefined,
 //         });
 //       }
 
-//       resolvedCoords = decoded.map(([lat, lng]) => ({
-//         lat,
-//         lng,
-//       }));
+//       resolvedCoords =
+//         decoded.map(
+//           ([lat, lng]) => ({
+//             lat,
+//             lng,
+//           }),
+//         );
 
-//       resolvedCoords = normalizeCoordinates(resolvedCoords);
+//       resolvedCoords =
+//         normalizeCoordinates(
+//           resolvedCoords,
+//         );
 //     }
 
-//     if (!resolvedCoords || resolvedCoords.length < 2) {
+//     if (
+//       !resolvedCoords ||
+//       resolvedCoords.length < 2
+//     ) {
 //       return res.status(400).json({
 //         success: false,
 //         message:
@@ -3589,145 +3149,260 @@ export const finishActivity = async (req, res) => {
 //       });
 //     }
 
-//     /*
-//      * Build the PostGIS LineString GeoJSON.
-//      */
-//     const routeGeoJson = buildLineGeoJsonFromCoords(resolvedCoords);
-//     const routeGeoJsonString = JSON.stringify(routeGeoJson);
+//     const routeGeoJson =
+//       buildLineGeoJsonFromCoords(
+//         resolvedCoords,
+//       );
+
+//     const routeGeoJsonString =
+//       JSON.stringify(
+//         routeGeoJson,
+//       );
 
 //     /*
-//      * Prefer kilometre splits calculated by the mobile app.
-//      *
-//      * The client splits now contain:
-//      * - time and pace
-//      * - elevation gain
-//      * - elevation loss
-//      * - highest elevation
-//      * - lowest elevation
-//      * - starting elevation
-//      * - ending elevation
-//      * - active calories
-//      * - total calories
-//      *
-//      * For older clients, the backend calculates basic kilometre splits.
+//      * KM splits.
 //      */
 //     const kmSplits =
-//       Array.isArray(clientKmSplits) && clientKmSplits.length > 0
+//       Array.isArray(
+//         clientKmSplits,
+//       ) &&
+//       clientKmSplits.length > 0
 //         ? clientKmSplits
-//         : computeKmSplits(resolvedCoords);
+//         : computeKmSplits(
+//             resolvedCoords,
+//           );
 
 //     /*
-//      * Save the original activity.
+//      * ============================================================
+//      * RESOLVE CLAN AT THE TIME OF ACTIVITY
+//      * ============================================================
 //      *
-//      * The original activity route is never subtracted or modified when
-//      * territories overlap.
+//      * IMPORTANT:
+//      *
+//      * We save which clan owns the captured territory NOW.
+//      *
+//      * If this user leaves later:
+//      *
+//      * User leaves Clan A
+//      *        ↓
+//      * ClanMember deleted
+//      *        ↓
+//      * ClanTerritory stays
+//      *        ↓
+//      * Territory STILL belongs to Clan A.
 //      */
-//     const activity = await prisma.activity.create({
-//       data: {
-//         clientActivityId: clientActivityId ?? null,
-//         userId,
-//         mode,
+//     const wantsClanCapture =
+//       includeInClan === true ||
+//       includeInClan === 'true' ||
+//       includeInClan === 1 ||
+//       includeInClan === '1';
 
-//         distanceKm: Number(distanceKm),
-//         durationSec: Number(durationSec),
+//     let activeClanMembership =
+//       null;
 
-//         stopTime:
-//           stopTime === undefined || stopTime === null
-//             ? null
-//             : Number(stopTime),
+//     if (wantsClanCapture) {
+//       activeClanMembership =
+//         await prisma.clanMember.findFirst({
+//           where: {
+//             userId,
+//           },
 
-//         elapsedTime:
-//           elapsedTime === undefined || elapsedTime === null
-//             ? Number(durationSec)
-//             : Number(elapsedTime),
+//           select: {
+//             clanId: true,
+//             joinedAt: true,
+//           },
 
-//         movingTime:
-//           movingTime === undefined || movingTime === null
-//             ? Number(durationSec)
-//             : Number(movingTime),
+//           orderBy: {
+//             joinedAt: 'desc',
+//           },
+//         });
+//     }
 
-//         avgPace: Number(avgPace) || 0,
-
-//         topPace:
-//           topPace === undefined || topPace === null
-//             ? null
-//             : Number(topPace),
-
-//         avgSpeed:
-//           avgSpeed === undefined || avgSpeed === null
-//             ? null
-//             : Number(avgSpeed),
-
-//         topSpeed:
-//           topSpeed === undefined || topSpeed === null
-//             ? null
-//             : Number(topSpeed),
-
-//         calories: Number(calories) || 0,
-
-//         // Complete activity elevation values
-//         elevationGain: safeElevationGain,
-//         elevationLoss: safeElevationLoss,
-//         highestElevation: safeHighestElevation,
-//         lowestElevation: safeLowestElevation,
-
-//         startedAt: parsedStartedAt,
-//         endedAt: parsedEndedAt,
-
-//         routeEncoded: safeRouteEncoded,
-
-//         // Contains split-wise elevation and calorie information.
-//         kmSplits,
-
-//         includeInClan: includeInClan ?? false,
-//         notes: notes?.trim() || null,
-//       },
-//     });
+//     const capturedClanId =
+//       activeClanMembership?.clanId ??
+//       null;
 
 //     /*
-//      * Save routeGeometry separately using PostGIS.
+//      * Do not allow includeInClan=true
+//      * when user isn't actually in a clan.
+//      */
+//     const effectiveIncludeInClan =
+//       wantsClanCapture &&
+//       capturedClanId !== null;
+
+//     /*
+//      * ============================================================
+//      * CREATE ACTIVITY
+//      * ============================================================
+//      */
+//     const activity =
+//       await prisma.activity.create({
+//         data: {
+//           clientActivityId:
+//             clientActivityId ??
+//             null,
+
+//           userId,
+
+//           mode,
+
+//           distanceKm:
+//             Number(distanceKm),
+
+//           durationSec:
+//             Number(durationSec),
+
+//           stopTime:
+//             stopTime === undefined ||
+//             stopTime === null
+//               ? null
+//               : Number(stopTime),
+
+//           elapsedTime:
+//             elapsedTime ===
+//               undefined ||
+//             elapsedTime === null
+//               ? Number(durationSec)
+//               : Number(
+//                   elapsedTime,
+//                 ),
+
+//           movingTime:
+//             movingTime ===
+//               undefined ||
+//             movingTime === null
+//               ? Number(durationSec)
+//               : Number(
+//                   movingTime,
+//                 ),
+
+//           avgPace:
+//             Number(avgPace) ||
+//             0,
+
+//           topPace:
+//             topPace === undefined ||
+//             topPace === null
+//               ? null
+//               : Number(topPace),
+
+//           avgSpeed:
+//             avgSpeed === undefined ||
+//             avgSpeed === null
+//               ? null
+//               : Number(avgSpeed),
+
+//           topSpeed:
+//             topSpeed === undefined ||
+//             topSpeed === null
+//               ? null
+//               : Number(topSpeed),
+
+//           calories:
+//             Number(calories) ||
+//             0,
+
+//           elevationGain:
+//             safeElevationGain,
+
+//           elevationLoss:
+//             safeElevationLoss,
+
+//           highestElevation:
+//             safeHighestElevation,
+
+//           lowestElevation:
+//             safeLowestElevation,
+
+//           startedAt:
+//             parsedStartedAt,
+
+//           endedAt:
+//             parsedEndedAt,
+
+//           routeEncoded:
+//             safeRouteEncoded,
+
+//           kmSplits,
+
+//           includeInClan:
+//             effectiveIncludeInClan,
+
+//           notes:
+//             notes?.trim() ||
+//             null,
+//         },
+//       });
+
+//     /*
+//      * Save PostGIS route geometry.
 //      */
 //     await prisma.$executeRaw`
 //       UPDATE activities
-//       SET "routeGeometry" = ST_SetSRID(
-//         ST_GeomFromGeoJSON(${routeGeoJsonString}),
-//         4326
-//       )
+
+//       SET "routeGeometry" =
+//         ST_SetSRID(
+//           ST_GeomFromGeoJSON(
+//             ${routeGeoJsonString}
+//           ),
+//           4326
+//         )
+
 //       WHERE id = ${activity.id};
 //     `;
 
 //     /*
-//      * XP configuration.
+//      * XP.
 //      */
-//     const MIN_DISTANCE_KM = 0.1;
-//     const XP_PER_KM = 50;
+//     const MIN_DISTANCE_KM =
+//       0.1;
 
-//     const numericDistanceKm = Number(distanceKm);
+//     const XP_PER_KM =
+//       50;
+
+//     const numericDistanceKm =
+//       Number(distanceKm);
 
 //     const xpEarned =
 //       numericDistanceKm > 0
-//         ? Math.round(numericDistanceKm * XP_PER_KM)
+//         ? Math.round(
+//             numericDistanceKm *
+//               XP_PER_KM,
+//           )
 //         : 0;
 
-//     /*
-//      * Only RUN and WALK activities can capture territories.
-//      */
-//     const normalizedMode = String(mode).toUpperCase();
+//     const normalizedMode =
+//       String(
+//         mode,
+//       ).toUpperCase();
 
 //     const shouldCaptureTerritory =
-//       normalizedMode === 'WALK' || normalizedMode === 'RUN';
+//       normalizedMode === 'WALK' ||
+//       normalizedMode === 'RUN';
 
 //     /*
-//      * Save progression directly for modes that do not capture territory.
+//      * ============================================================
+//      * NON-TERRITORY ACTIVITY
+//      * ============================================================
 //      */
-//     if (!shouldCaptureTerritory) {
+//     if (
+//       !shouldCaptureTerritory
+//     ) {
 //       if (xpEarned > 0) {
 //         await addXP({
 //           userId,
-//           amount: xpEarned,
-//           type: 'ACTIVITY',
-//           description: `${normalizedMode} — ${numericDistanceKm} km`,
-//           activityId: activity.id,
+
+//           amount:
+//             xpEarned,
+
+//           type:
+//             'ACTIVITY',
+
+//           description:
+//             `${normalizedMode} — ${numericDistanceKm} km`,
+
+//           activityId:
+//             activity.id,
 //         });
 //       }
 
@@ -3735,18 +3410,29 @@ export const finishActivity = async (req, res) => {
 //         where: {
 //           userId,
 //         },
+
 //         create: {
 //           userId,
-//           totalDistanceKm: numericDistanceKm,
+
+//           totalDistanceKm:
+//             numericDistanceKm,
+
 //           activitiesCount:
-//             numericDistanceKm >= MIN_DISTANCE_KM ? 1 : 0,
+//             numericDistanceKm >=
+//             MIN_DISTANCE_KM
+//               ? 1
+//               : 0,
 //         },
+
 //         update: {
 //           totalDistanceKm: {
-//             increment: numericDistanceKm,
+//             increment:
+//               numericDistanceKm,
 //           },
+
 //           activitiesCount:
-//             numericDistanceKm >= MIN_DISTANCE_KM
+//             numericDistanceKm >=
+//             MIN_DISTANCE_KM
 //               ? {
 //                   increment: 1,
 //                 }
@@ -3754,140 +3440,242 @@ export const finishActivity = async (req, res) => {
 //         },
 //       });
 
-//       const levelResult = await checkLevelUp(userId);
-//       const newBadges = await checkBadges(userId);
-
-//       const progress = await prisma.userProgress.findUnique({
-//         where: {
+//       const levelResult =
+//         await checkLevelUp(
 //           userId,
-//         },
-//       });
+//         );
 
-//       return res.status(201).json({
-//         success: true,
-//         message: 'Activity completed successfully',
-//         activity,
-//         territory: null,
-//         captureEvents: [],
-//         progression: {
-//           xpEarned,
-//           leveledUp: levelResult?.leveledUp ?? false,
-//           level: levelResult?.level ?? progress?.level ?? 0,
-//           newBadges,
-//           progress: {
-//             currentXp: progress?.currentXp,
-//             totalXp: progress?.totalXp,
-//             xpToNextLevel: progress?.xpToNextLevel,
-//             level: progress?.level,
-//             totalDistanceKm: progress?.totalDistanceKm,
-//             activitiesCount: progress?.activitiesCount,
+//       const newBadges =
+//         await checkBadges(
+//           userId,
+//         );
+
+//       const progress =
+//         await prisma.userProgress.findUnique(
+//           {
+//             where: {
+//               userId,
+//             },
 //           },
-//         },
-//       });
+//         );
+
+//       return res
+//         .status(201)
+//         .json({
+//           success: true,
+
+//           message:
+//             'Activity completed successfully',
+
+//           activity,
+
+//           territory: null,
+
+//           captureEvents: [],
+
+//           hydration,
+
+//           progression: {
+//             xpEarned,
+
+//             leveledUp:
+//               levelResult?.leveledUp ??
+//               false,
+
+//             level:
+//               levelResult?.level ??
+//               progress?.level ??
+//               0,
+
+//             newBadges,
+
+//             progress: {
+//               currentXp:
+//                 progress?.currentXp,
+
+//               totalXp:
+//                 progress?.totalXp,
+
+//               xpToNextLevel:
+//                 progress?.xpToNextLevel,
+
+//               level:
+//                 progress?.level,
+
+//               totalDistanceKm:
+//                 progress?.totalDistanceKm,
+
+//               activitiesCount:
+//                 progress?.activitiesCount,
+//             },
+//           },
+//         });
 //     }
 
 //     /*
-//      * Validate area calculated by the Flutter application.
+//      * Area calculated by Flutter.
 //      */
 //     const frontendAreaKm2 =
 //       areaKm2 !== undefined &&
 //       areaKm2 !== null &&
-//       Number.isFinite(Number(areaKm2)) &&
+//       Number.isFinite(
+//         Number(areaKm2),
+//       ) &&
 //       Number(areaKm2) > 0
 //         ? Number(areaKm2)
 //         : null;
 
 //     /*
-//      * Create raw territory from the closed route.
-//      *
-//      * Requirements:
-//      * - at least four route points
-//      * - at least 500 metres travelled
-//      * - start and end within 50 metres
+//      * ============================================================
+//      * CREATE RAW TERRITORY
+//      * ============================================================
 //      */
-//     const territoryResult = await prisma.$queryRaw`
-//       WITH new_route AS (
-//         SELECT ST_SetSRID(
-//           ST_GeomFromGeoJSON(${routeGeoJsonString}),
-//           4326
-//         ) AS route
-//       ),
-
-//       new_area AS (
-//         SELECT
-//           ST_Multi(
-//             ST_CollectionExtract(
-//               ST_MakeValid(
-//                 ST_MakePolygon(
-//                   ST_AddPoint(route, ST_StartPoint(route))
-//                 )
+//     const territoryResult =
+//       await prisma.$queryRaw`
+//         WITH new_route AS (
+//           SELECT
+//             ST_SetSRID(
+//               ST_GeomFromGeoJSON(
+//                 ${routeGeoJsonString}
 //               ),
-//               3
+//               4326
+//             ) AS route
+//         ),
+
+//         new_area AS (
+//           SELECT
+
+//             ST_Multi(
+//               ST_CollectionExtract(
+//                 ST_MakeValid(
+//                   ST_MakePolygon(
+//                     ST_AddPoint(
+//                       route,
+//                       ST_StartPoint(
+//                         route
+//                       )
+//                     )
+//                   )
+//                 ),
+//                 3
+//               )
+//             ) AS territory,
+
+//             route
+
+//           FROM new_route
+
+//           WHERE
+//             ST_NPoints(
+//               route
+//             ) >= 4
+
+//             AND
+//             ST_Length(
+//               route::geography
+//             ) >= 500
+
+//             AND
+//             ST_DWithin(
+//               ST_StartPoint(
+//                 route
+//               )::geography,
+
+//               ST_EndPoint(
+//                 route
+//               )::geography,
+
+//               50
 //             )
-//           ) AS territory,
-//           route
-//         FROM new_route
-//         WHERE ST_NPoints(route) >= 4
-//           AND ST_Length(route::geography) >= 500
-//           AND ST_DWithin(
-//             ST_StartPoint(route)::geography,
-//             ST_EndPoint(route)::geography,
-//             50
+//         ),
+
+//         inserted AS (
+//           INSERT INTO territories (
+//             id,
+//             "userId",
+//             "activityId",
+//             boundary,
+//             center,
+//             "routeEncoded",
+//             "routeSegmentsEncoded",
+//             "routeGeometry",
+//             "areaKm2",
+//             "capturedAt",
+//             "createdAt",
+//             "updatedAt"
 //           )
-//       ),
 
-//       inserted AS (
-//         INSERT INTO territories (
-//           id,
-//           "userId",
-//           "activityId",
-//           boundary,
-//           center,
-//           "routeEncoded",
-//           "routeSegmentsEncoded",
-//           "routeGeometry",
-//           "areaKm2",
-//           "capturedAt",
-//           "createdAt",
-//           "updatedAt"
+//           SELECT
+//             gen_random_uuid(),
+
+//             ${userId},
+
+//             ${activity.id},
+
+//             territory,
+
+//             ST_PointOnSurface(
+//               territory
+//             ),
+
+//             ${safeRouteEncoded},
+
+//             ${JSON.stringify(
+//               getRouteSegmentsFromEncoded(
+//                 safeRouteEncoded,
+//               ),
+//             )}::jsonb,
+
+//             route,
+
+//             COALESCE(
+//               ${frontendAreaKm2},
+//               0
+//             ),
+
+//             NOW(),
+//             NOW(),
+//             NOW()
+
+//           FROM new_area
+
+//           WHERE
+//             territory IS NOT NULL
+
+//             AND NOT ST_IsEmpty(
+//               territory
+//             )
+
+//           RETURNING id
 //         )
-//         SELECT
-//           gen_random_uuid(),
-//           ${userId},
-//           ${activity.id},
-//           territory,
-//           ST_PointOnSurface(territory),
-//           ${safeRouteEncoded},
-//           ${JSON.stringify(
-//             getRouteSegmentsFromEncoded(safeRouteEncoded),
-//           )}::jsonb,
-//           route,
-//           COALESCE(${frontendAreaKm2}, 0),
-//           NOW(),
-//           NOW(),
-//           NOW()
-//         FROM new_area
-//         WHERE territory IS NOT NULL
-//           AND NOT ST_IsEmpty(territory)
-//         RETURNING id
-//       )
 
-//       SELECT id
-//       FROM inserted;
-//     `;
+//         SELECT id
+//         FROM inserted;
+//       `;
 
 //     /*
-//      * The activity remains successfully saved even if the route does not form
-//      * a valid territory.
+//      * No valid closed territory.
 //      */
-//     if (!territoryResult || territoryResult.length === 0) {
+//     if (
+//       !territoryResult ||
+//       territoryResult.length ===
+//         0
+//     ) {
 //       if (xpEarned > 0) {
 //         await addXP({
 //           userId,
-//           amount: xpEarned,
-//           type: 'ACTIVITY',
-//           description: `${normalizedMode} — ${numericDistanceKm} km`,
-//           activityId: activity.id,
+
+//           amount:
+//             xpEarned,
+
+//           type:
+//             'ACTIVITY',
+
+//           description:
+//             `${normalizedMode} — ${numericDistanceKm} km`,
+
+//           activityId:
+//             activity.id,
 //         });
 //       }
 
@@ -3895,18 +3683,29 @@ export const finishActivity = async (req, res) => {
 //         where: {
 //           userId,
 //         },
+
 //         create: {
 //           userId,
-//           totalDistanceKm: numericDistanceKm,
+
+//           totalDistanceKm:
+//             numericDistanceKm,
+
 //           activitiesCount:
-//             numericDistanceKm >= MIN_DISTANCE_KM ? 1 : 0,
+//             numericDistanceKm >=
+//             MIN_DISTANCE_KM
+//               ? 1
+//               : 0,
 //         },
+
 //         update: {
 //           totalDistanceKm: {
-//             increment: numericDistanceKm,
+//             increment:
+//               numericDistanceKm,
 //           },
+
 //           activitiesCount:
-//             numericDistanceKm >= MIN_DISTANCE_KM
+//             numericDistanceKm >=
+//             MIN_DISTANCE_KM
 //               ? {
 //                   increment: 1,
 //                 }
@@ -3914,328 +3713,1020 @@ export const finishActivity = async (req, res) => {
 //         },
 //       });
 
-//       const levelResult = await checkLevelUp(userId);
-//       const newBadges = await checkBadges(userId);
-
-//       const progress = await prisma.userProgress.findUnique({
-//         where: {
+//       const levelResult =
+//         await checkLevelUp(
 //           userId,
-//         },
-//       });
+//         );
 
-//       return res.status(201).json({
-//         success: true,
-//         message: 'Activity completed, but no territory was created.',
-//         activity,
-//         territory: null,
-//         captureEvents: [],
-//         progression: {
-//           xpEarned,
-//           leveledUp: levelResult?.leveledUp ?? false,
-//           level: levelResult?.level ?? progress?.level ?? 0,
-//           newBadges,
-//           progress: {
-//             currentXp: progress?.currentXp,
-//             totalXp: progress?.totalXp,
-//             xpToNextLevel: progress?.xpToNextLevel,
-//             level: progress?.level,
-//             totalDistanceKm: progress?.totalDistanceKm,
-//             activitiesCount: progress?.activitiesCount,
+//       const newBadges =
+//         await checkBadges(
+//           userId,
+//         );
+
+//       const progress =
+//         await prisma.userProgress.findUnique(
+//           {
+//             where: {
+//               userId,
+//             },
 //           },
-//         },
-//       });
+//         );
+
+//       return res
+//         .status(201)
+//         .json({
+//           success: true,
+
+//           message:
+//             'Activity completed, but no territory was created.',
+
+//           activity,
+
+//           territory: null,
+
+//           captureEvents: [],
+
+//           hydration,
+
+//           progression: {
+//             xpEarned,
+
+//             leveledUp:
+//               levelResult?.leveledUp ??
+//               false,
+
+//             level:
+//               levelResult?.level ??
+//               progress?.level ??
+//               0,
+
+//             newBadges,
+
+//             progress: {
+//               currentXp:
+//                 progress?.currentXp,
+
+//               totalXp:
+//                 progress?.totalXp,
+
+//               xpToNextLevel:
+//                 progress?.xpToNextLevel,
+
+//               level:
+//                 progress?.level,
+
+//               totalDistanceKm:
+//                 progress?.totalDistanceKm,
+
+//               activitiesCount:
+//                 progress?.activitiesCount,
+//             },
+//           },
+//         });
 //     }
 
-//     const territoryId = territoryResult[0].id;
+//     const territoryId =
+//       territoryResult[0].id;
 
 //     /*
-//      * Subtract other users' existing territories from the new territory.
+//      * ============================================================
+//      * CLAN TERRITORY
+//      * ============================================================
 //      *
-//      * This only changes Territory records.
-//      * The Activity route remains original.
+//      * RULES:
+//      *
+//      * 1. Territory belongs to clan, not user.
+//      *
+//      * 2. Different users in SAME clan can merge territory.
+//      *
+//      * User 1:
+//      *
+//      * ███████
+//      *
+//      * User 2 same clan:
+//      *
+//      *       ███████
+//      *
+//      * Result:
+//      *
+//      * ██████████████
+//      *
+//      * 3. User leaving does NOT remove territory.
+//      *
+//      * 4. Different clans DO NOT merge.
 //      */
-//     await captureTerritory({
-//       userId,
-//       activityId: activity.id,
-//       newTerritoryId: territoryId,
-//     });
+//     if (capturedClanId) {
+//       /*
+//        * ==========================================================
+//        * MERGE TERRITORY FROM ALL USERS IN SAME CLAN
+//        * ==========================================================
+//        *
+//        * Notice:
+//        *
+//        * There is NO:
+//        *
+//        * t."userId" = ${userId}
+//        *
+//        * check.
+//        *
+//        * We use clanId instead.
+//        */
+//       await prisma.$queryRaw`
+//         WITH RECURSIVE
+
+//         current_territory AS (
+//           SELECT
+//             t.id,
+//             t.boundary
+
+//           FROM territories t
+
+//           WHERE
+//             t.id =
+//             ${territoryId}
+
+//           LIMIT 1
+//         ),
+
+//         clan_candidates AS (
+//           SELECT DISTINCT
+//             t.id,
+//             t.boundary
+
+//           FROM territories t
+
+//           JOIN clan_territories ct
+//             ON
+//               ct."territoryId" =
+//               t.id
+
+//           WHERE
+//             ct."clanId" =
+//               ${capturedClanId}
+
+//             AND
+//             t.id !=
+//               ${territoryId}
+
+//             AND
+//             t.boundary IS NOT NULL
+
+//             AND
+//             NOT ST_IsEmpty(
+//               t.boundary
+//             )
+//         ),
+
+//         connected AS (
+//           /*
+//            * First territories touching the newly
+//            * captured territory.
+//            */
+//           SELECT
+//             c.id,
+//             c.boundary
+
+//           FROM clan_candidates c
+
+//           CROSS JOIN
+//             current_territory current
+
+//           WHERE
+//             ST_Intersects(
+//               c.boundary,
+//               current.boundary
+//             )
+
+//             OR
+
+//             ST_Touches(
+//               c.boundary,
+//               current.boundary
+//             )
+
+//           UNION
+
+//           /*
+//            * Recursive merge.
+//            *
+//            * If:
+//            *
+//            * NEW touches A
+//            * A touches B
+//            * B touches C
+//            *
+//            * all become one clan territory.
+//            */
+//           SELECT
+//             c.id,
+//             c.boundary
+
+//           FROM clan_candidates c
+
+//           JOIN connected existing
+//             ON
+//               c.id !=
+//                 existing.id
+
+//               AND
+//               (
+//                 ST_Intersects(
+//                   c.boundary,
+//                   existing.boundary
+//                 )
+
+//                 OR
+
+//                 ST_Touches(
+//                   c.boundary,
+//                   existing.boundary
+//                 )
+//               )
+//         ),
+
+//         all_ids AS (
+//           SELECT
+//             ${territoryId}::text
+//               AS id
+
+//           UNION
+
+//           SELECT
+//             id::text
+
+//           FROM connected
+//         ),
+
+//         merged AS (
+//           SELECT
+
+//             ST_Multi(
+//               ST_CollectionExtract(
+//                 ST_MakeValid(
+//                   ST_UnaryUnion(
+//                     ST_Collect(
+//                       t.boundary
+//                     )
+//                   )
+//                 ),
+//                 3
+//               )
+//             ) AS merged_boundary,
+
+//             ST_LineMerge(
+//               ST_Union(
+//                 t."routeGeometry"
+//               )
+//             ) AS merged_route
+
+//           FROM territories t
+
+//           WHERE
+//             t.id IN (
+//               SELECT id
+//               FROM all_ids
+//             )
+
+//             AND
+//             t.boundary IS NOT NULL
+
+//             AND
+//             NOT ST_IsEmpty(
+//               t.boundary
+//             )
+//         )
+
+//         UPDATE territories t
+
+//         SET
+//           boundary =
+//             merged.merged_boundary,
+
+//           center =
+//             ST_PointOnSurface(
+//               merged.merged_boundary
+//             ),
+
+//           "routeGeometry" =
+//             merged.merged_route,
+
+//           "areaKm2" =
+//             ST_Area(
+//               merged.merged_boundary::geography
+//             ) /
+//             1000000.0,
+
+//           "updatedAt" =
+//             NOW()
+
+//         FROM merged
+
+//         WHERE
+//           t.id =
+//             ${territoryId}
+
+//           AND
+//           merged.merged_boundary
+//             IS NOT NULL
+
+//           AND
+//           NOT ST_IsEmpty(
+//             merged.merged_boundary
+//           )
+
+//         RETURNING t.id;
+//       `;
+
+//       /*
+//        * ==========================================================
+//        * DELETE OLD SAME-CLAN TERRITORY ROWS
+//        * ==========================================================
+//        *
+//        * They have already been merged into territoryId.
+//        *
+//        * Old ClanTerritory links will cascade-delete.
+//        *
+//        * A fresh ClanTerritory link is created below.
+//        */
+//       await prisma.$executeRaw`
+//         WITH RECURSIVE
+
+//         current_territory AS (
+//           SELECT
+//             boundary
+
+//           FROM territories
+
+//           WHERE
+//             id =
+//             ${territoryId}
+
+//           LIMIT 1
+//         ),
+
+//         clan_candidates AS (
+//           SELECT DISTINCT
+//             t.id,
+//             t.boundary
+
+//           FROM territories t
+
+//           JOIN clan_territories ct
+//             ON
+//               ct."territoryId" =
+//               t.id
+
+//           WHERE
+//             ct."clanId" =
+//               ${capturedClanId}
+
+//             AND
+//             t.id !=
+//               ${territoryId}
+
+//             AND
+//             t.boundary IS NOT NULL
+
+//             AND
+//             NOT ST_IsEmpty(
+//               t.boundary
+//             )
+//         ),
+
+//         connected AS (
+//           SELECT
+//             c.id,
+//             c.boundary
+
+//           FROM clan_candidates c
+
+//           CROSS JOIN
+//             current_territory current
+
+//           WHERE
+//             ST_Intersects(
+//               c.boundary,
+//               current.boundary
+//             )
+
+//             OR
+
+//             ST_Touches(
+//               c.boundary,
+//               current.boundary
+//             )
+
+//           UNION
+
+//           SELECT
+//             c.id,
+//             c.boundary
+
+//           FROM clan_candidates c
+
+//           JOIN connected existing
+//             ON
+//               c.id !=
+//                 existing.id
+
+//               AND
+//               (
+//                 ST_Intersects(
+//                   c.boundary,
+//                   existing.boundary
+//                 )
+
+//                 OR
+
+//                 ST_Touches(
+//                   c.boundary,
+//                   existing.boundary
+//                 )
+//               )
+//         )
+
+//         DELETE FROM territories
+
+//         WHERE id IN (
+//           SELECT id
+//           FROM connected
+//         );
+//       `;
+
+//       /*
+//        * ==========================================================
+//        * HANDLE OTHER TERRITORY / STEAL LOGIC
+//        * ==========================================================
+//        *
+//        * Same clan territory has already been merged.
+//        *
+//        * captureTerritory now handles remaining opposing
+//        * territories.
+//        */
+//       await captureTerritory({
+//         userId,
+
+//         activityId:
+//           activity.id,
+
+//         newTerritoryId:
+//           territoryId,
+//       });
+
+//       /*
+//        * Recalculate geometry area.
+//        */
+//       await prisma.$executeRaw`
+//         UPDATE territories
+
+//         SET
+//           "areaKm2" =
+//             CASE
+
+//               WHEN
+//                 boundary IS NULL
+//                 OR
+//                 ST_IsEmpty(
+//                   boundary
+//                 )
+
+//               THEN 0
+
+//               ELSE
+//                 ST_Area(
+//                   boundary::geography
+//                 ) /
+//                 1000000.0
+
+//             END,
+
+//           "updatedAt" =
+//             NOW()
+
+//         WHERE
+//           id =
+//             ${territoryId};
+//       `;
+
+//       /*
+//        * Find final territory.
+//        */
+//       const finalClanTerritory =
+//         await prisma.territory.findUnique({
+//           where: {
+//             id:
+//               territoryId,
+//           },
+
+//           select: {
+//             id: true,
+//             areaKm2: true,
+//           },
+//         });
+
+//       /*
+//        * ==========================================================
+//        * PERMANENT CLAN OWNERSHIP
+//        * ==========================================================
+//        *
+//        * This is what makes territory survive after user leaves.
+//        *
+//        * ClanMember can disappear later.
+//        *
+//        * ClanTerritory remains.
+//        */
+//       if (finalClanTerritory) {
+//         await prisma.clanTerritory.upsert({
+//           where: {
+//             clanId_territoryId: {
+//               clanId:
+//                 capturedClanId,
+
+//               territoryId,
+//             },
+//           },
+
+//           create: {
+//             clanId:
+//               capturedClanId,
+
+//             territoryId,
+
+//             capturedByUserId:
+//               userId,
+
+//             areaKm2:
+//               Number(
+//                 finalClanTerritory.areaKm2,
+//               ) || 0,
+//           },
+
+//           /*
+//            * Don't change clanId.
+//            *
+//            * Don't transfer territory because the
+//            * user changes clans later.
+//            */
+//           update: {
+//             areaKm2:
+//               Number(
+//                 finalClanTerritory.areaKm2,
+//               ) || 0,
+//           },
+//         });
+
+//         /*
+//          * ========================================================
+//          * RECALCULATE CLAN TERRITORY STATS
+//          * ========================================================
+//          */
+//         const clanTerritoryStats =
+//           await prisma.clanTerritory.aggregate({
+//             where: {
+//               clanId:
+//                 capturedClanId,
+//             },
+
+//             _count: {
+//               _all: true,
+//             },
+
+//             _sum: {
+//               areaKm2: true,
+//             },
+//           });
+
+//         await prisma.clan.update({
+//           where: {
+//             id:
+//               capturedClanId,
+//           },
+
+//           data: {
+//             territoryCount:
+//               clanTerritoryStats
+//                 ._count
+//                 ._all,
+
+//             totalAreaKm2:
+//               clanTerritoryStats
+//                 ._sum
+//                 .areaKm2 ??
+//               0,
+//           },
+//         });
+//       }
+//     }
 
 //     /*
-//      * Merge the user's own territories that touch or overlap.
+//      * ============================================================
+//      * PERSONAL TERRITORY
+//      * ============================================================
 //      *
-//      * Clan and personal territories remain in separate lanes.
+//      * Personal territories remain tied to user.
+//      *
+//      * They DO NOT merge with clan territory.
+//      *
+//      * They only merge with:
+//      *
+//      * same user
+//      * +
+//      * personal territory.
 //      */
-//     await prisma.$queryRaw`
-//       WITH current_territory AS (
-//         SELECT
-//           t.id,
-//           t.boundary,
-//           t."areaKm2" AS current_area,
+//     else {
+//       await captureTerritory({
+//         userId,
+
+//         activityId:
+//           activity.id,
+
+//         newTerritoryId:
+//           territoryId,
+//       });
+
+//       /*
+//        * Merge user's own PERSONAL territory.
+//        */
+//       await prisma.$queryRaw`
+//         WITH
+
+//         current_territory AS (
+//           SELECT
+//             t.id,
+//             t.boundary
+
+//           FROM territories t
+
+//           WHERE
+//             t.id =
+//             ${territoryId}
+
+//           LIMIT 1
+//         ),
+
+//         touching AS (
+//           SELECT
+//             t.id
+
+//           FROM territories t
+
+//           JOIN activities ta
+//             ON
+//               ta.id =
+//               t."activityId"
+
+//           CROSS JOIN
+//             current_territory current
+
+//           WHERE
+//             t."userId" =
+//               ${userId}
+
+//             AND
+//             t.id !=
+//               ${territoryId}
+
+//             AND
+//             COALESCE(
+//               ta."include_in_clan",
+//               false
+//             ) = false
+
+//             /*
+//              * Extra protection:
+//              *
+//              * do not merge something that is already
+//              * permanently owned by a clan.
+//              */
+//             AND
+//             NOT EXISTS (
+//               SELECT 1
+
+//               FROM clan_territories clan_t
+
+//               WHERE
+//                 clan_t."territoryId" =
+//                 t.id
+//             )
+
+//             AND
+//             t.boundary IS NOT NULL
+
+//             AND
+//             NOT ST_IsEmpty(
+//               t.boundary
+//             )
+
+//             AND
+//             (
+//               ST_Intersects(
+//                 t.boundary,
+//                 current.boundary
+//               )
+
+//               OR
+
+//               ST_Touches(
+//                 t.boundary,
+//                 current.boundary
+//               )
+//             )
+//         ),
+
+//         all_ids AS (
+//           SELECT
+//             ${territoryId}::text
+//               AS id
+
+//           UNION ALL
+
+//           SELECT
+//             id::text
+
+//           FROM touching
+//         ),
+
+//         merged AS (
+//           SELECT
+
+//             ST_Multi(
+//               ST_CollectionExtract(
+//                 ST_MakeValid(
+//                   ST_UnaryUnion(
+//                     ST_Collect(
+//                       t.boundary
+//                     )
+//                   )
+//                 ),
+//                 3
+//               )
+//             ) AS merged_boundary,
+
+//             ST_LineMerge(
+//               ST_Union(
+//                 t."routeGeometry"
+//               )
+//             ) AS merged_route
+
+//           FROM territories t
+
+//           WHERE
+//             t.id IN (
+//               SELECT id
+//               FROM all_ids
+//             )
+
+//             AND
+//             t.boundary IS NOT NULL
+
+//             AND
+//             NOT ST_IsEmpty(
+//               t.boundary
+//             )
+//         )
+
+//         UPDATE territories t
+
+//         SET
+//           boundary =
+//             merged.merged_boundary,
+
+//           center =
+//             ST_PointOnSurface(
+//               merged.merged_boundary
+//             ),
+
+//           "routeGeometry" =
+//             merged.merged_route,
+
+//           "areaKm2" =
+//             ST_Area(
+//               merged.merged_boundary::geography
+//             ) /
+//             1000000.0,
+
+//           "updatedAt" =
+//             NOW()
+
+//         FROM merged
+
+//         WHERE
+//           t.id =
+//             ${territoryId}
+
+//           AND
+//           merged.merged_boundary
+//             IS NOT NULL
+
+//           AND
+//           NOT ST_IsEmpty(
+//             merged.merged_boundary
+//           )
+
+//         RETURNING t.id;
+//       `;
+
+//       /*
+//        * Delete older PERSONAL territory rows
+//        * that were absorbed into the new one.
+//        */
+//       await prisma.$executeRaw`
+//         WITH
+
+//         current_territory AS (
+//           SELECT
+//             boundary
+
+//           FROM territories
+
+//           WHERE
+//             id =
+//             ${territoryId}
+
+//           LIMIT 1
+//         )
+
+//         DELETE FROM territories t
+
+//         USING
+//           activities ta,
+//           current_territory current
+
+//         WHERE
+//           ta.id =
+//             t."activityId"
+
+//           AND
+//           t."userId" =
+//             ${userId}
+
+//           AND
+//           t.id !=
+//             ${territoryId}
+
+//           AND
 //           COALESCE(
-//             a."include_in_clan",
-//             false
-//           ) AS "currentIncludeInClan"
-//         FROM territories t
-//         JOIN activities a
-//           ON a.id = t."activityId"
-//         WHERE t.id = ${territoryId}
-//         LIMIT 1
-//       ),
-
-//       touching AS (
-//         SELECT t.id
-//         FROM territories t
-//         JOIN activities ta
-//           ON ta.id = t."activityId"
-//         CROSS JOIN current_territory ct
-//         WHERE t."userId" = ${userId}
-//           AND t.id != ${territoryId}
-//           AND COALESCE(
 //             ta."include_in_clan",
 //             false
-//           ) = ct."currentIncludeInClan"
-//           AND t.boundary IS NOT NULL
-//           AND NOT ST_IsEmpty(t.boundary)
-//           AND (
+//           ) = false
+
+//           /*
+//            * NEVER delete clan territory from personal merge.
+//            */
+//           AND
+//           NOT EXISTS (
+//             SELECT 1
+
+//             FROM clan_territories clan_t
+
+//             WHERE
+//               clan_t."territoryId" =
+//               t.id
+//           )
+
+//           AND
+//           t.boundary IS NOT NULL
+
+//           AND
+//           NOT ST_IsEmpty(
+//             t.boundary
+//           )
+
+//           AND
+//           (
 //             ST_Intersects(
 //               t.boundary,
-//               ct.boundary
+//               current.boundary
 //             )
-//             OR ST_Touches(
+
+//             OR
+
+//             ST_Touches(
 //               t.boundary,
-//               ct.boundary
+//               current.boundary
 //             )
-//           )
-//       ),
+//           );
+//       `;
+//     }
 
-//       old_union AS (
-//         SELECT ST_Union(t.boundary) AS old_boundary
-//         FROM territories t
-//         WHERE t.id IN (
-//           SELECT id
-//           FROM touching
-//         )
-//           AND t.boundary IS NOT NULL
-//           AND NOT ST_IsEmpty(t.boundary)
-//       ),
-
-//       all_ids AS (
-//         SELECT ${territoryId}::text AS id
-
-//         UNION ALL
-
-//         SELECT id::text
-//         FROM touching
-//       ),
-
-//       merged AS (
+//     /*
+//      * ============================================================
+//      * FINAL TERRITORY
+//      * ============================================================
+//      */
+//     const finalTerritory =
+//       await prisma.$queryRaw`
 //         SELECT
-//           ST_Multi(
-//             ST_CollectionExtract(
-//               ST_MakeValid(
-//                 ST_UnaryUnion(
-//                   ST_Collect(t.boundary)
-//                 )
-//               ),
-//               3
-//             )
-//           ) AS merged_boundary,
+//           id,
 
-//           ST_LineMerge(
-//             ST_Union(t."routeGeometry")
-//           ) AS merged_route,
+//           "userId",
 
-//           COALESCE(
-//             (
-//               SELECT SUM(old_t."areaKm2")
-//               FROM territories old_t
-//               WHERE old_t.id IN (
-//                 SELECT id
-//                 FROM touching
-//               )
-//             ),
-//             0
-//           )
-//           +
-//           (
-//             COALESCE(
-//               ${frontendAreaKm2},
-//               0
-//             )
-//             *
-//             COALESCE(
-//               (
-//                 ST_Area(
-//                   ST_Difference(
-//                     ct.boundary,
-//                     COALESCE(
-//                       ou.old_boundary,
-//                       ST_GeomFromText(
-//                         'POLYGON EMPTY',
-//                         4326
-//                       )
-//                     )
-//                   )::geography
-//                 )
-//                 /
-//                 NULLIF(
-//                   ST_Area(
-//                     ct.boundary::geography
-//                   ),
-//                   0
-//                 )
-//               ),
-//               1
-//             )
-//           ) AS merged_area
+//           "activityId",
 
-//         FROM territories t
-//         CROSS JOIN current_territory ct
-//         LEFT JOIN old_union ou
-//           ON true
-//         WHERE t.id IN (
-//           SELECT id
-//           FROM all_ids
-//         )
-//           AND t.boundary IS NOT NULL
-//           AND NOT ST_IsEmpty(t.boundary)
-//         GROUP BY
-//           ct.boundary,
-//           ou.old_boundary
-//       )
+//           "areaKm2",
 
-//       UPDATE territories t
-//       SET
-//         boundary = merged.merged_boundary,
-//         center = ST_PointOnSurface(
-//           merged.merged_boundary
-//         ),
-//         "routeGeometry" = merged.merged_route,
-//         "areaKm2" = merged.merged_area,
-//         "updatedAt" = NOW()
-//       FROM merged
-//       WHERE t.id = ${territoryId}
-//         AND merged.merged_boundary IS NOT NULL
-//         AND NOT ST_IsEmpty(
-//           merged.merged_boundary
-//         )
-//       RETURNING t.id;
-//     `;
+//           "capturedAt",
+
+//           "createdAt",
+
+//           "updatedAt",
+
+//           "routeEncoded",
+
+//           "routeSegmentsEncoded",
+
+//           ST_AsGeoJSON(
+//             boundary
+//           )::json AS boundary,
+
+//           ST_AsGeoJSON(
+//             center
+//           )::json AS center,
+
+//           ST_AsGeoJSON(
+//             "routeGeometry"
+//           )::json AS route
+
+//         FROM territories
+
+//         WHERE
+//           id =
+//           ${territoryId}
+
+//         LIMIT 1;
+//       `;
 
 //     /*
-//      * Delete older own territories that were merged into the new territory.
-//      *
-//      * Clan activities only merge clan territories.
-//      * Personal activities only merge personal territories.
+//      * Capture events.
 //      */
-//     await prisma.$executeRaw`
-//       WITH current_activity AS (
-//         SELECT COALESCE(
-//           a."include_in_clan",
-//           false
-//         ) AS "currentIncludeInClan"
-//         FROM activities a
-//         WHERE a.id = ${activity.id}
-//         LIMIT 1
-//       )
+//     const recentEvents =
+//       await prisma.territoryEvent.findMany({
+//         where: {
+//           activityId:
+//             activity.id,
+//         },
 
-//       DELETE FROM territories t
-//       USING activities ta, current_activity
-//       WHERE ta.id = t."activityId"
-//         AND t."userId" = ${userId}
-//         AND t.id != ${territoryId}
-//         AND COALESCE(
-//           ta."include_in_clan",
-//           false
-//         ) = current_activity."currentIncludeInClan"
-//         AND t.boundary IS NOT NULL
-//         AND NOT ST_IsEmpty(t.boundary)
-//         AND (
-//           ST_Intersects(
-//             t.boundary,
-//             (
-//               SELECT boundary
-//               FROM territories
-//               WHERE id = ${territoryId}
-//             )
-//           )
-//           OR ST_Touches(
-//             t.boundary,
-//             (
-//               SELECT boundary
-//               FROM territories
-//               WHERE id = ${territoryId}
-//             )
-//           )
-//         );
-//     `;
+//         orderBy: {
+//           createdAt:
+//             'desc',
+//         },
+//       });
 
 //     /*
-//      * Fetch the final merged territory.
-//      */
-//     const finalTerritory = await prisma.$queryRaw`
-//       SELECT
-//         id,
-//         "userId",
-//         "activityId",
-//         "areaKm2",
-//         "capturedAt",
-//         "createdAt",
-//         "updatedAt",
-//         "routeEncoded",
-//         "routeSegmentsEncoded",
-//         ST_AsGeoJSON(boundary)::json AS boundary,
-//         ST_AsGeoJSON(center)::json AS center,
-//         ST_AsGeoJSON("routeGeometry")::json AS route
-//       FROM territories
-//       WHERE id = ${territoryId}
-//       LIMIT 1;
-//     `;
-
-//     /*
-//      * Fetch territory capture and steal events generated by captureTerritory.
-//      */
-//     const recentEvents = await prisma.territoryEvent.findMany({
-//       where: {
-//         activityId: activity.id,
-//       },
-//       orderBy: {
-//         createdAt: 'desc',
-//       },
-//     });
-
-//     /*
-//      * Add activity XP.
+//      * ============================================================
+//      * XP
+//      * ============================================================
 //      */
 //     if (xpEarned > 0) {
 //       await addXP({
 //         userId,
-//         amount: xpEarned,
-//         type: 'ACTIVITY',
-//         description: `${normalizedMode} — ${numericDistanceKm} km`,
-//         activityId: activity.id,
+
+//         amount:
+//           xpEarned,
+
+//         type:
+//           'ACTIVITY',
+
+//         description:
+//           `${normalizedMode} — ${numericDistanceKm} km`,
+
+//         activityId:
+//           activity.id,
 //       });
 //     }
 
 //     /*
-//      * Update user progress.
+//      * ============================================================
+//      * USER PROGRESS
+//      * ============================================================
 //      */
 //     await prisma.userProgress.upsert({
 //       where: {
 //         userId,
 //       },
+
 //       create: {
 //         userId,
-//         totalDistanceKm: numericDistanceKm,
+
+//         totalDistanceKm:
+//           numericDistanceKm,
+
 //         activitiesCount:
-//           numericDistanceKm >= MIN_DISTANCE_KM ? 1 : 0,
+//           numericDistanceKm >=
+//           MIN_DISTANCE_KM
+//             ? 1
+//             : 0,
 //       },
+
 //       update: {
 //         totalDistanceKm: {
-//           increment: numericDistanceKm,
+//           increment:
+//             numericDistanceKm,
 //         },
+
 //         activitiesCount:
-//           numericDistanceKm >= MIN_DISTANCE_KM
+//           numericDistanceKm >=
+//           MIN_DISTANCE_KM
 //             ? {
 //                 increment: 1,
 //               }
@@ -4243,74 +4734,135 @@ export const finishActivity = async (req, res) => {
 //       },
 //     });
 
-//     const levelResult = await checkLevelUp(userId);
-//     const newBadges = await checkBadges(userId);
-
-//     const progress = await prisma.userProgress.findUnique({
-//       where: {
+//     const levelResult =
+//       await checkLevelUp(
 //         userId,
-//       },
-//     });
+//       );
 
-//     return res.status(201).json({
-//       success: true,
-//       message: 'Activity completed successfully',
-//       activity,
-//       territory: finalTerritory[0] || null,
-//       captureEvents: recentEvents,
-//       progression: {
-//         xpEarned,
-//         leveledUp: levelResult?.leveledUp ?? false,
-//         level: levelResult?.level ?? progress?.level ?? 0,
-//         newBadges,
-//         progress: {
-//           currentXp: progress?.currentXp,
-//           totalXp: progress?.totalXp,
-//           xpToNextLevel: progress?.xpToNextLevel,
-//           level: progress?.level,
-//           totalDistanceKm: progress?.totalDistanceKm,
-//           activitiesCount: progress?.activitiesCount,
+//     const newBadges =
+//       await checkBadges(
+//         userId,
+//       );
+
+//     const progress =
+//       await prisma.userProgress.findUnique({
+//         where: {
+//           userId,
 //         },
-//       },
-//     });
-//   } catch (error) {
-//     console.error('FINISH_ACTIVITY ERROR:', error);
+//       });
 
 //     /*
-//      * Prisma validation errors commonly happen when the Prisma schema has not
-//      * yet been updated with the new elevation fields.
+//      * ============================================================
+//      * RESPONSE
+//      * ============================================================
 //      */
-//     if (error?.name === 'PrismaClientValidationError') {
-//       return res.status(500).json({
-//         success: false,
+//     return res
+//       .status(201)
+//       .json({
+//         success: true,
+
 //         message:
-//           'Activity schema does not support one or more submitted fields. Run the Prisma migration and generate the Prisma client.',
+//           'Activity completed successfully',
+
+//         activity,
+
+//         territory:
+//           finalTerritory[0] ||
+//           null,
+
+//         captureEvents:
+//           recentEvents,
+
+//         hydration,
+
+//         clan: capturedClanId
+//           ? {
+//               clanId:
+//                 capturedClanId,
+
+//               territoryCaptured:
+//                 true,
+//             }
+//           : null,
+
+//         progression: {
+//           xpEarned,
+
+//           leveledUp:
+//             levelResult?.leveledUp ??
+//             false,
+
+//           level:
+//             levelResult?.level ??
+//             progress?.level ??
+//             0,
+
+//           newBadges,
+
+//           progress: {
+//             currentXp:
+//               progress?.currentXp,
+
+//             totalXp:
+//               progress?.totalXp,
+
+//             xpToNextLevel:
+//               progress?.xpToNextLevel,
+
+//             level:
+//               progress?.level,
+
+//             totalDistanceKm:
+//               progress?.totalDistanceKm,
+
+//             activitiesCount:
+//               progress?.activitiesCount,
+//           },
+//         },
+//       });
+//   } catch (error) {
+//     console.error(
+//       'FINISH_ACTIVITY ERROR:',
+//       error,
+//     );
+
+//     if (
+//       error?.name ===
+//       'PrismaClientValidationError'
+//     ) {
+//       return res
+//         .status(500)
+//         .json({
+//           success: false,
+
+//           message:
+//             'Activity schema does not support one or more submitted fields. Run the Prisma migration and generate the Prisma client.',
+
+//           error:
+//             process.env.NODE_ENV ===
+//             'development'
+//               ? error.message
+//               : undefined,
+//         });
+//     }
+
+//     return res
+//       .status(500)
+//       .json({
+//         success: false,
+
+//         message:
+//           'Server error',
+
 //         error:
-//           process.env.NODE_ENV === 'development'
+//           process.env.NODE_ENV ===
+//           'development'
 //             ? error.message
 //             : undefined,
 //       });
-//     }
-
-//     return res.status(500).json({
-//       success: false,
-//       message: 'Server error',
-//       error:
-//         process.env.NODE_ENV === 'development'
-//           ? error.message
-//           : undefined,
-//     });
 //   }
 // };
 
-
-
-
-
-// ─────────────────────────────────────────────
-// Get Activity Detail
-// GET /api/activities/:id
-// ─────────────────────────────────────────────
 
 
 
