@@ -2209,7 +2209,7 @@ export const createClanEvent = async (req, res) => {
     if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
       return res.status(400).json({
         success: false,
-        message: "Invalid event date",
+        message: "Please enter a valid event date and time.",
       });
     }
 
@@ -2574,7 +2574,7 @@ export const joinClanEvent = async (req, res) => {
       return res.status(400).json({
         success: false,
 
-        message: "You cannot join after the Club Event run has started",
+        message: "This Club Event has already started. You can no longer join.",
       });
     }
 
@@ -2711,7 +2711,7 @@ export const leaveClanEvent = async (req, res) => {
       return res.status(400).json({
         success: false,
 
-        message: "The Club Event leader cannot leave this event",
+        message: "You’re leading this Club Event, so you can’t leave it.",
       });
     }
 
@@ -3256,7 +3256,8 @@ export const startClanEventRun = async (req, res) => {
       return res.status(409).json({
         success: false,
 
-        message: "This participant's Club Event activity cannot be restarted",
+        message:
+          "This Club Event activity has already ended and cannot be restarted.",
       });
     }
 
@@ -4357,6 +4358,83 @@ export const getClanEventRunResults = async (req, res) => {
     }
 
     const snapshot = await buildEventResultsSnapshot(eventId);
+    // ============================================================
+    // ATTACH EQUIPPED DURO AVATARS TO EVENT RESULTS
+    // ============================================================
+
+    const resultUserIds = [
+      ...new Set(snapshot.results.map((item) => item.userId).filter(Boolean)),
+    ];
+
+    const resultUsers =
+      resultUserIds.length > 0
+        ? await prisma.user.findMany({
+            where: {
+              id: {
+                in: resultUserIds,
+              },
+            },
+
+            select: {
+              id: true,
+              username: true,
+              fullName: true,
+              skinIndex: true,
+
+              avatars: {
+                where: {
+                  isEquipped: true,
+                  status: "UNLOCKED",
+                },
+
+                include: {
+                  avatar: true,
+                },
+              },
+            },
+          })
+        : [];
+
+    const userDataMap = new Map();
+
+    for (const user of resultUsers) {
+      const avatar = {};
+
+      for (const item of user.avatars ?? []) {
+        if (!item.avatar) continue;
+
+        avatar[item.avatar.type] = {
+          id: item.avatar.id,
+          file: item.avatar.file,
+          type: item.avatar.type,
+        };
+      }
+
+      userDataMap.set(user.id, {
+        id: user.id,
+        username: user.username,
+        fullName: user.fullName,
+        skinIndex: user.skinIndex ?? 2,
+        avatar,
+      });
+    }
+
+    // Add user + avatar information to every leaderboard result.
+    const leaderboard = snapshot.results.map((result) => {
+      const user = userDataMap.get(result.userId);
+
+      return {
+        ...result,
+
+        user: user ?? {
+          id: result.userId,
+          username: null,
+          fullName: null,
+          skinIndex: 2,
+          avatar: {},
+        },
+      };
+    });
 
     const myResult =
       snapshot.results.find((item) => item.userId === userId) ?? null;
@@ -4490,7 +4568,7 @@ export const getClanEventRunResults = async (req, res) => {
       /**
        * Full event leaderboard.
        */
-      leaderboard: snapshot.results,
+      leaderboard,
     });
   } catch (error) {
     console.error("GET_CLAN_EVENT_RUN_RESULTS_ERROR:", error);
@@ -4564,7 +4642,7 @@ export const cancelClanEvent = async (req, res) => {
     if (event.status === "CANCELLED") {
       return res.status(400).json({
         success: false,
-        message: "Event is already cancelled",
+        message: "This Club Event has already been cancelled.",
       });
     }
 
@@ -4810,7 +4888,7 @@ export const updateClanEvent = async (req, res) => {
     if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
       return res.status(400).json({
         success: false,
-        message: "Invalid event date",
+        message: "Please enter a valid event date and time.",
       });
     }
 

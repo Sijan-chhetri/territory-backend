@@ -1,9 +1,8 @@
-import prisma from '../../config/prisma.js';
-import bcrypt from 'bcrypt';
-import jwt from 'jsonwebtoken';
-import validator from 'validator';
-import { JWT_SECRET } from '../../config/jwt.js';
-
+import prisma from "../../config/prisma.js";
+import bcrypt from "bcrypt";
+import jwt from "jsonwebtoken";
+import validator from "validator";
+import { JWT_SECRET } from "../../config/jwt.js";
 
 import { OAuth2Client } from "google-auth-library";
 import appleSignin from "apple-signin-auth";
@@ -11,10 +10,7 @@ import appleSignin from "apple-signin-auth";
 import crypto from "crypto";
 import emailTransporter from "../../config/emailTransporter.js";
 
-import {
-  passwordResetOtpTemplate,
-} from "../../config/templates/passwordResetOtp.template.js";
-
+import { passwordResetOtpTemplate } from "../../config/templates/passwordResetOtp.template.js";
 
 // helper for OTP
 
@@ -27,30 +23,19 @@ const generateOtp = () => {
 };
 
 const hashOtp = (otp) => {
-  return crypto
-    .createHash("sha256")
-    .update(String(otp))
-    .digest("hex");
+  return crypto.createHash("sha256").update(String(otp)).digest("hex");
 };
 
-const sendPasswordResetOtpEmail = async ({
-  user,
-  otp,
-}) => {
+const sendPasswordResetOtpEmail = async ({ user, otp }) => {
   console.log("SENDING_PASSWORD_RESET_OTP:", {
     email: user.email,
     otp,
     gmailUser: process.env.GMAIL_USER,
-    hasAppPassword: Boolean(
-      process.env.GMAIL_APP_PASSWORD
-    ),
+    hasAppPassword: Boolean(process.env.GMAIL_APP_PASSWORD),
   });
 
   const template = passwordResetOtpTemplate({
-    fullName:
-      user.fullName ||
-      user.username ||
-      "Duro Athlete",
+    fullName: user.fullName || user.username || "Duro Athlete",
     otp,
   });
 
@@ -65,9 +50,7 @@ const sendPasswordResetOtpEmail = async ({
     text: template.text,
     html: template.html,
 
-    replyTo:
-      process.env.DURO_SUPPORT_EMAIL ||
-      process.env.GMAIL_USER,
+    replyTo: process.env.DURO_SUPPORT_EMAIL || process.env.GMAIL_USER,
   });
 
   console.log("PASSWORD_RESET_EMAIL_SENT:", {
@@ -80,12 +63,11 @@ const sendPasswordResetOtpEmail = async ({
   return info;
 };
 
-
 // ─────────────────────────────────────────────
 // Generate Unique Username
 // ─────────────────────────────────────────────
 async function generateUsername(fullName) {
-  let base = fullName?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'user';
+  let base = fullName?.toLowerCase().replace(/[^a-z0-9]/g, "") || "user";
   let username = base;
   let count = 1;
 
@@ -96,7 +78,6 @@ async function generateUsername(fullName) {
     count++;
   }
 }
-
 
 // const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
@@ -109,13 +90,10 @@ const allowedGoogleClientIds = [
 ].filter(Boolean);
 
 function generateJwt(user) {
-  return jwt.sign(
-    { id: user.id, email: user.email },
-    JWT_SECRET,
-    { expiresIn: "30d" }
-  );
+  return jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, {
+    expiresIn: "30d",
+  });
 }
-
 
 // ─────────────────────────────────────────────
 // Register
@@ -126,38 +104,64 @@ export const register = async (req, res) => {
     const { email, password, full_name } = req.body;
 
     if (!email || !password || !full_name) {
-      return res.status(400).json({ success: false, message: 'Email, password and full name are required' });
+      return res.status(400).json({
+        success: false,
+        message: "Email, password and full name are required",
+      });
     }
     if (!validator.isEmail(email)) {
-      return res.status(400).json({ success: false, message: 'Invalid email format' });
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid email format" });
     }
     if (password.length < 6) {
-      return res.status(400).json({ success: false, message: 'Password must be at least 6 characters' });
+      return res.status(400).json({
+        success: false,
+        message: "Password must be at least 6 characters",
+      });
     }
 
-    const existingEmail = await prisma.user.findUnique({ where: { email: email.toLowerCase() } });
+    const existingEmail = await prisma.user.findUnique({
+      where: { email: email.toLowerCase() },
+    });
     if (existingEmail) {
-      return res.status(409).json({ success: false, message: 'Email already registered' });
+      return res
+        .status(409)
+        .json({ success: false, message: "Email already registered" });
     }
 
     const username = await generateUsername(full_name);
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const user = await prisma.user.create({
-      data: { email: email.toLowerCase(), password: hashedPassword, fullName: full_name, username },
+      data: {
+        email: email.toLowerCase(),
+        password: hashedPassword,
+        fullName: full_name,
+        username,
+      },
     });
 
-    const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '30d' });
+    const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, {
+      expiresIn: "30d",
+    });
     const { password: _, ...safeUser } = user;
 
-    return res.status(201).json({ success: true, message: 'Account created successfully', token, user: safeUser });
-
+    return res.status(201).json({
+      success: true,
+      message: "Account created successfully",
+      token,
+      user: safeUser,
+    });
   } catch (error) {
-    console.error('REGISTER ERROR:', error);
-    return res.status(500).json({ success: false, message: 'Something went wrong', error: process.env.NODE_ENV === 'development' ? error.message : undefined });
+    console.error("REGISTER ERROR:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Something went wrong",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
   }
 };
-
 
 // ─────────────────────────────────────────────
 // Login
@@ -219,7 +223,7 @@ export const login = async (req, res) => {
         email: updatedUser.email,
       },
       JWT_SECRET,
-      { expiresIn: "30d" }
+      { expiresIn: "30d" },
     );
 
     const { password: _, ...safeUser } = updatedUser;
@@ -236,12 +240,10 @@ export const login = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Something went wrong",
-      error:
-        process.env.NODE_ENV === "development" ? error.message : undefined,
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 };
-
 
 // ─────────────────────────────────────────────
 // Get Me
@@ -258,7 +260,7 @@ export const getMe = async (req, res) => {
     if (!user) {
       return res.status(404).json({
         success: false,
-        message: 'User not found',
+        message: "User not found",
       });
     }
 
@@ -287,26 +289,20 @@ export const getMe = async (req, res) => {
 
         stats: {
           totalTerritories: territoryStats._count.id,
-          totalAreaKm2: Number(
-            territoryStats._sum.areaKm2 ?? 0
-          ),
+          totalAreaKm2: Number(territoryStats._sum.areaKm2 ?? 0),
         },
       },
     });
   } catch (error) {
-    console.error('GET_ME ERROR:', error);
+    console.error("GET_ME ERROR:", error);
 
     return res.status(500).json({
       success: false,
-      message: 'Something went wrong',
-      error:
-        process.env.NODE_ENV === 'development'
-          ? error.message
-          : undefined,
+      message: "Something went wrong",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 };
-
 
 // ─────────────────────────────────────────────
 // Update Profile
@@ -327,14 +323,18 @@ export const updateProfile = async (req, res) => {
     });
 
     const { password: _, ...safeUser } = updated;
-    return res.status(200).json({ success: true, message: 'Profile updated', user: safeUser });
-
+    return res
+      .status(200)
+      .json({ success: true, message: "Profile updated", user: safeUser });
   } catch (error) {
-    console.error('UPDATE_PROFILE ERROR:', error);
-    return res.status(500).json({ success: false, message: 'Something went wrong', error: process.env.NODE_ENV === 'development' ? error.message : undefined });
+    console.error("UPDATE_PROFILE ERROR:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Something went wrong",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
   }
 };
-
 
 // ─────────────────────────────────────────────
 // Change Username
@@ -344,28 +344,45 @@ export const changeUsername = async (req, res) => {
   try {
     const { username } = req.body;
 
-    if (!username) return res.status(400).json({ success: false, message: 'Username is required' });
+    if (!username)
+      return res
+        .status(400)
+        .json({ success: false, message: "Username is required" });
 
-    const sanitized = username.toLowerCase().replace(/[^a-z0-9_]/g, '');
-    if (sanitized.length < 3) return res.status(400).json({ success: false, message: 'Username must be at least 3 characters' });
+    const sanitized = username.toLowerCase().replace(/[^a-z0-9_]/g, "");
+    if (sanitized.length < 3)
+      return res.status(400).json({
+        success: false,
+        message: "Username must be at least 3 characters",
+      });
 
-    const existing = await prisma.user.findUnique({ where: { username: sanitized } });
+    const existing = await prisma.user.findUnique({
+      where: { username: sanitized },
+    });
     if (existing && existing.id !== req.user.id) {
-      return res.status(409).json({ success: false, message: 'Username already taken' });
+      return res
+        .status(409)
+        .json({ success: false, message: "Username already taken" });
     }
 
-    const updated = await prisma.user.update({ where: { id: req.user.id }, data: { username: sanitized } });
+    const updated = await prisma.user.update({
+      where: { id: req.user.id },
+      data: { username: sanitized },
+    });
     const { password: _, ...safeUser } = updated;
 
-    return res.status(200).json({ success: true, message: 'Username updated', user: safeUser });
-
+    return res
+      .status(200)
+      .json({ success: true, message: "Username updated", user: safeUser });
   } catch (error) {
-    console.error('CHANGE_USERNAME ERROR:', error);
-    return res.status(500).json({ success: false, message: 'Something went wrong', error: process.env.NODE_ENV === 'development' ? error.message : undefined });
+    console.error("CHANGE_USERNAME ERROR:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Something went wrong",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
   }
 };
-
-
 
 // ─────────────────────────────────────────────
 // Get Users Who Are Not My Friends
@@ -398,7 +415,7 @@ export const getUsersWhoAreNotMyFriends = async (req, res) => {
     });
 
     const pendingUserIds = pendingRequests.map((r) =>
-      r.senderId === userId ? r.receiverId : r.senderId
+      r.senderId === userId ? r.receiverId : r.senderId,
     );
 
     const users = await prisma.user.findMany({
@@ -437,11 +454,7 @@ export const getUsersWhoAreNotMyFriends = async (req, res) => {
   }
 };
 
-
-
 // delete account
-
-
 
 export const deleteMyAccount = async (req, res) => {
   try {
@@ -493,7 +506,6 @@ export const deleteMyAccount = async (req, res) => {
     });
   }
 };
-
 
 // ─────────────────────────────────────────────
 // Get User Detail By UserId + Leaderboard Rank
@@ -584,7 +596,6 @@ export const deleteMyAccount = async (req, res) => {
 //   }
 // };
 
-
 // ─────────────────────────────────────────────
 // Get User Detail By UserId + Leaderboard Rank
 // GET /api/auth/user/:userId
@@ -626,6 +637,7 @@ export const deleteMyAccount = async (req, res) => {
 export const getUserDetailById = async (req, res) => {
   try {
     const { userId } = req.params;
+    const viewerId = req.user.id;
 
     // =========================================================
     // VALIDATE USER ID
@@ -656,11 +668,26 @@ export const getUserDetailById = async (req, res) => {
         country: true,
         createdAt: true,
 
+        // Avatar skin tone
+        skinIndex: true,
+
         // Stored level + XP
         progress: {
           select: {
             totalXp: true,
             level: true,
+          },
+        },
+
+        // User's currently equipped avatar parts
+        avatars: {
+          where: {
+            isEquipped: true,
+            status: "UNLOCKED",
+          },
+
+          include: {
+            avatar: true,
           },
         },
       },
@@ -676,6 +703,49 @@ export const getUserDetailById = async (req, res) => {
         message: "User not found",
       });
     }
+
+    const isOwner = viewerId === userId;
+
+    let isFriend = false;
+
+    if (!isOwner) {
+      const friendship = await prisma.friendship.findFirst({
+        where: {
+          OR: [
+            {
+              userId: viewerId,
+              friendId: userId,
+            },
+            {
+              userId: userId,
+              friendId: viewerId,
+            },
+          ],
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      isFriend = Boolean(friendship);
+    }
+
+    let allowedVisibilities;
+
+    if (isOwner) {
+      allowedVisibilities = ["PUBLIC", "FRIENDS", "PRIVATE"];
+    } else if (isFriend) {
+      allowedVisibilities = ["PUBLIC", "FRIENDS"];
+    } else {
+      allowedVisibilities = ["PUBLIC"];
+    }
+    console.log("PROFILE VISIBILITY DEBUG", {
+      viewerId,
+      profileUserId: userId,
+      isOwner,
+      isFriend,
+      allowedVisibilities,
+    });
 
     // =========================================================
     // GET ALL ACTIVITIES
@@ -717,44 +787,51 @@ export const getUserDetailById = async (req, res) => {
     const activities = await prisma.activity.findMany({
       where: {
         userId,
+
+        visibility: {
+          in: allowedVisibilities,
+        },
       },
 
       orderBy: {
         startedAt: "desc",
       },
 
-      // Relations must still be explicitly included.
       include: {
         territories: true,
       },
     });
 
+    console.log(
+      "RETURNED ACTIVITIES:",
+      activities.map((activity) => ({
+        id: activity.id,
+        visibility: activity.visibility,
+        startedAt: activity.startedAt,
+      })),
+    );
+
     // =========================================================
     // USER TOTAL ACTIVITY STATS
     // =========================================================
 
-    const userActivityStats =
-      await prisma.activity.aggregate({
-        where: {
-          userId,
-        },
+    const userActivityStats = await prisma.activity.aggregate({
+      where: {
+        userId,
+      },
 
-        _sum: {
-          distanceKm: true,
-        },
+      _sum: {
+        distanceKm: true,
+      },
 
-        _count: {
-          id: true,
-        },
-      });
+      _count: {
+        id: true,
+      },
+    });
 
-    const totalDistanceKm = Number(
-      userActivityStats._sum.distanceKm ?? 0,
-    );
+    const totalDistanceKm = Number(userActivityStats._sum.distanceKm ?? 0);
 
-    const totalActivities = Number(
-      userActivityStats._count.id ?? 0,
-    );
+    const totalActivities = Number(userActivityStats._count.id ?? 0);
 
     // =========================================================
     // OPTIONAL EXTRA TOTALS
@@ -762,29 +839,17 @@ export const getUserDetailById = async (req, res) => {
     // =========================================================
 
     const totalDurationSec = activities.reduce(
-      (sum, activity) =>
-        sum +
-        Number(
-          activity.durationSec ?? 0,
-        ),
+      (sum, activity) => sum + Number(activity.durationSec ?? 0),
       0,
     );
 
     const totalMovingTimeSec = activities.reduce(
-      (sum, activity) =>
-        sum +
-        Number(
-          activity.movingTime ?? 0,
-        ),
+      (sum, activity) => sum + Number(activity.movingTime ?? 0),
       0,
     );
 
     const totalCalories = activities.reduce(
-      (sum, activity) =>
-        sum +
-        Number(
-          activity.calories ?? 0,
-        ),
+      (sum, activity) => sum + Number(activity.calories ?? 0),
       0,
     );
 
@@ -794,14 +859,8 @@ export const getUserDetailById = async (req, res) => {
 
     let averagePace = 0;
 
-    if (
-      totalDistanceKm > 0 &&
-      totalMovingTimeSec > 0
-    ) {
-      averagePace =
-        totalMovingTimeSec /
-        60 /
-        totalDistanceKm;
+    if (totalDistanceKm > 0 && totalMovingTimeSec > 0) {
+      averagePace = totalMovingTimeSec / 60 / totalDistanceKm;
     }
 
     // =========================================================
@@ -809,40 +868,45 @@ export const getUserDetailById = async (req, res) => {
     // Rank by total activity distance.
     // =========================================================
 
-    const leaderboard =
-      await prisma.activity.groupBy({
-        by: ["userId"],
+    const leaderboard = await prisma.activity.groupBy({
+      by: ["userId"],
 
+      _sum: {
+        distanceKm: true,
+      },
+
+      orderBy: {
         _sum: {
-          distanceKm: true,
+          distanceKm: "desc",
         },
+      },
+    });
 
-        orderBy: {
-          _sum: {
-            distanceKm: "desc",
-          },
-        },
-      });
+    const rankIndex = leaderboard.findIndex((item) => item.userId === userId);
 
-    const rankIndex =
-      leaderboard.findIndex(
-        (item) =>
-          item.userId === userId,
-      );
+    const leaderboardRank = rankIndex === -1 ? null : rankIndex + 1;
 
-    const leaderboardRank =
-      rankIndex === -1
-        ? null
-        : rankIndex + 1;
+    // =========================================================
+    // BUILD EQUIPPED AVATAR MAP
+    // =========================================================
+
+    const avatar = {};
+
+    for (const item of user.avatars ?? []) {
+      if (!item.avatar) continue;
+
+      avatar[item.avatar.type] = {
+        id: item.avatar.id,
+        file: item.avatar.file,
+        type: item.avatar.type,
+      };
+    }
 
     // =========================================================
     // REMOVE NESTED PROGRESS OBJECT
     // =========================================================
 
-    const {
-      progress,
-      ...userData
-    } = user;
+    const { progress, avatars, ...userData } = user;
 
     // =========================================================
     // FORMAT ACTIVITIES
@@ -858,73 +922,36 @@ export const getUserDetailById = async (req, res) => {
     // We only normalize common numeric values afterward.
     // =========================================================
 
-    const formattedActivities =
-      activities.map((activity) => ({
-        // KEEP EVERYTHING
-        ...activity,
+    const formattedActivities = activities.map((activity) => ({
+      // KEEP EVERYTHING
+      ...activity,
 
-        // Normalize known numeric fields
-        // without removing anything else.
+      // Normalize known numeric fields
+      // without removing anything else.
 
-        distanceKm:
-          activity.distanceKm != null
-            ? Number(
-                activity.distanceKm,
-              )
-            : 0,
+      distanceKm: activity.distanceKm != null ? Number(activity.distanceKm) : 0,
 
-        durationSec:
-          activity.durationSec != null
-            ? Number(
-                activity.durationSec,
-              )
-            : 0,
+      durationSec:
+        activity.durationSec != null ? Number(activity.durationSec) : 0,
 
-        movingTime:
-          activity.movingTime != null
-            ? Number(
-                activity.movingTime,
-              )
-            : 0,
+      movingTime: activity.movingTime != null ? Number(activity.movingTime) : 0,
 
-        avgPace:
-          activity.avgPace != null
-            ? Number(
-                activity.avgPace,
-              )
-            : 0,
+      avgPace: activity.avgPace != null ? Number(activity.avgPace) : 0,
 
-        avgSpeed:
-          activity.avgSpeed != null
-            ? Number(
-                activity.avgSpeed,
-              )
-            : 0,
+      avgSpeed: activity.avgSpeed != null ? Number(activity.avgSpeed) : 0,
 
-        topSpeed:
-          activity.topSpeed != null
-            ? Number(
-                activity.topSpeed,
-              )
-            : 0,
+      topSpeed: activity.topSpeed != null ? Number(activity.topSpeed) : 0,
 
-        calories:
-          activity.calories != null
-            ? Number(
-                activity.calories,
-              )
-            : 0,
+      calories: activity.calories != null ? Number(activity.calories) : 0,
 
-        // kmSplits is NOT changed.
-        // It stays exactly as stored by Prisma.
+      // kmSplits is NOT changed.
+      // It stays exactly as stored by Prisma.
 
-        kmSplits:
-          activity.kmSplits ?? [],
+      kmSplits: activity.kmSplits ?? [],
 
-        // Territory relation also stays.
-        territories:
-          activity.territories ?? [],
-      }));
+      // Territory relation also stays.
+      territories: activity.territories ?? [],
+    }));
 
     // =========================================================
     // RESPONSE
@@ -935,15 +962,16 @@ export const getUserDetailById = async (req, res) => {
 
       user: {
         ...userData,
+        skinIndex: user.skinIndex ?? 2,
+
+        avatar,
 
         // =====================================================
         // USER TOTAL STATS
         // =====================================================
 
         stats: {
-          totalDistanceKm: Number(
-            totalDistanceKm.toFixed(2),
-          ),
+          totalDistanceKm: Number(totalDistanceKm.toFixed(2)),
 
           totalActivities,
 
@@ -951,25 +979,15 @@ export const getUserDetailById = async (req, res) => {
 
           totalMovingTimeSec,
 
-          totalCalories:
-            Math.round(
-              totalCalories,
-            ),
+          totalCalories: Math.round(totalCalories),
 
-          averagePace:
-            Number(
-              averagePace.toFixed(2),
-            ),
+          averagePace: Number(averagePace.toFixed(2)),
 
           leaderboardRank,
 
-          totalXp: Number(
-            progress?.totalXp ?? 0,
-          ),
+          totalXp: Number(progress?.totalXp ?? 0),
 
-          level: Number(
-            progress?.level ?? 0,
-          ),
+          level: Number(progress?.level ?? 0),
         },
 
         // =====================================================
@@ -979,27 +997,18 @@ export const getUserDetailById = async (req, res) => {
         // Every Activity field is included.
         // =====================================================
 
-        activities:
-          formattedActivities,
+        activities: formattedActivities,
       },
     });
   } catch (error) {
-    console.error(
-      "GET_USER_DETAIL_BY_ID_ERROR:",
-      error,
-    );
+    console.error("GET_USER_DETAIL_BY_ID_ERROR:", error);
 
     return res.status(500).json({
       success: false,
 
-      message:
-        "Something went wrong",
+      message: "Something went wrong",
 
-      error:
-        process.env.NODE_ENV ===
-        "development"
-          ? error.message
-          : undefined,
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 };
@@ -1145,14 +1154,10 @@ export const googleAuth = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Google authentication failed",
-      error:
-        process.env.NODE_ENV === "development"
-          ? error.message
-          : undefined,
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 };
-
 
 export const appleAuth = async (req, res) => {
   try {
@@ -1233,8 +1238,6 @@ export const appleAuth = async (req, res) => {
   }
 };
 
-
-
 // ─────────────────────────────────────────────
 // Check User Setup Status
 // GET /api/auth/user/setup-status
@@ -1281,7 +1284,6 @@ export const checkUserSetupStatus = async (req, res) => {
   }
 };
 
-
 // ─────────────────────────────────────────────
 // Setup User Weight, Country, City
 // PUT /api/auth/user/setup
@@ -1290,7 +1292,12 @@ export const setupUserInfo = async (req, res) => {
   try {
     const { weight, country, city } = req.body;
 
-    if (weight === undefined || weight === null || country === undefined || city === undefined) {
+    if (
+      weight === undefined ||
+      weight === null ||
+      country === undefined ||
+      city === undefined
+    ) {
       return res.status(400).json({
         success: false,
         message: "Weight, country, and city are required",
@@ -1356,7 +1363,6 @@ export const setupUserInfo = async (req, res) => {
   }
 };
 
-
 // ─────────────────────────────────────────────
 // Get User Weight Only
 // GET /api/auth/user/weight
@@ -1392,7 +1398,6 @@ export const getUserWeight = async (req, res) => {
   }
 };
 
-
 /**
  * |--------------------------------------------------------------------------
  * | REQUEST PASSWORD RESET OTP
@@ -1402,9 +1407,7 @@ export const getUserWeight = async (req, res) => {
  */
 export const requestPasswordResetOtp = async (req, res) => {
   try {
-    const normalizedEmail = req.body.email
-      ?.toLowerCase()
-      .trim();
+    const normalizedEmail = req.body.email?.toLowerCase().trim();
 
     if (!normalizedEmail) {
       return res.status(400).json({
@@ -1457,26 +1460,24 @@ export const requestPasswordResetOtp = async (req, res) => {
       });
     }
 
-    const latestOtp =
-      await prisma.passwordResetOtp.findFirst({
-        where: {
-          userId: user.id,
-          isUsed: false,
-        },
-        orderBy: {
-          createdAt: "desc",
-        },
-      });
+    const latestOtp = await prisma.passwordResetOtp.findFirst({
+      where: {
+        userId: user.id,
+        isUsed: false,
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
 
     if (latestOtp) {
       const cooldownEndsAt = new Date(
-        latestOtp.createdAt.getTime() +
-          OTP_RESEND_COOLDOWN_SECONDS * 1000
+        latestOtp.createdAt.getTime() + OTP_RESEND_COOLDOWN_SECONDS * 1000,
       );
 
       if (new Date() < cooldownEndsAt) {
         const retryAfterSeconds = Math.ceil(
-          (cooldownEndsAt.getTime() - Date.now()) / 1000
+          (cooldownEndsAt.getTime() - Date.now()) / 1000,
         );
 
         return res.status(429).json({
@@ -1491,9 +1492,7 @@ export const requestPasswordResetOtp = async (req, res) => {
     const otp = generateOtp();
     const otpHash = hashOtp(otp);
 
-    const expiresAt = new Date(
-      Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000
-    );
+    const expiresAt = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
 
     /*
      * Invalidate previous unused OTPs.
@@ -1508,19 +1507,18 @@ export const requestPasswordResetOtp = async (req, res) => {
       },
     });
 
-    const otpRecord =
-      await prisma.passwordResetOtp.create({
-        data: {
-          userId: user.id,
-          email: user.email,
-          otpHash,
-          attempts: 0,
-          maxAttempts: OTP_MAX_ATTEMPTS,
-          expiresAt,
-          isVerified: false,
-          isUsed: false,
-        },
-      });
+    const otpRecord = await prisma.passwordResetOtp.create({
+      data: {
+        userId: user.id,
+        email: user.email,
+        otpHash,
+        attempts: 0,
+        maxAttempts: OTP_MAX_ATTEMPTS,
+        expiresAt,
+        isVerified: false,
+        isUsed: false,
+      },
+    });
 
     try {
       await sendPasswordResetOtpEmail({
@@ -1528,10 +1526,7 @@ export const requestPasswordResetOtp = async (req, res) => {
         otp,
       });
     } catch (emailError) {
-      console.error(
-        "PASSWORD_RESET_OTP_EMAIL_ERROR:",
-        emailError
-      );
+      console.error("PASSWORD_RESET_OTP_EMAIL_ERROR:", emailError);
 
       await prisma.passwordResetOtp.update({
         where: {
@@ -1553,22 +1548,15 @@ export const requestPasswordResetOtp = async (req, res) => {
       message: "Password reset code sent successfully",
       expiresInSeconds: OTP_EXPIRY_MINUTES * 60,
       maxAttempts: OTP_MAX_ATTEMPTS,
-      resendAvailableInSeconds:
-        OTP_RESEND_COOLDOWN_SECONDS,
+      resendAvailableInSeconds: OTP_RESEND_COOLDOWN_SECONDS,
     });
   } catch (error) {
-    console.error(
-      "REQUEST_PASSWORD_RESET_OTP_ERROR:",
-      error
-    );
+    console.error("REQUEST_PASSWORD_RESET_OTP_ERROR:", error);
 
     return res.status(500).json({
       success: false,
       message: "Failed to request password reset code",
-      error:
-        process.env.NODE_ENV === "development"
-          ? error.message
-          : undefined,
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 };
@@ -1582,9 +1570,7 @@ export const requestPasswordResetOtp = async (req, res) => {
  */
 export const resendPasswordResetOtp = async (req, res) => {
   try {
-    const normalizedEmail = req.body.email
-      ?.toLowerCase()
-      .trim();
+    const normalizedEmail = req.body.email?.toLowerCase().trim();
 
     if (!normalizedEmail) {
       return res.status(400).json({
@@ -1632,25 +1618,23 @@ export const resendPasswordResetOtp = async (req, res) => {
       });
     }
 
-    const latestOtp =
-      await prisma.passwordResetOtp.findFirst({
-        where: {
-          userId: user.id,
-        },
-        orderBy: {
-          createdAt: "desc",
-        },
-      });
+    const latestOtp = await prisma.passwordResetOtp.findFirst({
+      where: {
+        userId: user.id,
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
 
     if (latestOtp) {
       const cooldownEndsAt = new Date(
-        latestOtp.createdAt.getTime() +
-          OTP_RESEND_COOLDOWN_SECONDS * 1000
+        latestOtp.createdAt.getTime() + OTP_RESEND_COOLDOWN_SECONDS * 1000,
       );
 
       if (new Date() < cooldownEndsAt) {
         const retryAfterSeconds = Math.ceil(
-          (cooldownEndsAt.getTime() - Date.now()) / 1000
+          (cooldownEndsAt.getTime() - Date.now()) / 1000,
         );
 
         return res.status(429).json({
@@ -1665,9 +1649,7 @@ export const resendPasswordResetOtp = async (req, res) => {
     const otp = generateOtp();
     const otpHash = hashOtp(otp);
 
-    const expiresAt = new Date(
-      Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000
-    );
+    const expiresAt = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
 
     await prisma.passwordResetOtp.updateMany({
       where: {
@@ -1679,19 +1661,18 @@ export const resendPasswordResetOtp = async (req, res) => {
       },
     });
 
-    const newOtpRecord =
-      await prisma.passwordResetOtp.create({
-        data: {
-          userId: user.id,
-          email: user.email,
-          otpHash,
-          attempts: 0,
-          maxAttempts: OTP_MAX_ATTEMPTS,
-          expiresAt,
-          isVerified: false,
-          isUsed: false,
-        },
-      });
+    const newOtpRecord = await prisma.passwordResetOtp.create({
+      data: {
+        userId: user.id,
+        email: user.email,
+        otpHash,
+        attempts: 0,
+        maxAttempts: OTP_MAX_ATTEMPTS,
+        expiresAt,
+        isVerified: false,
+        isUsed: false,
+      },
+    });
 
     try {
       await sendPasswordResetOtpEmail({
@@ -1699,10 +1680,7 @@ export const resendPasswordResetOtp = async (req, res) => {
         otp,
       });
     } catch (emailError) {
-      console.error(
-        "RESEND_PASSWORD_RESET_OTP_EMAIL_ERROR:",
-        emailError
-      );
+      console.error("RESEND_PASSWORD_RESET_OTP_EMAIL_ERROR:", emailError);
 
       await prisma.passwordResetOtp.update({
         where: {
@@ -1724,26 +1702,18 @@ export const resendPasswordResetOtp = async (req, res) => {
       message: "A new password reset code has been sent",
       expiresInSeconds: OTP_EXPIRY_MINUTES * 60,
       maxAttempts: OTP_MAX_ATTEMPTS,
-      resendAvailableInSeconds:
-        OTP_RESEND_COOLDOWN_SECONDS,
+      resendAvailableInSeconds: OTP_RESEND_COOLDOWN_SECONDS,
     });
   } catch (error) {
-    console.error(
-      "RESEND_PASSWORD_RESET_OTP_ERROR:",
-      error
-    );
+    console.error("RESEND_PASSWORD_RESET_OTP_ERROR:", error);
 
     return res.status(500).json({
       success: false,
       message: "Failed to resend password reset code",
-      error:
-        process.env.NODE_ENV === "development"
-          ? error.message
-          : undefined,
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 };
-
 
 /**
  * |--------------------------------------------------------------------------
@@ -1754,9 +1724,7 @@ export const resendPasswordResetOtp = async (req, res) => {
  */
 export const verifyPasswordResetOtp = async (req, res) => {
   try {
-    const normalizedEmail = req.body.email
-      ?.toLowerCase()
-      .trim();
+    const normalizedEmail = req.body.email?.toLowerCase().trim();
 
     const otp = String(req.body.otp || "").trim();
 
@@ -1798,18 +1766,17 @@ export const verifyPasswordResetOtp = async (req, res) => {
       });
     }
 
-    const otpRecord =
-      await prisma.passwordResetOtp.findFirst({
-        where: {
-          userId: user.id,
-          email: normalizedEmail,
-          isUsed: false,
-          isVerified: false,
-        },
-        orderBy: {
-          createdAt: "desc",
-        },
-      });
+    const otpRecord = await prisma.passwordResetOtp.findFirst({
+      where: {
+        userId: user.id,
+        email: normalizedEmail,
+        isUsed: false,
+        isVerified: false,
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
 
     if (!otpRecord) {
       return res.status(400).json({
@@ -1857,14 +1824,13 @@ export const verifyPasswordResetOtp = async (req, res) => {
     }
 
     const providedOtpHash = hashOtp(otp);
-    const isOtpCorrect =
-      providedOtpHash === otpRecord.otpHash;
+    const isOtpCorrect = providedOtpHash === otpRecord.otpHash;
 
     if (!isOtpCorrect) {
       const newAttempts = otpRecord.attempts + 1;
       const attemptsRemaining = Math.max(
         otpRecord.maxAttempts - newAttempts,
-        0
+        0,
       );
 
       await prisma.passwordResetOtp.update({
@@ -1873,17 +1839,13 @@ export const verifyPasswordResetOtp = async (req, res) => {
         },
         data: {
           attempts: newAttempts,
-          isUsed:
-            newAttempts >= otpRecord.maxAttempts,
+          isUsed: newAttempts >= otpRecord.maxAttempts,
         },
       });
 
       return res.status(400).json({
         success: false,
-        code:
-          attemptsRemaining === 0
-            ? "OTP_ATTEMPTS_EXCEEDED"
-            : "INVALID_OTP",
+        code: attemptsRemaining === 0 ? "OTP_ATTEMPTS_EXCEEDED" : "INVALID_OTP",
 
         message:
           attemptsRemaining === 0
@@ -1916,7 +1878,7 @@ export const verifyPasswordResetOtp = async (req, res) => {
       JWT_SECRET,
       {
         expiresIn: "10m",
-      }
+      },
     );
 
     return res.status(200).json({
@@ -1926,18 +1888,12 @@ export const verifyPasswordResetOtp = async (req, res) => {
       resetTokenExpiresInSeconds: 600,
     });
   } catch (error) {
-    console.error(
-      "VERIFY_PASSWORD_RESET_OTP_ERROR:",
-      error
-    );
+    console.error("VERIFY_PASSWORD_RESET_OTP_ERROR:", error);
 
     return res.status(500).json({
       success: false,
       message: "Failed to verify password reset code",
-      error:
-        process.env.NODE_ENV === "development"
-          ? error.message
-          : undefined,
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 };
@@ -1951,14 +1907,12 @@ export const verifyPasswordResetOtp = async (req, res) => {
  */
 export const resetPassword = async (req, res) => {
   try {
-    const { resetToken, newPassword, confirmPassword } =
-      req.body;
+    const { resetToken, newPassword, confirmPassword } = req.body;
 
     if (!resetToken || !newPassword || !confirmPassword) {
       return res.status(400).json({
         success: false,
-        message:
-          "Reset token, new password and confirm password are required",
+        message: "Reset token, new password and confirm password are required",
       });
     }
 
@@ -1972,8 +1926,7 @@ export const resetPassword = async (req, res) => {
     if (newPassword.length < 6) {
       return res.status(400).json({
         success: false,
-        message:
-          "Password must be at least 6 characters",
+        message: "Password must be at least 6 characters",
       });
     }
 
@@ -1985,8 +1938,7 @@ export const resetPassword = async (req, res) => {
       return res.status(401).json({
         success: false,
         code: "INVALID_RESET_TOKEN",
-        message:
-          "The password reset session is invalid or expired",
+        message: "The password reset session is invalid or expired",
       });
     }
 
@@ -2002,12 +1954,11 @@ export const resetPassword = async (req, res) => {
       });
     }
 
-    const otpRecord =
-      await prisma.passwordResetOtp.findUnique({
-        where: {
-          id: decoded.otpId,
-        },
-      });
+    const otpRecord = await prisma.passwordResetOtp.findUnique({
+      where: {
+        id: decoded.otpId,
+      },
+    });
 
     if (
       !otpRecord ||
@@ -2018,8 +1969,7 @@ export const resetPassword = async (req, res) => {
       return res.status(401).json({
         success: false,
         code: "RESET_SESSION_NOT_VALID",
-        message:
-          "This password reset session is no longer valid",
+        message: "This password reset session is no longer valid",
       });
     }
 
@@ -2041,10 +1991,7 @@ export const resetPassword = async (req, res) => {
     }
 
     const isSamePassword = user.password
-      ? await bcrypt.compare(
-          newPassword,
-          user.password
-        )
+      ? await bcrypt.compare(newPassword, user.password)
       : false;
 
     if (isSamePassword) {
@@ -2055,10 +2002,7 @@ export const resetPassword = async (req, res) => {
       });
     }
 
-    const hashedPassword = await bcrypt.hash(
-      newPassword,
-      10
-    );
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
 
     await prisma.$transaction(async (tx) => {
       await tx.user.update({
@@ -2104,14 +2048,10 @@ export const resetPassword = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Failed to reset password",
-      error:
-        process.env.NODE_ENV === "development"
-          ? error.message
-          : undefined,
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 };
-
 
 // ─────────────────────────────────────────────
 // Save FCM Token
@@ -2123,7 +2063,9 @@ export const saveFcmToken = async (req, res) => {
     const { fcmToken } = req.body;
 
     if (!fcmToken) {
-      return res.status(400).json({ success: false, message: "fcmToken is required" });
+      return res
+        .status(400)
+        .json({ success: false, message: "fcmToken is required" });
     }
 
     await prisma.user.update({
@@ -2151,7 +2093,9 @@ export const removeFcmToken = async (req, res) => {
       data: { fcmToken: null },
     });
 
-    return res.status(200).json({ success: true, message: "FCM token removed" });
+    return res
+      .status(200)
+      .json({ success: true, message: "FCM token removed" });
   } catch (error) {
     console.log(error);
     return res.status(500).json({ success: false, message: "Server error" });

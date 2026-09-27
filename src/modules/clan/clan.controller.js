@@ -3584,7 +3584,6 @@ export const getClanDetails = async (req, res) => {
 //   }
 // };
 
-
 export const leaveClan = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -3769,10 +3768,7 @@ export const leaveClan = async (req, res) => {
 
           clubDeleted: false,
 
-          newLeaderId:
-            isLeader && otherMember
-              ? otherMember.userId
-              : null,
+          newLeaderId: isLeader && otherMember ? otherMember.userId : null,
         },
       };
     });
@@ -3785,10 +3781,7 @@ export const leaveClan = async (req, res) => {
       success: false,
       message: "Failed to leave club",
 
-      error:
-        process.env.NODE_ENV === "development"
-          ? error.message
-          : undefined,
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 };
@@ -3827,7 +3820,18 @@ export const getClanMembers = async (req, res) => {
             username: true,
             fullName: true,
             email: true,
-            // profilePicture: true,
+
+            skinIndex: true,
+
+            avatars: {
+              where: {
+                isEquipped: true,
+                status: "UNLOCKED",
+              },
+              include: {
+                avatar: true,
+              },
+            },
           },
         },
       },
@@ -3845,19 +3849,35 @@ export const getClanMembers = async (req, res) => {
       success: true,
       clanId,
       totalMembers: members.length,
-      members: members.map((member) => ({
-        memberId: member.id,
-        role: member.role,
-        joinedAt: member.joinedAt,
+      members: members.map((member) => {
+        const avatar = {};
 
-        user: {
-          id: member.user.id,
-          username: member.user.username,
-          fullName: member.user.fullName,
-          email: member.user.email,
-          profilePicture: member.user.profilePicture,
-        },
-      })),
+        for (const item of member.user.avatars ?? []) {
+          if (!item.avatar) continue;
+
+          avatar[item.avatar.type] = {
+            id: item.avatar.id,
+            file: item.avatar.file,
+            type: item.avatar.type,
+          };
+        }
+
+        return {
+          memberId: member.id,
+          role: member.role,
+          joinedAt: member.joinedAt,
+
+          user: {
+            id: member.user.id,
+            username: member.user.username,
+            fullName: member.user.fullName,
+            email: member.user.email,
+
+            skinIndex: member.user.skinIndex ?? 2,
+            avatar,
+          },
+        };
+      }),
     });
   } catch (error) {
     console.log("GET_CLAN_MEMBERS_ERROR:", error);
@@ -3880,6 +3900,9 @@ export const getClanMembersFull = async (req, res) => {
     const { clanId } = req.params;
     const currentUserId = req.user.id;
 
+    // =========================================================
+    // FIND CLAN
+    // =========================================================
     const clan = await prisma.clan.findUnique({
       where: {
         id: clanId,
@@ -3901,6 +3924,9 @@ export const getClanMembersFull = async (req, res) => {
       });
     }
 
+    // =========================================================
+    // CHECK CURRENT USER IS A MEMBER
+    // =========================================================
     const currentMember = await prisma.clanMember.findFirst({
       where: {
         clanId,
@@ -3915,6 +3941,9 @@ export const getClanMembersFull = async (req, res) => {
       });
     }
 
+    // =========================================================
+    // GET CLAN MEMBERS + EQUIPPED AVATARS
+    // =========================================================
     const members = await prisma.clanMember.findMany({
       where: {
         clanId,
@@ -3926,6 +3955,20 @@ export const getClanMembersFull = async (req, res) => {
             username: true,
             fullName: true,
             email: true,
+
+            // Avatar skin
+            skinIndex: true,
+
+            // Equipped avatar parts
+            avatars: {
+              where: {
+                isEquipped: true,
+                status: "UNLOCKED",
+              },
+              include: {
+                avatar: true,
+              },
+            },
           },
         },
       },
@@ -3945,6 +3988,9 @@ export const getClanMembersFull = async (req, res) => {
       });
     }
 
+    // =========================================================
+    // GET MEMBER ACTIVITIES
+    // =========================================================
     const activities = await prisma.activity.findMany({
       where: {
         userId: {
@@ -3980,36 +4026,28 @@ export const getClanMembersFull = async (req, res) => {
       },
     });
 
+    // =========================================================
+    // GET MEMBER TERRITORIES
+    // =========================================================
     const territories = await prisma.$queryRaw`
       SELECT
         t.id,
         t."userId",
         t."activityId",
-        t."landmassId",
-        t.name,
         t."areaKm2",
-        t."capturedAt",
-        t."createdAt",
-        t."updatedAt",
-        t."routeEncoded",
         t."routeSegmentsEncoded",
-        ST_AsGeoJSON(t.boundary)::json AS boundary,
-        ST_AsGeoJSON(t.center)::json AS center
-      FROM territories t
-      LEFT JOIN activities a
-        ON a.id = t."activityId"
+        t.boundary,
+        t.center,
+        t."createdAt"
+      FROM "Territory" t
       WHERE t."userId" IN (${Prisma.join(memberUserIds)})
-        AND t.boundary IS NOT NULL
-        AND NOT ST_IsEmpty(t.boundary)
-        AND (
-          a.id IS NULL
-          OR a."include_in_clan" = true
-        )
-      ORDER BY t."capturedAt" DESC;
+      ORDER BY t."createdAt" DESC
     `;
 
+    // =========================================================
+    // GROUP ACTIVITIES BY USER
+    // =========================================================
     const activitiesByUserId = {};
-    const territoriesByUserId = {};
 
     for (const activity of activities) {
       if (!activitiesByUserId[activity.userId]) {
@@ -4018,6 +4056,11 @@ export const getClanMembersFull = async (req, res) => {
 
       activitiesByUserId[activity.userId].push(activity);
     }
+
+    // =========================================================
+    // GROUP TERRITORIES BY USER
+    // =========================================================
+    const territoriesByUserId = {};
 
     for (const territory of territories) {
       if (!territoriesByUserId[territory.userId]) {
@@ -4028,28 +4071,52 @@ export const getClanMembersFull = async (req, res) => {
         id: territory.id,
         userId: territory.userId,
         activityId: territory.activityId,
-        landmassId: territory.landmassId,
-        name: territory.name,
+
         areaKm2: Number(territory.areaKm2 || 0),
-        capturedAt: territory.capturedAt,
-        createdAt: territory.createdAt,
-        updatedAt: territory.updatedAt,
-        routeEncoded: territory.routeEncoded,
+
         routeSegmentsEncoded: territory.routeSegmentsEncoded ?? [],
+
         boundary: territory.boundary,
         center: territory.center,
+
+        createdAt: territory.createdAt,
       });
     }
 
+    // =========================================================
+    // FORMAT MEMBERS
+    // =========================================================
     const formattedMembers = members.map((member) => {
       const userActivities = activitiesByUserId[member.userId] || [];
+
       const userTerritories = territoriesByUserId[member.userId] || [];
 
+      // ---------------------------------------------------------
+      // BUILD AVATAR MAP
+      // ---------------------------------------------------------
+      const avatar = {};
+
+      for (const item of member.user.avatars ?? []) {
+        if (!item.avatar) continue;
+
+        avatar[item.avatar.type] = {
+          id: item.avatar.id,
+          file: item.avatar.file,
+          type: item.avatar.type,
+        };
+      }
+
+      // ---------------------------------------------------------
+      // TOTAL DISTANCE
+      // ---------------------------------------------------------
       const totalDistanceKm = userActivities.reduce(
         (sum, activity) => sum + Number(activity.distanceKm || 0),
         0,
       );
 
+      // ---------------------------------------------------------
+      // TOTAL TERRITORY AREA
+      // ---------------------------------------------------------
       const totalAreaKm2 = userTerritories.reduce(
         (sum, territory) => sum + Number(territory.areaKm2 || 0),
         0,
@@ -4065,6 +4132,12 @@ export const getClanMembersFull = async (req, res) => {
           username: member.user.username,
           fullName: member.user.fullName,
           email: member.user.email,
+
+          // =====================================================
+          // AVATAR DATA
+          // =====================================================
+          skinIndex: member.user.skinIndex ?? 2,
+          avatar,
         },
 
         stats: {
@@ -4079,6 +4152,9 @@ export const getClanMembersFull = async (req, res) => {
       };
     });
 
+    // =========================================================
+    // RESPONSE
+    // =========================================================
     return res.status(200).json({
       success: true,
       clan,
