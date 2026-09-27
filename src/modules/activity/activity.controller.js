@@ -1,11 +1,10 @@
-import prisma from '../../config/prisma.js';
-import { captureTerritory } from './territory.controller.js';
-import { addXP } from '../xp/xp.service.js';
-import { checkLevelUp } from '../level/level.service.js';
-import { checkBadges } from '../badge/badge.service.js';
-import polyline from '@mapbox/polyline';
-import { getHydrationRecommendation } from '../hydration/hydration_service.js';
-
+import prisma from "../../config/prisma.js";
+import { captureTerritory } from "./territory.controller.js";
+import { addXP } from "../xp/xp.service.js";
+import { checkLevelUp } from "../level/level.service.js";
+import { checkBadges } from "../badge/badge.service.js";
+import polyline from "@mapbox/polyline";
+import { getHydrationRecommendation } from "../hydration/hydration_service.js";
 
 // ─────────────────────────────────────────────
 // Helpers
@@ -15,7 +14,9 @@ function formatPace(secPerKm) {
   if (secPerKm == null) return null;
 
   const mins = Math.floor(secPerKm / 60);
-  const secs = Math.round(secPerKm % 60).toString().padStart(2, '0');
+  const secs = Math.round(secPerKm % 60)
+    .toString()
+    .padStart(2, "0");
 
   return `${mins}:${secs}/km`;
 }
@@ -33,9 +34,7 @@ function computeKmSplits(coordinates) {
 
     const h =
       Math.sin(dLat / 2) ** 2 +
-      Math.cos(toRad(a.lat)) *
-      Math.cos(toRad(b.lat)) *
-      Math.sin(dLng / 2) ** 2;
+      Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
 
     return R * 2 * Math.asin(Math.sqrt(h));
   }
@@ -55,7 +54,7 @@ function computeKmSplits(coordinates) {
       kmCount++;
 
       const timeSec = Math.round(
-        (new Date(curr.timestamp).getTime() - kmStartTime) / 1000
+        (new Date(curr.timestamp).getTime() - kmStartTime) / 1000,
       );
 
       splits.push({
@@ -76,12 +75,12 @@ function computeKmSplits(coordinates) {
 function validateRouteEncoded(routeEncoded) {
   if (!routeEncoded) return null;
 
-  if (typeof routeEncoded !== 'string') {
-    throw new Error('routeEncoded must be a string');
+  if (typeof routeEncoded !== "string") {
+    throw new Error("routeEncoded must be a string");
   }
 
-  if (routeEncoded.includes('�')) {
-    throw new Error('routeEncoded contains corrupted replacement characters');
+  if (routeEncoded.includes("�")) {
+    throw new Error("routeEncoded contains corrupted replacement characters");
   }
 
   return routeEncoded.trim();
@@ -103,13 +102,13 @@ function normalizeCoordinates(coordinates) {
         p.lat >= -90 &&
         p.lat <= 90 &&
         p.lng >= -180 &&
-        p.lng <= 180
+        p.lng <= 180,
     );
 }
 
 function buildLineGeoJsonFromCoords(coords) {
   return {
-    type: 'LineString',
+    type: "LineString",
     coordinates: coords.map((p) => [p.lng, p.lat]),
   };
 }
@@ -128,28 +127,58 @@ function getRouteSegmentsFromEncoded(routeEncoded) {
 export const getMyActivities = async (req, res) => {
   try {
     const activities = await prisma.activity.findMany({
-      where: { userId: req.user.id },
-      orderBy: { startedAt: 'desc' },
-      include: { territories: true },
+      where: {
+        userId: req.user.id,
+      },
+
+      orderBy: {
+        startedAt: "desc",
+      },
+
+      include: {
+        territories: true,
+      },
+    });
+
+    // Add captured area + territory count to every activity
+    const formattedActivities = activities.map((activity) => {
+      const totalAreaKm2 = activity.territories.reduce((sum, territory) => {
+        return sum + Number(territory.areaKm2 ?? 0);
+      }, 0);
+
+      const territoriesCaptured = activity.territories.length;
+
+      return {
+        ...activity,
+
+        // Used by ActivityDetailScreen
+        totalAreaKm2,
+        areaKm2: totalAreaKm2,
+        territoriesCaptured,
+
+        // Keep compatibility with screens that read stats
+        stats: {
+          totalAreaKm2,
+          territoriesCaptured,
+        },
+      };
     });
 
     return res.status(200).json({
       success: true,
-      message: 'Activities loaded',
-      activities,
+      message: "Activities loaded",
+      activities: formattedActivities,
     });
   } catch (error) {
-    console.error('GET_MY_ACTIVITIES ERROR:', error);
+    console.error("GET_MY_ACTIVITIES ERROR:", error);
 
     return res.status(500).json({
       success: false,
-      message: 'Server error',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+      message: "Server error",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 };
-
-
 
 // ─────────────────────────────────────────────
 // Finish Activity
@@ -186,6 +215,7 @@ export const finishActivity = async (req, res) => {
       kmSplits: clientKmSplits,
       includeInClan,
       notes,
+      visibility,
       areaKm2,
 
       userWeightKg,
@@ -204,32 +234,22 @@ export const finishActivity = async (req, res) => {
      * ============================================================
      */
     const toNullableFiniteNumber = (value) => {
-      if (
-        value === undefined ||
-        value === null ||
-        value === ''
-      ) {
+      if (value === undefined || value === null || value === "") {
         return null;
       }
 
       const parsed = Number(value);
 
-      return Number.isFinite(parsed)
-        ? parsed
-        : null;
+      return Number.isFinite(parsed) ? parsed : null;
     };
 
-    const safeElevationGain =
-      toNullableFiniteNumber(elevationGain);
+    const safeElevationGain = toNullableFiniteNumber(elevationGain);
 
-    const safeElevationLoss =
-      toNullableFiniteNumber(elevationLoss);
+    const safeElevationLoss = toNullableFiniteNumber(elevationLoss);
 
-    const safeHighestElevation =
-      toNullableFiniteNumber(highestElevation);
+    const safeHighestElevation = toNullableFiniteNumber(highestElevation);
 
-    const safeLowestElevation =
-      toNullableFiniteNumber(lowestElevation);
+    const safeLowestElevation = toNullableFiniteNumber(lowestElevation);
 
     /*
      * ============================================================
@@ -239,59 +259,42 @@ export const finishActivity = async (req, res) => {
     if (!mode) {
       return res.status(400).json({
         success: false,
-        message: 'Activity mode is required',
+        message: "Activity mode is required",
       });
     }
 
-    if (
-      !Number.isFinite(Number(distanceKm)) ||
-      Number(distanceKm) < 0
-    ) {
+    if (!Number.isFinite(Number(distanceKm)) || Number(distanceKm) < 0) {
       return res.status(400).json({
         success: false,
-        message: 'A valid distanceKm is required',
+        message: "A valid distanceKm is required",
       });
     }
 
-    if (
-      !Number.isFinite(Number(durationSec)) ||
-      Number(durationSec) < 0
-    ) {
+    if (!Number.isFinite(Number(durationSec)) || Number(durationSec) < 0) {
       return res.status(400).json({
         success: false,
-        message: 'A valid durationSec is required',
+        message: "A valid durationSec is required",
       });
     }
 
-    const parsedStartedAt =
-      new Date(startedAt);
+    const parsedStartedAt = new Date(startedAt);
 
-    const parsedEndedAt =
-      new Date(endedAt);
+    const parsedEndedAt = new Date(endedAt);
 
     if (
-      Number.isNaN(
-        parsedStartedAt.getTime(),
-      ) ||
-      Number.isNaN(
-        parsedEndedAt.getTime(),
-      )
+      Number.isNaN(parsedStartedAt.getTime()) ||
+      Number.isNaN(parsedEndedAt.getTime())
     ) {
       return res.status(400).json({
         success: false,
-        message:
-          'Valid startedAt and endedAt values are required',
+        message: "Valid startedAt and endedAt values are required",
       });
     }
 
-    if (
-      parsedEndedAt <
-      parsedStartedAt
-    ) {
+    if (parsedEndedAt < parsedStartedAt) {
       return res.status(400).json({
         success: false,
-        message:
-          'endedAt cannot be earlier than startedAt',
+        message: "endedAt cannot be earlier than startedAt",
       });
     }
 
@@ -300,132 +303,84 @@ export const finishActivity = async (req, res) => {
      * USER / HYDRATION
      * ============================================================
      */
-    const userProfile =
-      await prisma.user.findUnique({
-        where: {
-          id: userId,
-        },
-        select: {
-          weight: true,
-        },
-      });
+    const userProfile = await prisma.user.findUnique({
+      where: {
+        id: userId,
+      },
+      select: {
+        weight: true,
+      },
+    });
 
     const resolvedUserWeightKg =
-      toNullableFiniteNumber(
-        userProfile?.weight,
-      ) ??
-      toNullableFiniteNumber(
-        userWeightKg,
-      );
+      toNullableFiniteNumber(userProfile?.weight) ??
+      toNullableFiniteNumber(userWeightKg);
 
-    const hydrationRoutePoints =
-      Array.isArray(coordinates)
-        ? coordinates
-            .map((point) => ({
-              lat:
-                toNullableFiniteNumber(
-                  point?.lat,
-                ),
+    const hydrationRoutePoints = Array.isArray(coordinates)
+      ? coordinates
+          .map((point) => ({
+            lat: toNullableFiniteNumber(point?.lat),
 
-              lng:
-                toNullableFiniteNumber(
-                  point?.lng,
-                ),
-            }))
-            .filter(
-              (point) =>
-                point.lat !== null &&
-                point.lng !== null &&
-                point.lat >= -90 &&
-                point.lat <= 90 &&
-                point.lng >= -180 &&
-                point.lng <= 180,
-            )
-        : [];
+            lng: toNullableFiniteNumber(point?.lng),
+          }))
+          .filter(
+            (point) =>
+              point.lat !== null &&
+              point.lng !== null &&
+              point.lat >= -90 &&
+              point.lat <= 90 &&
+              point.lng >= -180 &&
+              point.lng <= 180,
+          )
+      : [];
 
     const hydrationStartPoint =
-      hydrationRoutePoints.length > 0
-        ? hydrationRoutePoints[0]
-        : null;
+      hydrationRoutePoints.length > 0 ? hydrationRoutePoints[0] : null;
 
     const hydrationEndPoint =
       hydrationRoutePoints.length > 0
-        ? hydrationRoutePoints[
-            hydrationRoutePoints.length -
-              1
-          ]
+        ? hydrationRoutePoints[hydrationRoutePoints.length - 1]
         : null;
 
     const resolvedStartLatitude =
-      toNullableFiniteNumber(
-        startLatitude,
-      ) ??
-      hydrationStartPoint?.lat ??
-      null;
+      toNullableFiniteNumber(startLatitude) ?? hydrationStartPoint?.lat ?? null;
 
     const resolvedStartLongitude =
-      toNullableFiniteNumber(
-        startLongitude,
-      ) ??
+      toNullableFiniteNumber(startLongitude) ??
       hydrationStartPoint?.lng ??
       null;
 
     const resolvedEndLatitude =
-      toNullableFiniteNumber(
-        endLatitude,
-      ) ??
-      hydrationEndPoint?.lat ??
-      null;
+      toNullableFiniteNumber(endLatitude) ?? hydrationEndPoint?.lat ?? null;
 
     const resolvedEndLongitude =
-      toNullableFiniteNumber(
-        endLongitude,
-      ) ??
-      hydrationEndPoint?.lng ??
-      null;
+      toNullableFiniteNumber(endLongitude) ?? hydrationEndPoint?.lng ?? null;
 
     const hydrationLatitude =
-      resolvedStartLatitude !== null &&
-      resolvedEndLatitude !== null
-        ? (
-            resolvedStartLatitude +
-            resolvedEndLatitude
-          ) / 2
-        : resolvedEndLatitude ??
-          resolvedStartLatitude;
+      resolvedStartLatitude !== null && resolvedEndLatitude !== null
+        ? (resolvedStartLatitude + resolvedEndLatitude) / 2
+        : (resolvedEndLatitude ?? resolvedStartLatitude);
 
     const hydrationLongitude =
-      resolvedStartLongitude !== null &&
-      resolvedEndLongitude !== null
-        ? (
-            resolvedStartLongitude +
-            resolvedEndLongitude
-          ) / 2
-        : resolvedEndLongitude ??
-          resolvedStartLongitude;
+      resolvedStartLongitude !== null && resolvedEndLongitude !== null
+        ? (resolvedStartLongitude + resolvedEndLongitude) / 2
+        : (resolvedEndLongitude ?? resolvedStartLongitude);
 
-    const hydration =
-      await getHydrationRecommendation({
-        userWeightKg:
-          resolvedUserWeightKg,
+    const hydration = await getHydrationRecommendation({
+      userWeightKg: resolvedUserWeightKg,
 
-        activityMode:
-          activityMode ?? mode,
+      activityMode: activityMode ?? mode,
 
-        durationSec,
+      durationSec,
 
-        averageSpeed:
-          averageSpeed ?? avgSpeed,
+      averageSpeed: averageSpeed ?? avgSpeed,
 
-        averagePace:
-          averagePace ?? avgPace,
+      averagePace: averagePace ?? avgPace,
 
-        latitude:
-          hydrationLatitude,
+      latitude: hydrationLatitude,
 
-        longitude:
-          hydrationLongitude,
-      });
+      longitude: hydrationLongitude,
+    });
 
     /*
      * ============================================================
@@ -433,22 +388,19 @@ export const finishActivity = async (req, res) => {
      * ============================================================
      */
     if (clientActivityId) {
-      const existingActivity =
-        await prisma.activity.findFirst({
-          where: {
-            userId,
-            clientActivityId,
-          },
-        });
+      const existingActivity = await prisma.activity.findFirst({
+        where: {
+          userId,
+          clientActivityId,
+        },
+      });
 
       if (existingActivity) {
         return res.status(200).json({
           success: true,
           duplicate: true,
-          message:
-            'Activity already synced',
-          activity:
-            existingActivity,
+          message: "Activity already synced",
+          activity: existingActivity,
           hydration,
         });
       }
@@ -459,79 +411,42 @@ export const finishActivity = async (req, res) => {
      * ROUTE
      * ============================================================
      */
-    const safeRouteEncoded =
-      validateRouteEncoded(
-        routeEncoded,
-      );
+    const safeRouteEncoded = validateRouteEncoded(routeEncoded);
 
-    let resolvedCoords =
-      normalizeCoordinates(
-        coordinates,
-      );
+    let resolvedCoords = normalizeCoordinates(coordinates);
 
-    if (
-      (
-        !resolvedCoords ||
-        resolvedCoords.length < 2
-      ) &&
-      safeRouteEncoded
-    ) {
+    if ((!resolvedCoords || resolvedCoords.length < 2) && safeRouteEncoded) {
       let decoded;
 
       try {
-        decoded =
-          polyline.decode(
-            safeRouteEncoded,
-          );
+        decoded = polyline.decode(safeRouteEncoded);
       } catch (error) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-            message:
-              'Invalid routeEncoded. Could not decode polyline.',
-            error:
-              process.env.NODE_ENV ===
-              'development'
-                ? error.message
-                : undefined,
-          });
+        return res.status(400).json({
+          success: false,
+          message: "Invalid routeEncoded. Could not decode polyline.",
+          error:
+            process.env.NODE_ENV === "development" ? error.message : undefined,
+        });
       }
 
-      resolvedCoords =
-        decoded.map(
-          ([lat, lng]) => ({
-            lat,
-            lng,
-          }),
-        );
+      resolvedCoords = decoded.map(([lat, lng]) => ({
+        lat,
+        lng,
+      }));
 
-      resolvedCoords =
-        normalizeCoordinates(
-          resolvedCoords,
-        );
+      resolvedCoords = normalizeCoordinates(resolvedCoords);
     }
 
-    if (
-      !resolvedCoords ||
-      resolvedCoords.length < 2
-    ) {
+    if (!resolvedCoords || resolvedCoords.length < 2) {
       return res.status(400).json({
         success: false,
-        message:
-          'Not enough GPS points — provide coordinates or routeEncoded',
+        message: "Not enough GPS points — provide coordinates or routeEncoded",
       });
     }
 
-    const routeGeoJson =
-      buildLineGeoJsonFromCoords(
-        resolvedCoords,
-      );
+    const routeGeoJson = buildLineGeoJsonFromCoords(resolvedCoords);
 
-    const routeGeoJsonString =
-      JSON.stringify(
-        routeGeoJson,
-      );
+    const routeGeoJsonString = JSON.stringify(routeGeoJson);
 
     /*
      * ============================================================
@@ -539,14 +454,9 @@ export const finishActivity = async (req, res) => {
      * ============================================================
      */
     const kmSplits =
-      Array.isArray(
-        clientKmSplits,
-      ) &&
-      clientKmSplits.length > 0
+      Array.isArray(clientKmSplits) && clientKmSplits.length > 0
         ? clientKmSplits
-        : computeKmSplits(
-            resolvedCoords,
-          );
+        : computeKmSplits(resolvedCoords);
 
     /*
      * ============================================================
@@ -555,145 +465,115 @@ export const finishActivity = async (req, res) => {
      */
     const wantsClanCapture =
       includeInClan === true ||
-      includeInClan === 'true' ||
+      includeInClan === "true" ||
       includeInClan === 1 ||
-      includeInClan === '1';
+      includeInClan === "1";
 
-    let activeClanMembership =
-      null;
+    let activeClanMembership = null;
 
     if (wantsClanCapture) {
-      activeClanMembership =
-        await prisma.clanMember.findFirst({
-          where: {
-            userId,
-          },
+      activeClanMembership = await prisma.clanMember.findFirst({
+        where: {
+          userId,
+        },
 
-          select: {
-            clanId: true,
-            joinedAt: true,
-          },
+        select: {
+          clanId: true,
+          joinedAt: true,
+        },
 
-          orderBy: {
-            joinedAt: 'desc',
-          },
-        });
+        orderBy: {
+          joinedAt: "desc",
+        },
+      });
     }
 
-    const capturedClanId =
-      activeClanMembership?.clanId ??
-      null;
+    const capturedClanId = activeClanMembership?.clanId ?? null;
 
-    const effectiveIncludeInClan =
-      wantsClanCapture &&
-      capturedClanId !== null;
+    const effectiveIncludeInClan = wantsClanCapture && capturedClanId !== null;
+
+    /*
+     * ============================================================
+     * ACTIVITY VISIBILITY
+     * ============================================================
+     */
+    const normalizedVisibility = String(visibility ?? "PUBLIC").toUpperCase();
+
+    const allowedVisibilities = ["PUBLIC", "FRIENDS", "PRIVATE"];
+
+    if (!allowedVisibilities.includes(normalizedVisibility)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid activity visibility",
+      });
+    }
 
     /*
      * ============================================================
      * CREATE ACTIVITY
      * ============================================================
      */
-    const activity =
-      await prisma.activity.create({
-        data: {
-          clientActivityId:
-            clientActivityId ??
-            null,
+    const activity = await prisma.activity.create({
+      data: {
+        clientActivityId: clientActivityId ?? null,
 
-          userId,
+        userId,
 
-          mode,
+        mode,
 
-          distanceKm:
-            Number(distanceKm),
+        distanceKm: Number(distanceKm),
 
-          durationSec:
-            Number(durationSec),
+        durationSec: Number(durationSec),
 
-          stopTime:
-            stopTime ===
-              undefined ||
-            stopTime === null
-              ? null
-              : Number(stopTime),
+        stopTime:
+          stopTime === undefined || stopTime === null ? null : Number(stopTime),
 
-          elapsedTime:
-            elapsedTime ===
-              undefined ||
-            elapsedTime === null
-              ? Number(durationSec)
-              : Number(
-                  elapsedTime,
-                ),
+        elapsedTime:
+          elapsedTime === undefined || elapsedTime === null
+            ? Number(durationSec)
+            : Number(elapsedTime),
 
-          movingTime:
-            movingTime ===
-              undefined ||
-            movingTime === null
-              ? Number(durationSec)
-              : Number(
-                  movingTime,
-                ),
+        movingTime:
+          movingTime === undefined || movingTime === null
+            ? Number(durationSec)
+            : Number(movingTime),
 
-          avgPace:
-            Number(avgPace) || 0,
+        avgPace: Number(avgPace) || 0,
 
-          topPace:
-            topPace ===
-              undefined ||
-            topPace === null
-              ? null
-              : Number(topPace),
+        topPace:
+          topPace === undefined || topPace === null ? null : Number(topPace),
 
-          avgSpeed:
-            avgSpeed ===
-              undefined ||
-            avgSpeed === null
-              ? null
-              : Number(avgSpeed),
+        avgSpeed:
+          avgSpeed === undefined || avgSpeed === null ? null : Number(avgSpeed),
 
-          topSpeed:
-            topSpeed ===
-              undefined ||
-            topSpeed === null
-              ? null
-              : Number(topSpeed),
+        topSpeed:
+          topSpeed === undefined || topSpeed === null ? null : Number(topSpeed),
 
-          calories:
-            Number(calories) ||
-            0,
+        calories: Number(calories) || 0,
 
-          elevationGain:
-            safeElevationGain,
+        elevationGain: safeElevationGain,
 
-          elevationLoss:
-            safeElevationLoss,
+        elevationLoss: safeElevationLoss,
 
-          highestElevation:
-            safeHighestElevation,
+        highestElevation: safeHighestElevation,
 
-          lowestElevation:
-            safeLowestElevation,
+        lowestElevation: safeLowestElevation,
 
-          startedAt:
-            parsedStartedAt,
+        startedAt: parsedStartedAt,
 
-          endedAt:
-            parsedEndedAt,
+        endedAt: parsedEndedAt,
 
-          routeEncoded:
-            safeRouteEncoded,
+        routeEncoded: safeRouteEncoded,
 
-          kmSplits,
+        kmSplits,
 
-          includeInClan:
-            effectiveIncludeInClan,
+        includeInClan: effectiveIncludeInClan,
 
-          notes:
-            notes?.trim() ||
-            null,
-        },
-      });
+        notes: notes?.trim() || null,
+
+        visibility: normalizedVisibility,
+      },
+    });
 
     /*
      * ============================================================
@@ -721,29 +601,19 @@ export const finishActivity = async (req, res) => {
      * XP SETTINGS
      * ============================================================
      */
-    const MIN_DISTANCE_KM =
-      0.1;
+    const MIN_DISTANCE_KM = 0.1;
 
-    const XP_PER_KM =
-      50;
+    const XP_PER_KM = 50;
 
-    const numericDistanceKm =
-      Number(distanceKm);
+    const numericDistanceKm = Number(distanceKm);
 
     const xpEarned =
-      numericDistanceKm > 0
-        ? Math.round(
-            numericDistanceKm *
-              XP_PER_KM,
-          )
-        : 0;
+      numericDistanceKm > 0 ? Math.round(numericDistanceKm * XP_PER_KM) : 0;
 
-    const normalizedMode =
-      String(mode).toUpperCase();
+    const normalizedMode = String(mode).toUpperCase();
 
     const shouldCaptureTerritory =
-      normalizedMode === 'WALK' ||
-      normalizedMode === 'RUN';
+      normalizedMode === "WALK" || normalizedMode === "RUN";
 
     /*
      * ============================================================
@@ -755,17 +625,13 @@ export const finishActivity = async (req, res) => {
         await addXP({
           userId,
 
-          amount:
-            xpEarned,
+          amount: xpEarned,
 
-          type:
-            'ACTIVITY',
+          type: "ACTIVITY",
 
-          description:
-            `${normalizedMode} — ${numericDistanceKm} km`,
+          description: `${normalizedMode} — ${numericDistanceKm} km`,
 
-          activityId:
-            activity.id,
+          activityId: activity.id,
         });
       }
 
@@ -777,25 +643,18 @@ export const finishActivity = async (req, res) => {
         create: {
           userId,
 
-          totalDistanceKm:
-            numericDistanceKm,
+          totalDistanceKm: numericDistanceKm,
 
-          activitiesCount:
-            numericDistanceKm >=
-            MIN_DISTANCE_KM
-              ? 1
-              : 0,
+          activitiesCount: numericDistanceKm >= MIN_DISTANCE_KM ? 1 : 0,
         },
 
         update: {
           totalDistanceKm: {
-            increment:
-              numericDistanceKm,
+            increment: numericDistanceKm,
           },
 
           activitiesCount:
-            numericDistanceKm >=
-            MIN_DISTANCE_KM
+            numericDistanceKm >= MIN_DISTANCE_KM
               ? {
                   increment: 1,
                 }
@@ -803,74 +662,53 @@ export const finishActivity = async (req, res) => {
         },
       });
 
-      const levelResult =
-        await checkLevelUp(
+      const levelResult = await checkLevelUp(userId);
+
+      const newBadges = await checkBadges(userId);
+
+      const progress = await prisma.userProgress.findUnique({
+        where: {
           userId,
-        );
+        },
+      });
 
-      const newBadges =
-        await checkBadges(
-          userId,
-        );
+      return res.status(201).json({
+        success: true,
 
-      const progress =
-        await prisma.userProgress.findUnique({
-          where: {
-            userId,
+        message: "Activity completed successfully",
+
+        activity,
+
+        territory: null,
+
+        captureEvents: [],
+
+        hydration,
+
+        progression: {
+          xpEarned,
+
+          leveledUp: levelResult?.leveledUp ?? false,
+
+          level: levelResult?.level ?? progress?.level ?? 0,
+
+          newBadges,
+
+          progress: {
+            currentXp: progress?.currentXp,
+
+            totalXp: progress?.totalXp,
+
+            xpToNextLevel: progress?.xpToNextLevel,
+
+            level: progress?.level,
+
+            totalDistanceKm: progress?.totalDistanceKm,
+
+            activitiesCount: progress?.activitiesCount,
           },
-        });
-
-      return res
-        .status(201)
-        .json({
-          success: true,
-
-          message:
-            'Activity completed successfully',
-
-          activity,
-
-          territory: null,
-
-          captureEvents: [],
-
-          hydration,
-
-          progression: {
-            xpEarned,
-
-            leveledUp:
-              levelResult?.leveledUp ??
-              false,
-
-            level:
-              levelResult?.level ??
-              progress?.level ??
-              0,
-
-            newBadges,
-
-            progress: {
-              currentXp:
-                progress?.currentXp,
-
-              totalXp:
-                progress?.totalXp,
-
-              xpToNextLevel:
-                progress?.xpToNextLevel,
-
-              level:
-                progress?.level,
-
-              totalDistanceKm:
-                progress?.totalDistanceKm,
-
-              activitiesCount:
-                progress?.activitiesCount,
-            },
-          },
-        });
+        },
+      });
     }
 
     /*
@@ -883,27 +721,23 @@ export const finishActivity = async (req, res) => {
      *
      * 100m² prevents tiny GPS noise polygons.
      */
-    const ROUTE_SNAP_GRID_METERS =
-      10;
+    const ROUTE_SNAP_GRID_METERS = 10;
 
-    const MIN_CAPTURE_AREA_M2 =
-      100;
+    const MIN_CAPTURE_AREA_M2 = 100;
 
     /*
      * ============================================================
      * FIND PREVIOUSLY OWNED TERRITORY
      * ============================================================
      */
-    let existingOwnedBoundaryGeoJson =
-      null;
+    let existingOwnedBoundaryGeoJson = null;
 
     /*
      * CLAN CAPTURE:
      * use all territory permanently owned by the clan.
      */
     if (capturedClanId) {
-      const existingClanArea =
-        await prisma.$queryRaw`
+      const existingClanArea = await prisma.$queryRaw`
           SELECT
             ST_AsGeoJSON(
               ST_Multi(
@@ -941,18 +775,13 @@ export const finishActivity = async (req, res) => {
         `;
 
       existingOwnedBoundaryGeoJson =
-        existingClanArea?.[0]
-          ?.boundaryGeoJson ??
-        null;
-    }
-
-    /*
-     * PERSONAL CAPTURE:
-     * use user's own personal territory only.
-     */
-    else {
-      const existingPersonalArea =
-        await prisma.$queryRaw`
+        existingClanArea?.[0]?.boundaryGeoJson ?? null;
+    } else {
+      /*
+       * PERSONAL CAPTURE:
+       * use user's own personal territory only.
+       */
+      const existingPersonalArea = await prisma.$queryRaw`
           SELECT
             ST_AsGeoJSON(
               ST_Multi(
@@ -1011,9 +840,7 @@ export const finishActivity = async (req, res) => {
         `;
 
       existingOwnedBoundaryGeoJson =
-        existingPersonalArea?.[0]
-          ?.boundaryGeoJson ??
-        null;
+        existingPersonalArea?.[0]?.boundaryGeoJson ?? null;
     }
 
     /*
@@ -1054,8 +881,7 @@ export const finishActivity = async (req, res) => {
      *
      * Existing territory can act as part of the loop boundary.
      */
-    const territoryResult =
-      await prisma.$queryRaw`
+    const territoryResult = await prisma.$queryRaw`
         WITH
 
         /*
@@ -1609,9 +1435,7 @@ export const finishActivity = async (req, res) => {
             ${safeRouteEncoded},
 
             ${JSON.stringify(
-              getRouteSegmentsFromEncoded(
-                safeRouteEncoded,
-              ),
+              getRouteSegmentsFromEncoded(safeRouteEncoded),
             )}::jsonb,
 
             route,
@@ -1662,25 +1486,18 @@ export const finishActivity = async (req, res) => {
      * NO TERRITORY CREATED
      * ============================================================
      */
-    if (
-      !territoryResult ||
-      territoryResult.length === 0
-    ) {
+    if (!territoryResult || territoryResult.length === 0) {
       if (xpEarned > 0) {
         await addXP({
           userId,
 
-          amount:
-            xpEarned,
+          amount: xpEarned,
 
-          type:
-            'ACTIVITY',
+          type: "ACTIVITY",
 
-          description:
-            `${normalizedMode} — ${numericDistanceKm} km`,
+          description: `${normalizedMode} — ${numericDistanceKm} km`,
 
-          activityId:
-            activity.id,
+          activityId: activity.id,
         });
       }
 
@@ -1692,25 +1509,18 @@ export const finishActivity = async (req, res) => {
         create: {
           userId,
 
-          totalDistanceKm:
-            numericDistanceKm,
+          totalDistanceKm: numericDistanceKm,
 
-          activitiesCount:
-            numericDistanceKm >=
-            MIN_DISTANCE_KM
-              ? 1
-              : 0,
+          activitiesCount: numericDistanceKm >= MIN_DISTANCE_KM ? 1 : 0,
         },
 
         update: {
           totalDistanceKm: {
-            increment:
-              numericDistanceKm,
+            increment: numericDistanceKm,
           },
 
           activitiesCount:
-            numericDistanceKm >=
-            MIN_DISTANCE_KM
+            numericDistanceKm >= MIN_DISTANCE_KM
               ? {
                   increment: 1,
                 }
@@ -1718,78 +1528,56 @@ export const finishActivity = async (req, res) => {
         },
       });
 
-      const levelResult =
-        await checkLevelUp(
+      const levelResult = await checkLevelUp(userId);
+
+      const newBadges = await checkBadges(userId);
+
+      const progress = await prisma.userProgress.findUnique({
+        where: {
           userId,
-        );
+        },
+      });
 
-      const newBadges =
-        await checkBadges(
-          userId,
-        );
+      return res.status(201).json({
+        success: true,
 
-      const progress =
-        await prisma.userProgress.findUnique({
-          where: {
-            userId,
+        message: "Activity completed, but no territory was created.",
+
+        activity,
+
+        territory: null,
+
+        captureEvents: [],
+
+        hydration,
+
+        progression: {
+          xpEarned,
+
+          leveledUp: levelResult?.leveledUp ?? false,
+
+          level: levelResult?.level ?? progress?.level ?? 0,
+
+          newBadges,
+
+          progress: {
+            currentXp: progress?.currentXp,
+
+            totalXp: progress?.totalXp,
+
+            xpToNextLevel: progress?.xpToNextLevel,
+
+            level: progress?.level,
+
+            totalDistanceKm: progress?.totalDistanceKm,
+
+            activitiesCount: progress?.activitiesCount,
           },
-        });
-
-      return res
-        .status(201)
-        .json({
-          success: true,
-
-          message:
-            'Activity completed, but no territory was created.',
-
-          activity,
-
-          territory: null,
-
-          captureEvents: [],
-
-          hydration,
-
-          progression: {
-            xpEarned,
-
-            leveledUp:
-              levelResult?.leveledUp ??
-              false,
-
-            level:
-              levelResult?.level ??
-              progress?.level ??
-              0,
-
-            newBadges,
-
-            progress: {
-              currentXp:
-                progress?.currentXp,
-
-              totalXp:
-                progress?.totalXp,
-
-              xpToNextLevel:
-                progress?.xpToNextLevel,
-
-              level:
-                progress?.level,
-
-              totalDistanceKm:
-                progress?.totalDistanceKm,
-
-              activitiesCount:
-                progress?.activitiesCount,
-            },
-          },
-        });
+        },
+      });
     }
 
-    const territoryId =
-      territoryResult[0].id;
+    const territoryId = territoryResult[0].id;
 
     /*
      * ============================================================
@@ -2124,11 +1912,9 @@ export const finishActivity = async (req, res) => {
       await captureTerritory({
         userId,
 
-        activityId:
-          activity.id,
+        activityId: activity.id,
 
-        newTerritoryId:
-          territoryId,
+        newTerritoryId: territoryId,
       });
 
       /*
@@ -2170,18 +1956,16 @@ export const finishActivity = async (req, res) => {
             ${territoryId};
       `;
 
-      const finalClanTerritory =
-        await prisma.territory.findUnique({
-          where: {
-            id:
-              territoryId,
-          },
+      const finalClanTerritory = await prisma.territory.findUnique({
+        where: {
+          id: territoryId,
+        },
 
-          select: {
-            id: true,
-            areaKm2: true,
-          },
-        });
+        select: {
+          id: true,
+          areaKm2: true,
+        },
+      });
 
       /*
        * ==========================================================
@@ -2192,33 +1976,24 @@ export const finishActivity = async (req, res) => {
         await prisma.clanTerritory.upsert({
           where: {
             clanId_territoryId: {
-              clanId:
-                capturedClanId,
+              clanId: capturedClanId,
 
               territoryId,
             },
           },
 
           create: {
-            clanId:
-              capturedClanId,
+            clanId: capturedClanId,
 
             territoryId,
 
-            capturedByUserId:
-              userId,
+            capturedByUserId: userId,
 
-            areaKm2:
-              Number(
-                finalClanTerritory.areaKm2,
-              ) || 0,
+            areaKm2: Number(finalClanTerritory.areaKm2) || 0,
           },
 
           update: {
-            areaKm2:
-              Number(
-                finalClanTerritory.areaKm2,
-              ) || 0,
+            areaKm2: Number(finalClanTerritory.areaKm2) || 0,
           },
         });
 
@@ -2227,61 +2002,47 @@ export const finishActivity = async (req, res) => {
          * RECALCULATE CLAN TERRITORY STATS
          * ========================================================
          */
-        const clanTerritoryStats =
-          await prisma.clanTerritory.aggregate({
-            where: {
-              clanId:
-                capturedClanId,
-            },
+        const clanTerritoryStats = await prisma.clanTerritory.aggregate({
+          where: {
+            clanId: capturedClanId,
+          },
 
-            _count: {
-              _all: true,
-            },
+          _count: {
+            _all: true,
+          },
 
-            _sum: {
-              areaKm2: true,
-            },
-          });
+          _sum: {
+            areaKm2: true,
+          },
+        });
 
         await prisma.clan.update({
           where: {
-            id:
-              capturedClanId,
+            id: capturedClanId,
           },
 
           data: {
-            territoryCount:
-              clanTerritoryStats
-                ._count
-                ._all,
+            territoryCount: clanTerritoryStats._count._all,
 
-            totalAreaKm2:
-              clanTerritoryStats
-                ._sum
-                .areaKm2 ??
-              0,
+            totalAreaKm2: clanTerritoryStats._sum.areaKm2 ?? 0,
           },
         });
       }
-    }
-
-    /*
-     * ============================================================
-     * PERSONAL TERRITORY
-     * ============================================================
-     */
-    else {
+    } else {
+      /*
+       * ============================================================
+       * PERSONAL TERRITORY
+       * ============================================================
+       */
       /*
        * Handle stealing/opposition first.
        */
       await captureTerritory({
         userId,
 
-        activityId:
-          activity.id,
+        activityId: activity.id,
 
-        newTerritoryId:
-          territoryId,
+        newTerritoryId: territoryId,
       });
 
       /*
@@ -2552,8 +2313,7 @@ export const finishActivity = async (req, res) => {
      * FINAL TERRITORY
      * ============================================================
      */
-    const finalTerritory =
-      await prisma.$queryRaw`
+    const finalTerritory = await prisma.$queryRaw`
         SELECT
           id,
 
@@ -2602,18 +2362,15 @@ export const finishActivity = async (req, res) => {
      * CAPTURE EVENTS
      * ============================================================
      */
-    const recentEvents =
-      await prisma.territoryEvent.findMany({
-        where: {
-          activityId:
-            activity.id,
-        },
+    const recentEvents = await prisma.territoryEvent.findMany({
+      where: {
+        activityId: activity.id,
+      },
 
-        orderBy: {
-          createdAt:
-            'desc',
-        },
-      });
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
 
     /*
      * ============================================================
@@ -2624,17 +2381,13 @@ export const finishActivity = async (req, res) => {
       await addXP({
         userId,
 
-        amount:
-          xpEarned,
+        amount: xpEarned,
 
-        type:
-          'ACTIVITY',
+        type: "ACTIVITY",
 
-        description:
-          `${normalizedMode} — ${numericDistanceKm} km`,
+        description: `${normalizedMode} — ${numericDistanceKm} km`,
 
-        activityId:
-          activity.id,
+        activityId: activity.id,
       });
     }
 
@@ -2651,25 +2404,18 @@ export const finishActivity = async (req, res) => {
       create: {
         userId,
 
-        totalDistanceKm:
-          numericDistanceKm,
+        totalDistanceKm: numericDistanceKm,
 
-        activitiesCount:
-          numericDistanceKm >=
-          MIN_DISTANCE_KM
-            ? 1
-            : 0,
+        activitiesCount: numericDistanceKm >= MIN_DISTANCE_KM ? 1 : 0,
       },
 
       update: {
         totalDistanceKm: {
-          increment:
-            numericDistanceKm,
+          increment: numericDistanceKm,
         },
 
         activitiesCount:
-          numericDistanceKm >=
-          MIN_DISTANCE_KM
+          numericDistanceKm >= MIN_DISTANCE_KM
             ? {
                 increment: 1,
               }
@@ -2677,136 +2423,90 @@ export const finishActivity = async (req, res) => {
       },
     });
 
-    const levelResult =
-      await checkLevelUp(
-        userId,
-      );
+    const levelResult = await checkLevelUp(userId);
 
-    const newBadges =
-      await checkBadges(
-        userId,
-      );
+    const newBadges = await checkBadges(userId);
 
-    const progress =
-      await prisma.userProgress.findUnique({
-        where: {
-          userId,
-        },
-      });
+    const progress = await prisma.userProgress.findUnique({
+      where: {
+        userId,
+      },
+    });
 
     /*
      * ============================================================
      * RESPONSE
      * ============================================================
      */
-    return res
-      .status(201)
-      .json({
-        success: true,
+    return res.status(201).json({
+      success: true,
 
-        message:
-          'Activity completed successfully',
+      message: "Activity completed successfully",
 
-        activity,
+      activity,
 
-        territory:
-          finalTerritory[0] ||
-          null,
+      territory: finalTerritory[0] || null,
 
-        captureEvents:
-          recentEvents,
+      captureEvents: recentEvents,
 
-        hydration,
+      hydration,
 
-        clan: capturedClanId
-          ? {
-              clanId:
-                capturedClanId,
+      clan: capturedClanId
+        ? {
+            clanId: capturedClanId,
 
-              territoryCaptured:
-                true,
-            }
-          : null,
+            territoryCaptured: true,
+          }
+        : null,
 
-        progression: {
-          xpEarned,
+      progression: {
+        xpEarned,
 
-          leveledUp:
-            levelResult?.leveledUp ??
-            false,
+        leveledUp: levelResult?.leveledUp ?? false,
 
-          level:
-            levelResult?.level ??
-            progress?.level ??
-            0,
+        level: levelResult?.level ?? progress?.level ?? 0,
 
-          newBadges,
+        newBadges,
 
-          progress: {
-            currentXp:
-              progress?.currentXp,
+        progress: {
+          currentXp: progress?.currentXp,
 
-            totalXp:
-              progress?.totalXp,
+          totalXp: progress?.totalXp,
 
-            xpToNextLevel:
-              progress?.xpToNextLevel,
+          xpToNextLevel: progress?.xpToNextLevel,
 
-            level:
-              progress?.level,
+          level: progress?.level,
 
-            totalDistanceKm:
-              progress?.totalDistanceKm,
+          totalDistanceKm: progress?.totalDistanceKm,
 
-            activitiesCount:
-              progress?.activitiesCount,
-          },
+          activitiesCount: progress?.activitiesCount,
         },
-      });
+      },
+    });
   } catch (error) {
-    console.error(
-      'FINISH_ACTIVITY ERROR:',
-      error,
-    );
+    console.error("FINISH_ACTIVITY ERROR:", error);
 
-    if (
-      error?.name ===
-      'PrismaClientValidationError'
-    ) {
-      return res
-        .status(500)
-        .json({
-          success: false,
-
-          message:
-            'Activity schema does not support one or more submitted fields. Run the Prisma migration and generate the Prisma client.',
-
-          error:
-            process.env.NODE_ENV ===
-            'development'
-              ? error.message
-              : undefined,
-        });
-    }
-
-    return res
-      .status(500)
-      .json({
+    if (error?.name === "PrismaClientValidationError") {
+      return res.status(500).json({
         success: false,
 
         message:
-          'Server error',
+          "Activity schema does not support one or more submitted fields. Run the Prisma migration and generate the Prisma client.",
 
         error:
-          process.env.NODE_ENV ===
-          'development'
-            ? error.message
-            : undefined,
+          process.env.NODE_ENV === "development" ? error.message : undefined,
       });
+    }
+
+    return res.status(500).json({
+      success: false,
+
+      message: "Server error",
+
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
   }
 };
-
-
 
 // export const finishActivity = async (req, res) => {
 //   try {
@@ -4863,11 +4563,6 @@ export const finishActivity = async (req, res) => {
 //   }
 // };
 
-
-
-
-
-
 export const getActivityDetail = async (req, res) => {
   try {
     const { id } = req.params;
@@ -4880,14 +4575,14 @@ export const getActivityDetail = async (req, res) => {
     if (!activity) {
       return res.status(404).json({
         success: false,
-        message: 'Activity not found',
+        message: "Activity not found",
       });
     }
 
     if (activity.userId !== userId) {
       return res.status(403).json({
         success: false,
-        message: 'Forbidden',
+        message: "Forbidden",
       });
     }
 
@@ -4962,17 +4657,16 @@ export const getActivityDetail = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('GET_ACTIVITY_DETAIL ERROR:', error);
+    console.error("GET_ACTIVITY_DETAIL ERROR:", error);
 
     return res.status(500).json({
       success: false,
-      message: 'Something went wrong',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+      message:
+        "Unable to load activity details due to a server error. Please try again.",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 };
-
-
 
 // ─────────────────────────────────────────────
 // Get My Total Stats
@@ -5044,7 +4738,6 @@ export const getMyTotalStats = async (req, res) => {
     });
   }
 };
-
 
 // ─────────────────────────────────────────────
 // Get Today's Total Stats
@@ -5118,17 +4811,13 @@ export const getTodayStats = async (req, res) => {
     // TOTAL VALUES
     // =========================================================
 
-    const totalDistanceKm =
-      Number(activityStats._sum.distanceKm ?? 0);
+    const totalDistanceKm = Number(activityStats._sum.distanceKm ?? 0);
 
-    const totalDurationSec =
-      Number(activityStats._sum.durationSec ?? 0);
+    const totalDurationSec = Number(activityStats._sum.durationSec ?? 0);
 
-    const totalMovingTimeSec =
-      Number(activityStats._sum.movingTime ?? 0);
+    const totalMovingTimeSec = Number(activityStats._sum.movingTime ?? 0);
 
-    const totalStopTimeSec =
-      Number(activityStats._sum.stopTime ?? 0);
+    const totalStopTimeSec = Number(activityStats._sum.stopTime ?? 0);
 
     // =========================================================
     // CALCULATE REAL WEIGHTED AVERAGE PACE
@@ -5141,17 +4830,12 @@ export const getTodayStats = async (req, res) => {
 
     let averagePace = null;
 
-    if (
-      totalDistanceKm > 0 &&
-      totalMovingTimeSec > 0
-    ) {
+    if (totalDistanceKm > 0 && totalMovingTimeSec > 0) {
       // seconds per kilometer
-      const paceSecondsPerKm =
-        totalMovingTimeSec / totalDistanceKm;
+      const paceSecondsPerKm = totalMovingTimeSec / totalDistanceKm;
 
       // Convert seconds/km -> minutes/km
-      averagePace =
-        paceSecondsPerKm / 60;
+      averagePace = paceSecondsPerKm / 60;
     }
 
     // =========================================================
@@ -5162,15 +4846,10 @@ export const getTodayStats = async (req, res) => {
 
     let averageSpeed = null;
 
-    if (
-      totalDistanceKm > 0 &&
-      totalMovingTimeSec > 0
-    ) {
-      const movingHours =
-        totalMovingTimeSec / 3600;
+    if (totalDistanceKm > 0 && totalMovingTimeSec > 0) {
+      const movingHours = totalMovingTimeSec / 3600;
 
-      averageSpeed =
-        totalDistanceKm / movingHours;
+      averageSpeed = totalDistanceKm / movingHours;
     }
 
     // =========================================================
@@ -5183,8 +4862,7 @@ export const getTodayStats = async (req, res) => {
       date: startOfDay,
 
       stats: {
-        totalActivities:
-          activityStats._count.id,
+        totalActivities: activityStats._count.id,
 
         totalDistanceKm,
 
@@ -5194,59 +4872,36 @@ export const getTodayStats = async (req, res) => {
 
         totalStopTimeSec,
 
-        totalCalories:
-          Number(
-            activityStats._sum.calories ?? 0
-          ),
+        totalCalories: Number(activityStats._sum.calories ?? 0),
 
-        totalElevationGain:
-          Number(
-            activityStats._sum.elevationGain ?? 0
-          ),
+        totalElevationGain: Number(activityStats._sum.elevationGain ?? 0),
 
         // Weighted using total time + total distance
         averagePace,
 
-        averagePaceFormatted:
-          formatPace(averagePace),
+        averagePaceFormatted: formatPace(averagePace),
 
         // Weighted using total distance + total moving time
         averageSpeed,
 
-        topSpeed:
-          activityStats._max.topSpeed,
+        topSpeed: activityStats._max.topSpeed,
 
-        totalTerritories:
-          territoryStats._count.id,
+        totalTerritories: territoryStats._count.id,
 
-        totalAreaKm2:
-          Number(
-            territoryStats._sum.areaKm2 ?? 0
-          ),
+        totalAreaKm2: Number(territoryStats._sum.areaKm2 ?? 0),
       },
     });
-
   } catch (error) {
-
-    console.error(
-      "GET_TODAY_STATS ERROR:",
-      error
-    );
+    console.error("GET_TODAY_STATS ERROR:", error);
 
     return res.status(500).json({
       success: false,
-      message:
-        "Failed to fetch today's stats",
+      message: "Failed to fetch today's stats",
 
-      error:
-        process.env.NODE_ENV === "development"
-          ? error.message
-          : undefined,
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 };
-
-
 
 // ─────────────────────────────────────────────
 // Get My Today's Activities
@@ -5255,7 +4910,6 @@ export const getTodayStats = async (req, res) => {
 
 export const getMyTodayActivities = async (req, res) => {
   try {
-
     const userId = req.user.id;
 
     const startOfDay = new Date();
@@ -5275,7 +4929,7 @@ export const getMyTodayActivities = async (req, res) => {
       },
 
       orderBy: {
-        startedAt: 'desc',
+        startedAt: "desc",
       },
 
       include: {
@@ -5300,51 +4954,41 @@ export const getMyTodayActivities = async (req, res) => {
 
       activities,
     });
-
   } catch (error) {
-
-    console.error(
-      'GET_MY_TODAY_ACTIVITIES ERROR:',
-      error
-    );
+    console.error("GET_MY_TODAY_ACTIVITIES ERROR:", error);
 
     return res.status(500).json({
       success: false,
-      message: 'Failed to fetch today activities',
-      error:
-        process.env.NODE_ENV === 'development'
-          ? error.message
-          : undefined,
+      message: "Failed to fetch today activities",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
-
   }
 };
-
 
 // ─────────────────────────────────────────────
 // Get My Friends Activities With Stats + Route
 // GET /api/activities/friends
 // ─────────────────────────────────────────────
 
-
 export const getMyFriendsActivities = async (req, res) => {
   try {
     const userId = req.user.id;
 
-    const sevenDaysAgo = new Date(
-      Date.now() - 7 * 24 * 60 * 60 * 1000
-    );
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
+    // =========================================================
+    // GET FRIEND IDS
+    // =========================================================
     const friendships = await prisma.friendship.findMany({
-      where: { userId },
+      where: {
+        userId,
+      },
       select: {
         friendId: true,
       },
     });
 
-    const friendIds = friendships.map(
-      (friendship) => friendship.friendId
-    );
+    const friendIds = friendships.map((friendship) => friendship.friendId);
 
     if (friendIds.length === 0) {
       return res.status(200).json({
@@ -5354,30 +4998,55 @@ export const getMyFriendsActivities = async (req, res) => {
       });
     }
 
+    // =========================================================
+    // GET FRIEND ACTIVITIES
+    // =========================================================
     const activities = await prisma.activity.findMany({
       where: {
         userId: {
           in: friendIds,
         },
 
-        // Only activities started within the last seven days
+        // Friends can see PUBLIC and FRIENDS activities.
+        // PRIVATE activities must never appear in the feed.
+        visibility: {
+          in: ["PUBLIC", "FRIENDS"],
+        },
+
+        // Only activities started within the last 7 days
         startedAt: {
           gte: sevenDaysAgo,
           lte: new Date(),
         },
       },
+
       orderBy: {
         startedAt: "desc",
       },
+
       take: 30,
+
       include: {
         user: {
           select: {
             id: true,
             username: true,
             fullName: true,
+
+            skinIndex: true,
+
+            avatars: {
+              where: {
+                isEquipped: true,
+                status: "UNLOCKED",
+              },
+              include: {
+                avatar: true,
+              },
+            },
           },
         },
+
         territories: {
           select: {
             id: true,
@@ -5390,82 +5059,134 @@ export const getMyFriendsActivities = async (req, res) => {
       },
     });
 
+    // =========================================================
+    // FORMAT ACTIVITIES
+    // =========================================================
     const formatted = activities.map((activity) => {
       const totalAreaKm2 = activity.territories.reduce(
-        (sum, territory) =>
-          sum + Number(territory.areaKm2 ?? 0),
-        0
+        (sum, territory) => sum + Number(territory.areaKm2 ?? 0),
+        0,
       );
+
+      // =======================================================
+      // BUILD AVATAR MAP
+      // =======================================================
+      const avatar = {};
+
+      for (const item of activity.user.avatars ?? []) {
+        if (!item.avatar) continue;
+
+        avatar[item.avatar.type] = {
+          id: item.avatar.id,
+          file: item.avatar.file,
+          type: item.avatar.type,
+        };
+      }
+
+      // =======================================================
+      // FRIEND DATA
+      // =======================================================
+      const friend = {
+        id: activity.user.id,
+        username: activity.user.username,
+        fullName: activity.user.fullName,
+
+        skinIndex: activity.user.skinIndex ?? 2,
+
+        avatar,
+      };
 
       return {
         id: activity.id,
 
-        friend: activity.user,
+        friend,
 
+        // =====================================================
+        // ACTIVITY STATS
+        // =====================================================
         stats: {
           mode: activity.mode,
+
           distanceKm: Number(activity.distanceKm ?? 0),
+
           durationSec: activity.durationSec,
+
           movingTime: activity.movingTime,
+
           stopTime: activity.stopTime,
+
           avgPace: activity.avgPace,
+
           avgPaceFormatted: formatPace(activity.avgPace),
+
           avgSpeed: activity.avgSpeed,
+
           topSpeed: activity.topSpeed,
+
           calories: activity.calories,
+
           elevationGain: activity.elevationGain,
+
           totalAreaKm2,
+
           territoriesCaptured: activity.territories.length,
         },
 
+        // =====================================================
+        // MAP / ROUTE
+        // =====================================================
         map: {
           routeEncoded: activity.routeEncoded,
-          territoryRoutes: activity.territories.map(
-            (territory) => ({
-              territoryId: territory.id,
-              areaKm2: Number(territory.areaKm2 ?? 0),
-              routeEncoded: territory.routeEncoded,
-              routeSegmentsEncoded:
-                territory.routeSegmentsEncoded ?? [],
-              capturedAt: territory.capturedAt,
-            })
-          ),
+
+          territoryRoutes: activity.territories.map((territory) => ({
+            territoryId: territory.id,
+
+            areaKm2: Number(territory.areaKm2 ?? 0),
+
+            routeEncoded: territory.routeEncoded,
+
+            routeSegmentsEncoded: territory.routeSegmentsEncoded ?? [],
+
+            capturedAt: territory.capturedAt,
+          })),
         },
 
         startedAt: activity.startedAt,
+
         endedAt: activity.endedAt,
+
         createdAt: activity.createdAt,
       };
     });
 
+    // =========================================================
+    // RESPONSE
+    // =========================================================
     return res.status(200).json({
       success: true,
+
       count: formatted.length,
+
       period: {
         days: 7,
         from: sevenDaysAgo,
         to: new Date(),
       },
+
       activities: formatted,
     });
   } catch (error) {
-    console.error(
-      "GET_MY_FRIENDS_ACTIVITIES_ERROR:",
-      error
-    );
+    console.error("GET_MY_FRIENDS_ACTIVITIES_ERROR:", error);
 
     return res.status(500).json({
       success: false,
+
       message: "Failed to fetch friends activities",
-      error:
-        process.env.NODE_ENV === "development"
-          ? error.message
-          : undefined,
+
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 };
-
-
 
 export const getFriendActivityDetails = async (req, res) => {
   try {
@@ -5479,7 +5200,9 @@ export const getFriendActivityDetails = async (req, res) => {
       });
     }
 
-    // Get all accepted friends of the logged-in user
+    // =========================================================
+    // GET ALL FRIENDS OF LOGGED-IN USER
+    // =========================================================
     const friendships = await prisma.friendship.findMany({
       where: {
         userId,
@@ -5489,9 +5212,7 @@ export const getFriendActivityDetails = async (req, res) => {
       },
     });
 
-    const friendIds = friendships.map(
-      (friendship) => friendship.friendId
-    );
+    const friendIds = friendships.map((friendship) => friendship.friendId);
 
     if (friendIds.length === 0) {
       return res.status(404).json({
@@ -5500,14 +5221,22 @@ export const getFriendActivityDetails = async (req, res) => {
       });
     }
 
-    // The activity must belong to one of the user's friends
+    // =========================================================
+    // GET FRIEND ACTIVITY
+    // =========================================================
     const activity = await prisma.activity.findFirst({
       where: {
         id: activityId,
+
         userId: {
           in: friendIds,
         },
+
+        visibility: {
+          in: ["PUBLIC", "FRIENDS"],
+        },
       },
+
       include: {
         user: {
           select: {
@@ -5516,6 +5245,7 @@ export const getFriendActivityDetails = async (req, res) => {
             fullName: true,
           },
         },
+
         territories: {
           select: {
             id: true,
@@ -5531,21 +5261,154 @@ export const getFriendActivityDetails = async (req, res) => {
     if (!activity) {
       return res.status(404).json({
         success: false,
-        message:
-          "Activity not found or you are not allowed to view it",
+        message: "Activity not found or you are not allowed to view it",
       });
     }
 
+    // =========================================================
+    // TERRITORY DATA
+    // =========================================================
     const totalAreaKm2 = activity.territories.reduce(
-      (sum, territory) =>
-        sum + Number(territory.areaKm2 ?? 0),
-      0
+      (sum, territory) => sum + Number(territory.areaKm2 ?? 0),
+      0,
     );
 
+    const territoriesCaptured = activity.territories.length;
+
+    // =========================================================
+    // SAFE KM SPLITS
+    // =========================================================
+    const kmSplits = Array.isArray(activity.kmSplits) ? activity.kmSplits : [];
+
+    // =========================================================
+    // START / FINISH ELEVATION
+    //
+    // Activity table currently stores:
+    // elevationGain
+    // elevationLoss
+    // highestElevation
+    // lowestElevation
+    //
+    // Start/finish elevation can also be recovered from kmSplits.
+    // =========================================================
+    const firstSplit = kmSplits.length > 0 ? kmSplits[0] : null;
+
+    const lastSplit =
+      kmSplits.length > 0 ? kmSplits[kmSplits.length - 1] : null;
+
+    const startingElevation =
+      firstSplit?.startingElevationMeters !== undefined &&
+      firstSplit?.startingElevationMeters !== null
+        ? Number(firstSplit.startingElevationMeters)
+        : null;
+
+    const endingElevation =
+      lastSplit?.endingElevationMeters !== undefined &&
+      lastSplit?.endingElevationMeters !== null
+        ? Number(lastSplit.endingElevationMeters)
+        : null;
+
+    // =========================================================
+    // COMPLETE ACTIVITY RESPONSE
+    // =========================================================
     const activityDetails = {
       id: activity.id,
 
       friend: activity.user,
+
+      // =======================================================
+      // IMPORTANT:
+      // TOP-LEVEL VALUES FOR ActivityDetailScreen
+      // =======================================================
+
+      mode: activity.mode,
+
+      distanceKm: Number(activity.distanceKm ?? 0),
+
+      durationSec: Number(activity.durationSec ?? 0),
+
+      elapsedTime: Number(activity.elapsedTime ?? 0),
+
+      movingTime: Number(activity.movingTime ?? 0),
+
+      stopTime: Number(activity.stopTime ?? 0),
+
+      avgPace: activity.avgPace !== null ? Number(activity.avgPace) : null,
+
+      avgPaceFormatted: formatPace(activity.avgPace),
+
+      topPace: activity.topPace !== null ? Number(activity.topPace) : null,
+
+      topPaceFormatted: formatPace(activity.topPace),
+
+      avgSpeed: Number(activity.avgSpeed ?? 0),
+
+      topSpeed: Number(activity.topSpeed ?? 0),
+
+      calories: Number(activity.calories ?? 0),
+
+      // =======================================================
+      // SPLITS
+      // =======================================================
+      kmSplits,
+
+      // =======================================================
+      // ELEVATION
+      // =======================================================
+
+      elevationGain:
+        activity.elevationGain !== null ? Number(activity.elevationGain) : 0,
+
+      elevationLoss:
+        activity.elevationLoss !== null ? Number(activity.elevationLoss) : 0,
+
+      highestElevation:
+        activity.highestElevation !== null
+          ? Number(activity.highestElevation)
+          : null,
+
+      lowestElevation:
+        activity.lowestElevation !== null
+          ? Number(activity.lowestElevation)
+          : null,
+
+      startingElevation,
+
+      endingElevation,
+
+      // Also provide the "Meters" names because
+      // ActivityDetailScreen supports these.
+      startingElevationMeters: startingElevation,
+
+      endingElevationMeters: endingElevation,
+
+      // =======================================================
+      // TERRITORY
+      // =======================================================
+
+      totalAreaKm2,
+      areaKm2: totalAreaKm2,
+      territoriesCaptured,
+
+      // Also return territories themselves
+      territories: activity.territories.map((territory) => ({
+        id: territory.id,
+        areaKm2: Number(territory.areaKm2 ?? 0),
+        routeEncoded: territory.routeEncoded,
+        routeSegmentsEncoded: territory.routeSegmentsEncoded ?? [],
+        capturedAt: territory.capturedAt,
+      })),
+
+      // =======================================================
+      // ROUTE
+      // =======================================================
+
+      routeEncoded: activity.routeEncoded,
+
+      // =======================================================
+      // STATS
+      // Keep this because Social Feed currently uses stats.
+      // =======================================================
 
       stats: {
         mode: activity.mode,
@@ -5553,36 +5416,32 @@ export const getFriendActivityDetails = async (req, res) => {
         distanceKm: Number(activity.distanceKm ?? 0),
 
         durationSec: Number(activity.durationSec ?? 0),
+
         elapsedTime: Number(activity.elapsedTime ?? 0),
+
         movingTime: Number(activity.movingTime ?? 0),
+
         stopTime: Number(activity.stopTime ?? 0),
 
-        avgPace:
-          activity.avgPace !== null
-            ? Number(activity.avgPace)
-            : null,
+        avgPace: activity.avgPace !== null ? Number(activity.avgPace) : null,
 
         avgPaceFormatted: formatPace(activity.avgPace),
 
-        topPace:
-          activity.topPace !== null
-            ? Number(activity.topPace)
-            : null,
+        topPace: activity.topPace !== null ? Number(activity.topPace) : null,
 
         topPaceFormatted: formatPace(activity.topPace),
 
         avgSpeed: Number(activity.avgSpeed ?? 0),
+
         topSpeed: Number(activity.topSpeed ?? 0),
 
         calories: Number(activity.calories ?? 0),
 
-        elevationGain: Number(
-          activity.elevationGain ?? 0
-        ),
+        elevationGain:
+          activity.elevationGain !== null ? Number(activity.elevationGain) : 0,
 
-        elevationLoss: Number(
-          activity.elevationLoss ?? 0
-        ),
+        elevationLoss:
+          activity.elevationLoss !== null ? Number(activity.elevationLoss) : 0,
 
         highestElevation:
           activity.highestElevation !== null
@@ -5594,28 +5453,82 @@ export const getFriendActivityDetails = async (req, res) => {
             ? Number(activity.lowestElevation)
             : null,
 
+        startingElevation,
+
+        endingElevation,
+
         totalAreaKm2,
-        territoriesCaptured: activity.territories.length,
+
+        territoriesCaptured,
       },
+
+      // =======================================================
+      // ELEVATION OBJECT
+      // ActivityDetailScreen also checks activity["elevation"]
+      // =======================================================
+
+      elevation: {
+        elevationGainMeters:
+          activity.elevationGain !== null ? Number(activity.elevationGain) : 0,
+
+        elevationLossMeters:
+          activity.elevationLoss !== null ? Number(activity.elevationLoss) : 0,
+
+        highestElevationMeters:
+          activity.highestElevation !== null
+            ? Number(activity.highestElevation)
+            : null,
+
+        lowestElevationMeters:
+          activity.lowestElevation !== null
+            ? Number(activity.lowestElevation)
+            : null,
+
+        maximumElevationMeters:
+          activity.highestElevation !== null
+            ? Number(activity.highestElevation)
+            : null,
+
+        minimumElevationMeters:
+          activity.lowestElevation !== null
+            ? Number(activity.lowestElevation)
+            : null,
+
+        startingElevationMeters: startingElevation,
+
+        endingElevationMeters: endingElevation,
+      },
+
+      // =======================================================
+      // MAP
+      // =======================================================
 
       map: {
         routeEncoded: activity.routeEncoded,
 
-        territoryRoutes: activity.territories.map(
-          (territory) => ({
-            territoryId: territory.id,
-            areaKm2: Number(territory.areaKm2 ?? 0),
-            routeEncoded: territory.routeEncoded,
-            routeSegmentsEncoded:
-              territory.routeSegmentsEncoded ?? [],
-            capturedAt: territory.capturedAt,
-          })
-        ),
+        territoryRoutes: activity.territories.map((territory) => ({
+          territoryId: territory.id,
+
+          areaKm2: Number(territory.areaKm2 ?? 0),
+
+          routeEncoded: territory.routeEncoded,
+
+          routeSegmentsEncoded: territory.routeSegmentsEncoded ?? [],
+
+          capturedAt: territory.capturedAt,
+        })),
       },
 
+      // =======================================================
+      // DATES
+      // =======================================================
+
       startedAt: activity.startedAt,
+
       endedAt: activity.endedAt,
+
       createdAt: activity.createdAt,
+
       updatedAt: activity.updatedAt,
     };
 
@@ -5624,24 +5537,17 @@ export const getFriendActivityDetails = async (req, res) => {
       activity: activityDetails,
     });
   } catch (error) {
-    console.error(
-      "GET_FRIEND_ACTIVITY_DETAILS_ERROR:",
-      error
-    );
+    console.error("GET_FRIEND_ACTIVITY_DETAILS_ERROR:", error);
 
     return res.status(500).json({
       success: false,
+
       message: "Failed to fetch activity details",
-      error:
-        process.env.NODE_ENV === "development"
-          ? error.message
-          : undefined,
+
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 };
-
-
-
 // ─────────────────────────────────────────────
 // Get Weekly Run Stats
 // GET /api/activities/stats/weekly?weekStart=2026-06-01
@@ -5679,9 +5585,7 @@ export const getWeeklyActivityStats = async (req, res) => {
       // Tuesday = 2
       // ...
       // Saturday = 6
-      weekStart.setDate(
-        today.getDate() - today.getDay(),
-      );
+      weekStart.setDate(today.getDate() - today.getDay());
     }
 
     weekStart.setHours(0, 0, 0, 0);
@@ -5692,53 +5596,45 @@ export const getWeeklyActivityStats = async (req, res) => {
 
     const weekEnd = new Date(weekStart);
 
-    weekEnd.setDate(
-      weekStart.getDate() + 6,
-    );
+    weekEnd.setDate(weekStart.getDate() + 6);
 
-    weekEnd.setHours(
-      23,
-      59,
-      59,
-      999,
-    );
+    weekEnd.setHours(23, 59, 59, 999);
 
     // =========================================================
     // GET ALL ACTIVITIES FROM THIS WEEK
     // =========================================================
 
-    const activities =
-      await prisma.activity.findMany({
-        where: {
-          userId,
+    const activities = await prisma.activity.findMany({
+      where: {
+        userId,
 
-          startedAt: {
-            gte: weekStart,
-            lte: weekEnd,
-          },
+        startedAt: {
+          gte: weekStart,
+          lte: weekEnd,
         },
+      },
 
-        orderBy: {
-          startedAt: "asc",
-        },
+      orderBy: {
+        startedAt: "asc",
+      },
 
-        select: {
-          id: true,
-          mode: true,
-          distanceKm: true,
-          durationSec: true,
-          movingTime: true,
+      select: {
+        id: true,
+        mode: true,
+        distanceKm: true,
+        durationSec: true,
+        movingTime: true,
 
-          // Add these if they exist in your Activity model
-          avgPace: true,
-          avgSpeed: true,
-          topSpeed: true,
-          calories: true,
+        // Add these if they exist in your Activity model
+        avgPace: true,
+        avgSpeed: true,
+        topSpeed: true,
+        calories: true,
 
-          startedAt: true,
-          endedAt: true,
-        },
-      });
+        startedAt: true,
+        endedAt: true,
+      },
+    });
 
     // =========================================================
     // HELPERS
@@ -5749,69 +5645,42 @@ export const getWeeklyActivityStats = async (req, res) => {
 
       const year = date.getFullYear();
 
-      const month = String(
-        date.getMonth() + 1,
-      ).padStart(2, "0");
+      const month = String(date.getMonth() + 1).padStart(2, "0");
 
-      const day = String(
-        date.getDate(),
-      ).padStart(2, "0");
+      const day = String(date.getDate()).padStart(2, "0");
 
       return `${year}-${month}-${day}`;
     };
 
     const getDayName = (date) => {
-      return date.toLocaleDateString(
-        "en-US",
-        {
-          weekday: "long",
-        },
-      );
+      return date.toLocaleDateString("en-US", {
+        weekday: "long",
+      });
     };
 
     // =========================================================
     // TOTAL WEEKLY STATS
     // =========================================================
 
-    const totalDistanceKm =
-      activities.reduce(
-        (sum, activity) =>
-          sum +
-          Number(
-            activity.distanceKm ?? 0,
-          ),
-        0,
-      );
+    const totalDistanceKm = activities.reduce(
+      (sum, activity) => sum + Number(activity.distanceKm ?? 0),
+      0,
+    );
 
-    const totalDurationSec =
-      activities.reduce(
-        (sum, activity) =>
-          sum +
-          Number(
-            activity.durationSec ?? 0,
-          ),
-        0,
-      );
+    const totalDurationSec = activities.reduce(
+      (sum, activity) => sum + Number(activity.durationSec ?? 0),
+      0,
+    );
 
-    const totalMovingTimeSec =
-      activities.reduce(
-        (sum, activity) =>
-          sum +
-          Number(
-            activity.movingTime ?? 0,
-          ),
-        0,
-      );
+    const totalMovingTimeSec = activities.reduce(
+      (sum, activity) => sum + Number(activity.movingTime ?? 0),
+      0,
+    );
 
-    const totalCalories =
-      activities.reduce(
-        (sum, activity) =>
-          sum +
-          Number(
-            activity.calories ?? 0,
-          ),
-        0,
-      );
+    const totalCalories = activities.reduce(
+      (sum, activity) => sum + Number(activity.calories ?? 0),
+      0,
+    );
 
     // =========================================================
     // ACTIVE DAYS
@@ -5819,19 +5688,11 @@ export const getWeeklyActivityStats = async (req, res) => {
 
     const activeDaySet = new Set();
 
-    activities.forEach(
-      (activity) => {
-        activeDaySet.add(
-          getDateKey(
-            activity.startedAt,
-          ),
-        );
-      },
-    );
+    activities.forEach((activity) => {
+      activeDaySet.add(getDateKey(activity.startedAt));
+    });
 
-    const activeDays = [
-      ...activeDaySet,
-    ].sort();
+    const activeDays = [...activeDaySet].sort();
 
     // =========================================================
     // STREAK
@@ -5840,31 +5701,17 @@ export const getWeeklyActivityStats = async (req, res) => {
     let currentStreak = 0;
     let maxStreak = 0;
 
-    for (
-      let i = 0;
-      i < 7;
-      i++
-    ) {
-      const day = new Date(
-        weekStart,
-      );
+    for (let i = 0; i < 7; i++) {
+      const day = new Date(weekStart);
 
-      day.setDate(
-        weekStart.getDate() + i,
-      );
+      day.setDate(weekStart.getDate() + i);
 
-      const dateKey =
-        getDateKey(day);
+      const dateKey = getDateKey(day);
 
-      if (
-        activeDaySet.has(dateKey)
-      ) {
+      if (activeDaySet.has(dateKey)) {
         currentStreak++;
 
-        maxStreak = Math.max(
-          maxStreak,
-          currentStreak,
-        );
+        maxStreak = Math.max(maxStreak, currentStreak);
       } else {
         currentStreak = 0;
       }
@@ -5884,100 +5731,58 @@ export const getWeeklyActivityStats = async (req, res) => {
 
     const dailyStats = [];
 
-    for (
-      let i = 0;
-      i < 7;
-      i++
-    ) {
-      const day = new Date(
-        weekStart,
-      );
+    for (let i = 0; i < 7; i++) {
+      const day = new Date(weekStart);
 
-      day.setDate(
-        weekStart.getDate() + i,
-      );
+      day.setDate(weekStart.getDate() + i);
 
-      day.setHours(
-        0,
-        0,
-        0,
-        0,
-      );
+      day.setHours(0, 0, 0, 0);
 
-      const dateKey =
-        getDateKey(day);
+      const dateKey = getDateKey(day);
 
       // =======================================================
       // ACTIVITIES FOR THIS DAY
       // =======================================================
 
-      const dayActivities =
-        activities.filter(
-          (activity) =>
-            getDateKey(
-              activity.startedAt,
-            ) === dateKey,
-        );
+      const dayActivities = activities.filter(
+        (activity) => getDateKey(activity.startedAt) === dateKey,
+      );
 
       // =======================================================
       // DAY TOTAL DISTANCE
       // =======================================================
 
-      const dayDistanceKm =
-        dayActivities.reduce(
-          (sum, activity) =>
-            sum +
-            Number(
-              activity.distanceKm ??
-                0,
-            ),
-          0,
-        );
+      const dayDistanceKm = dayActivities.reduce(
+        (sum, activity) => sum + Number(activity.distanceKm ?? 0),
+        0,
+      );
 
       // =======================================================
       // DAY TOTAL DURATION
       // =======================================================
 
-      const dayDurationSec =
-        dayActivities.reduce(
-          (sum, activity) =>
-            sum +
-            Number(
-              activity.durationSec ??
-                0,
-            ),
-          0,
-        );
+      const dayDurationSec = dayActivities.reduce(
+        (sum, activity) => sum + Number(activity.durationSec ?? 0),
+        0,
+      );
 
       // =======================================================
       // DAY MOVING TIME
       // =======================================================
 
-      const dayMovingTimeSec =
-        dayActivities.reduce(
-          (sum, activity) =>
-            sum +
-            Number(
-              activity.movingTime ??
-                0,
-            ),
-          0,
-        );
+      const dayMovingTimeSec = dayActivities.reduce(
+        (sum, activity) => sum + Number(activity.movingTime ?? 0),
+        0,
+      );
 
       // =======================================================
       // DAY CALORIES
       // =======================================================
 
-      const dayCalories =
-        dayActivities.reduce(
-          (sum, activity) =>
-            sum +
-            Number(
-              activity.calories ??
-                0,
-            ),
-          0,
-        );
+      const dayCalories = dayActivities.reduce(
+        (sum, activity) => sum + Number(activity.calories ?? 0),
+        0,
+      );
 
       // =======================================================
       // AVG PACE FOR DAY
@@ -5988,14 +5793,8 @@ export const getWeeklyActivityStats = async (req, res) => {
 
       let averagePace = 0;
 
-      if (
-        dayDistanceKm > 0 &&
-        dayMovingTimeSec > 0
-      ) {
-        averagePace =
-          dayMovingTimeSec /
-          60 /
-          dayDistanceKm;
+      if (dayDistanceKm > 0 && dayMovingTimeSec > 0) {
+        averagePace = dayMovingTimeSec / 60 / dayDistanceKm;
       }
 
       // =======================================================
@@ -6004,14 +5803,8 @@ export const getWeeklyActivityStats = async (req, res) => {
 
       let averageSpeed = 0;
 
-      if (
-        dayDistanceKm > 0 &&
-        dayMovingTimeSec > 0
-      ) {
-        averageSpeed =
-          dayDistanceKm /
-          (dayMovingTimeSec /
-            3600);
+      if (dayDistanceKm > 0 && dayMovingTimeSec > 0) {
+        averageSpeed = dayDistanceKm / (dayMovingTimeSec / 3600);
       }
 
       dailyStats.push({
@@ -6019,49 +5812,26 @@ export const getWeeklyActivityStats = async (req, res) => {
 
         date: dateKey,
 
-        isActive:
-          dayActivities.length > 0,
+        isActive: dayActivities.length > 0,
 
         stats: {
-          totalActivities:
-            dayActivities.length,
+          totalActivities: dayActivities.length,
 
-          totalDistanceKm:
-            Number(
-              dayDistanceKm.toFixed(
-                2,
-              ),
-            ),
+          totalDistanceKm: Number(dayDistanceKm.toFixed(2)),
 
-          totalDurationSec:
-            dayDurationSec,
+          totalDurationSec: dayDurationSec,
 
-          totalMovingTimeSec:
-            dayMovingTimeSec,
+          totalMovingTimeSec: dayMovingTimeSec,
 
-          calories:
-            Math.round(
-              dayCalories,
-            ),
+          calories: Math.round(dayCalories),
 
-          averagePace:
-            Number(
-              averagePace.toFixed(
-                2,
-              ),
-            ),
+          averagePace: Number(averagePace.toFixed(2)),
 
-          averageSpeed:
-            Number(
-              averageSpeed.toFixed(
-                2,
-              ),
-            ),
+          averageSpeed: Number(averageSpeed.toFixed(2)),
         },
 
         // Actual activities performed this day
-        activities:
-          dayActivities,
+        activities: dayActivities,
       });
     }
 
@@ -6069,73 +5839,50 @@ export const getWeeklyActivityStats = async (req, res) => {
     // RESPONSE
     // =========================================================
 
-    return res
-      .status(200)
-      .json({
-        success: true,
+    return res.status(200).json({
+      success: true,
 
-        message:
-          "Weekly activity stats loaded",
+      message: "Weekly activity stats loaded",
 
-        week: {
-          start: weekStart,
-          end: weekEnd,
-        },
+      week: {
+        start: weekStart,
+        end: weekEnd,
+      },
 
-        stats: {
-          totalActivities:
-            activities.length,
+      stats: {
+        totalActivities: activities.length,
 
-          totalActiveDays:
-            activeDays.length,
+        totalActiveDays: activeDays.length,
 
-          streak: maxStreak,
+        streak: maxStreak,
 
-          totalDistanceKm:
-            Number(
-              totalDistanceKm.toFixed(
-                2,
-              ),
-            ),
+        totalDistanceKm: Number(totalDistanceKm.toFixed(2)),
 
-          totalDurationSec,
+        totalDurationSec,
 
-          totalMovingTimeSec,
+        totalMovingTimeSec,
 
-          totalCalories:
-            Math.round(
-              totalCalories,
-            ),
-        },
+        totalCalories: Math.round(totalCalories),
+      },
 
-        activeDays,
+      activeDays,
 
-        // Sunday -> Saturday with individual activities
-        dailyStats,
+      // Sunday -> Saturday with individual activities
+      dailyStats,
 
-        // Keep full weekly list too
-        activities,
-      });
+      // Keep full weekly list too
+      activities,
+    });
   } catch (error) {
-    console.error(
-      "GET_WEEKLY_ACTIVITY_STATS ERROR:",
-      error,
-    );
+    console.error("GET_WEEKLY_ACTIVITY_STATS ERROR:", error);
 
-    return res
-      .status(500)
-      .json({
-        success: false,
+    return res.status(500).json({
+      success: false,
 
-        message:
-          "Failed to fetch weekly activity stats",
+      message: "Failed to fetch weekly activity stats",
 
-        error:
-          process.env.NODE_ENV ===
-          "development"
-            ? error.message
-            : undefined,
-      });
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
   }
 };
 
@@ -6143,7 +5890,6 @@ export const getWeeklyActivityStats = async (req, res) => {
 // Get Personal Records
 // GET /api/activities/stats/personal-records
 // ─────────────────────────────────────────────
-
 
 export const getPersonalRecords = async (req, res) => {
   try {
@@ -6161,7 +5907,7 @@ export const getPersonalRecords = async (req, res) => {
         },
       },
       orderBy: {
-        startedAt: 'desc',
+        startedAt: "desc",
       },
       select: {
         id: true,
@@ -6185,7 +5931,7 @@ export const getPersonalRecords = async (req, res) => {
     if (activities.length === 0) {
       return res.status(200).json({
         success: true,
-        message: 'No activities found',
+        message: "No activities found",
         records: null,
       });
     }
@@ -6208,13 +5954,13 @@ export const getPersonalRecords = async (req, res) => {
       const s = sec % 60;
 
       if (h > 0) {
-        return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(
+        return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(
           2,
-          '0'
+          "0",
         )}`;
       }
 
-      return `${m}:${String(s).padStart(2, '0')}`;
+      return `${m}:${String(s).padStart(2, "0")}`;
     };
 
     // =========================================================================
@@ -6224,28 +5970,17 @@ export const getPersonalRecords = async (req, res) => {
     const formatPace = (secondsPerKm) => {
       if (secondsPerKm == null) return null;
 
-      const totalSeconds = Math.round(
-        Number(secondsPerKm)
-      );
+      const totalSeconds = Math.round(Number(secondsPerKm));
 
-      if (
-        !Number.isFinite(totalSeconds) ||
-        totalSeconds <= 0
-      ) {
+      if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) {
         return null;
       }
 
-      const minutes = Math.floor(
-        totalSeconds / 60
-      );
+      const minutes = Math.floor(totalSeconds / 60);
 
-      const seconds =
-        totalSeconds % 60;
+      const seconds = totalSeconds % 60;
 
-      return `${minutes}:${String(seconds).padStart(
-        2,
-        '0'
-      )}/km`;
+      return `${minutes}:${String(seconds).padStart(2, "0")}/km`;
     };
 
     // =========================================================================
@@ -6274,10 +6009,7 @@ export const getPersonalRecords = async (req, res) => {
     // =========================================================================
 
     const getSplitDistanceKm = (split) => {
-      if (
-        !split ||
-        typeof split !== 'object'
-      ) {
+      if (!split || typeof split !== "object") {
         return null;
       }
 
@@ -6286,9 +6018,7 @@ export const getPersonalRecords = async (req, res) => {
       // -----------------------------------------------------------------------
 
       if (split.distanceKm != null) {
-        const value = Number(
-          split.distanceKm
-        );
+        const value = Number(split.distanceKm);
 
         if (Number.isFinite(value)) {
           return value;
@@ -6296,9 +6026,7 @@ export const getPersonalRecords = async (req, res) => {
       }
 
       if (split.splitDistanceKm != null) {
-        const value = Number(
-          split.splitDistanceKm
-        );
+        const value = Number(split.splitDistanceKm);
 
         if (Number.isFinite(value)) {
           return value;
@@ -6357,22 +6085,14 @@ export const getPersonalRecords = async (req, res) => {
     // fastest20Km
     // =========================================================================
 
-    const normalizeSplits = (
-      kmSplits,
-      activityDistanceKm
-    ) => {
+    const normalizeSplits = (kmSplits, activityDistanceKm) => {
       if (!Array.isArray(kmSplits)) {
         return [];
       }
 
-      const totalDistanceKm = Number(
-        activityDistanceKm ?? 0
-      );
+      const totalDistanceKm = Number(activityDistanceKm ?? 0);
 
-      if (
-        !Number.isFinite(totalDistanceKm) ||
-        totalDistanceKm < 1
-      ) {
+      if (!Number.isFinite(totalDistanceKm) || totalDistanceKm < 1) {
         return [];
       }
 
@@ -6387,35 +6107,21 @@ export const getPersonalRecords = async (req, res) => {
       //
       // -----------------------------------------------------------------------
 
-      const completedKm = Math.floor(
-        totalDistanceKm + 0.000001
-      );
+      const completedKm = Math.floor(totalDistanceKm + 0.000001);
 
       const normalized = kmSplits
         .map((split) => {
-          if (
-            !split ||
-            typeof split !== 'object'
-          ) {
+          if (!split || typeof split !== "object") {
             return null;
           }
 
-          const km = Number(
-            split.km
-          );
+          const km = Number(split.km);
 
-          const rawTime =
-            split.timeSec ??
-            split.pace;
+          const rawTime = split.timeSec ?? split.pace;
 
-          const timeSec = Number(
-            rawTime
-          );
+          const timeSec = Number(rawTime);
 
-          const splitDistanceKm =
-            getSplitDistanceKm(
-              split
-            );
+          const splitDistanceKm = getSplitDistanceKm(split);
 
           return {
             km,
@@ -6482,10 +6188,7 @@ export const getPersonalRecords = async (req, res) => {
           // VALID TIME
           // ===================================================================
 
-          if (
-            !Number.isFinite(split.timeSec) ||
-            split.timeSec <= 0
-          ) {
+          if (!Number.isFinite(split.timeSec) || split.timeSec <= 0) {
             return false;
           }
 
@@ -6506,29 +6209,20 @@ export const getPersonalRecords = async (req, res) => {
           // ===================================================================
 
           if (split.splitDistanceKm != null) {
-            const distance =
-              Number(
-                split.splitDistanceKm
-              );
+            const distance = Number(split.splitDistanceKm);
 
             if (!Number.isFinite(distance)) {
               return false;
             }
 
-            if (
-              distance < 0.95 ||
-              distance > 1.05
-            ) {
+            if (distance < 0.95 || distance > 1.05) {
               return false;
             }
           }
 
           return true;
         })
-        .sort(
-          (a, b) =>
-            a.km - b.km
-        );
+        .sort((a, b) => a.km - b.km);
 
       // -----------------------------------------------------------------------
       // REMOVE DUPLICATE KM NUMBERS
@@ -6587,10 +6281,7 @@ export const getPersonalRecords = async (req, res) => {
     // Must contain twenty complete continuous 1 km splits.
     // =========================================================================
 
-    const findFastestWindow = (
-      splits,
-      targetKm
-    ) => {
+    const findFastestWindow = (splits, targetKm) => {
       if (!Array.isArray(splits)) {
         return null;
       }
@@ -6601,15 +6292,8 @@ export const getPersonalRecords = async (req, res) => {
 
       let best = null;
 
-      for (
-        let i = 0;
-        i <= splits.length - targetKm;
-        i++
-      ) {
-        const window = splits.slice(
-          i,
-          i + targetKm
-        );
+      for (let i = 0; i <= splits.length - targetKm; i++) {
+        const window = splits.slice(i, i + targetKm);
 
         let validWindow = true;
 
@@ -6617,21 +6301,14 @@ export const getPersonalRecords = async (req, res) => {
         // VERIFY EVERY SPLIT IN WINDOW
         // =====================================================================
 
-        for (
-          let j = 0;
-          j < window.length;
-          j++
-        ) {
+        for (let j = 0; j < window.length; j++) {
           const split = window[j];
 
           // -------------------------------------------------------------------
           // VALID KM
           // -------------------------------------------------------------------
 
-          if (
-            !Number.isFinite(split.km) ||
-            !Number.isInteger(split.km)
-          ) {
+          if (!Number.isFinite(split.km) || !Number.isInteger(split.km)) {
             validWindow = false;
             break;
           }
@@ -6640,10 +6317,7 @@ export const getPersonalRecords = async (req, res) => {
           // VALID TIME
           // -------------------------------------------------------------------
 
-          if (
-            !Number.isFinite(split.timeSec) ||
-            split.timeSec <= 0
-          ) {
+          if (!Number.isFinite(split.timeSec) || split.timeSec <= 0) {
             validWindow = false;
             break;
           }
@@ -6653,10 +6327,7 @@ export const getPersonalRecords = async (req, res) => {
           // -------------------------------------------------------------------
 
           if (split.splitDistanceKm != null) {
-            if (
-              split.splitDistanceKm < 0.95 ||
-              split.splitDistanceKm > 1.05
-            ) {
+            if (split.splitDistanceKm < 0.95 || split.splitDistanceKm > 1.05) {
               validWindow = false;
               break;
             }
@@ -6671,16 +6342,11 @@ export const getPersonalRecords = async (req, res) => {
           // -------------------------------------------------------------------
 
           if (j > 0) {
-            const previousKm =
-              window[j - 1].km;
+            const previousKm = window[j - 1].km;
 
-            const currentKm =
-              split.km;
+            const currentKm = split.km;
 
-            if (
-              currentKm !==
-              previousKm + 1
-            ) {
+            if (currentKm !== previousKm + 1) {
               validWindow = false;
               break;
             }
@@ -6695,21 +6361,11 @@ export const getPersonalRecords = async (req, res) => {
         // SUM ONLY VALID COMPLETE KM SPLITS
         // =====================================================================
 
-        const totalTimeSec =
-          window.reduce(
-            (sum, split) => {
-              return (
-                sum +
-                Number(split.timeSec)
-              );
-            },
-            0
-          );
+        const totalTimeSec = window.reduce((sum, split) => {
+          return sum + Number(split.timeSec);
+        }, 0);
 
-        if (
-          !Number.isFinite(totalTimeSec) ||
-          totalTimeSec <= 0
-        ) {
+        if (!Number.isFinite(totalTimeSec) || totalTimeSec <= 0) {
           continue;
         }
 
@@ -6717,27 +6373,15 @@ export const getPersonalRecords = async (req, res) => {
         // FASTEST WINDOW
         // =====================================================================
 
-        if (
-          best == null ||
-          totalTimeSec <
-            best.totalTimeSec
-        ) {
+        if (best == null || totalTimeSec < best.totalTimeSec) {
           best = {
-            fromKm:
-              window[0].km,
+            fromKm: window[0].km,
 
-            toKm:
-              window[
-                window.length - 1
-              ].km,
+            toKm: window[window.length - 1].km,
 
             totalTimeSec,
 
-            paceSecPerKm:
-              Math.round(
-                totalTimeSec /
-                  targetKm
-              ),
+            paceSecPerKm: Math.round(totalTimeSec / targetKm),
           };
         }
       }
@@ -6749,66 +6393,35 @@ export const getPersonalRecords = async (req, res) => {
     // LONGEST ACTIVITY
     // =========================================================================
 
-    const longestActivity =
-      activities.reduce(
-        (best, current) => {
-          const bestDistance =
-            Number(
-              best.distanceKm ?? 0
-            );
+    const longestActivity = activities.reduce((best, current) => {
+      const bestDistance = Number(best.distanceKm ?? 0);
 
-          const currentDistance =
-            Number(
-              current.distanceKm ?? 0
-            );
+      const currentDistance = Number(current.distanceKm ?? 0);
 
-          return currentDistance >
-            bestDistance
-            ? current
-            : best;
-        },
-        activities[0]
-      );
+      return currentDistance > bestDistance ? current : best;
+    }, activities[0]);
 
     // =========================================================================
     // HIGHEST SPEED
     // =========================================================================
 
-    const highestSpeedActivity =
-      activities.reduce(
-        (best, current) => {
-          const bestSpeed =
-            Number(
-              best.topSpeed ?? 0
-            );
+    const highestSpeedActivity = activities.reduce((best, current) => {
+      const bestSpeed = Number(best.topSpeed ?? 0);
 
-          const currentSpeed =
-            Number(
-              current.topSpeed ?? 0
-            );
+      const currentSpeed = Number(current.topSpeed ?? 0);
 
-          return currentSpeed >
-            bestSpeed
-            ? current
-            : best;
-        },
-        activities[0]
-      );
+      return currentSpeed > bestSpeed ? current : best;
+    }, activities[0]);
 
     // =========================================================================
     // FIND FASTEST PERSONAL RECORD
     // =========================================================================
 
-    const findFastestRecord = (
-      targetKm
-    ) => {
+    const findFastestRecord = (targetKm) => {
       let bestRecord = null;
 
       for (const activity of activities) {
-        const activityDistanceKm =
-          Number(
-            activity.distanceKm ?? 0
-          );
+        const activityDistanceKm = Number(activity.distanceKm ?? 0);
 
         // =====================================================================
         // ACTIVITY ITSELF MUST COMPLETE TARGET DISTANCE
@@ -6823,11 +6436,8 @@ export const getPersonalRecords = async (req, res) => {
         // =====================================================================
 
         if (
-          !Number.isFinite(
-            activityDistanceKm
-          ) ||
-          activityDistanceKm <
-            targetKm
+          !Number.isFinite(activityDistanceKm) ||
+          activityDistanceKm < targetKm
         ) {
           continue;
         }
@@ -6836,11 +6446,7 @@ export const getPersonalRecords = async (req, res) => {
         // REMOVE PARTIAL SPLITS BEFORE CALCULATING ANY PR
         // =====================================================================
 
-        const splits =
-          normalizeSplits(
-            activity.kmSplits,
-            activityDistanceKm
-          );
+        const splits = normalizeSplits(activity.kmSplits, activityDistanceKm);
 
         // =====================================================================
         // REQUIRE ENOUGH COMPLETE KM
@@ -6850,10 +6456,7 @@ export const getPersonalRecords = async (req, res) => {
         // Must contain at least 5 FULL km splits.
         // =====================================================================
 
-        if (
-          splits.length <
-          targetKm
-        ) {
+        if (splits.length < targetKm) {
           continue;
         }
 
@@ -6861,11 +6464,7 @@ export const getPersonalRecords = async (req, res) => {
         // FIND BEST COMPLETE CONTINUOUS WINDOW
         // =====================================================================
 
-        const bestWindow =
-          findFastestWindow(
-            splits,
-            targetKm
-          );
+        const bestWindow = findFastestWindow(splits, targetKm);
 
         if (!bestWindow) {
           continue;
@@ -6877,49 +6476,32 @@ export const getPersonalRecords = async (req, res) => {
 
         if (
           bestRecord == null ||
-          bestWindow.totalTimeSec <
-            bestRecord.timeSec
+          bestWindow.totalTimeSec < bestRecord.timeSec
         ) {
           bestRecord = {
-            activityId:
-              activity.id,
+            activityId: activity.id,
 
-            mode:
-              activity.mode,
+            mode: activity.mode,
 
-            distanceKm:
-              targetKm,
+            distanceKm: targetKm,
 
-            timeSec:
-              bestWindow.totalTimeSec,
+            timeSec: bestWindow.totalTimeSec,
 
-            timeFormatted:
-              formatDuration(
-                bestWindow.totalTimeSec
-              ),
+            timeFormatted: formatDuration(bestWindow.totalTimeSec),
 
-            paceSecPerKm:
-              bestWindow.paceSecPerKm,
+            paceSecPerKm: bestWindow.paceSecPerKm,
 
-            paceFormatted:
-              formatPace(
-                bestWindow.paceSecPerKm
-              ),
+            paceFormatted: formatPace(bestWindow.paceSecPerKm),
 
-            fromKm:
-              bestWindow.fromKm,
+            fromKm: bestWindow.fromKm,
 
-            toKm:
-              bestWindow.toKm,
+            toKm: bestWindow.toKm,
 
-            actualActivityDistanceKm:
-              activityDistanceKm,
+            actualActivityDistanceKm: activityDistanceKm,
 
-            startedAt:
-              activity.startedAt,
+            startedAt: activity.startedAt,
 
-            endedAt:
-              activity.endedAt,
+            endedAt: activity.endedAt,
           };
         }
       }
@@ -6933,17 +6515,13 @@ export const getPersonalRecords = async (req, res) => {
     // ALL OF THESE NOW ONLY USE COMPLETE KM SPLITS
     // =========================================================================
 
-    const fastest1Km =
-      findFastestRecord(1);
+    const fastest1Km = findFastestRecord(1);
 
-    const fastest5Km =
-      findFastestRecord(5);
+    const fastest5Km = findFastestRecord(5);
 
-    const fastest10Km =
-      findFastestRecord(10);
+    const fastest10Km = findFastestRecord(10);
 
-    const fastest20Km =
-      findFastestRecord(20);
+    const fastest20Km = findFastestRecord(20);
 
     // =========================================================================
     // RESPONSE
@@ -6952,8 +6530,7 @@ export const getPersonalRecords = async (req, res) => {
     return res.status(200).json({
       success: true,
 
-      message:
-        'Personal records loaded',
+      message: "Personal records loaded",
 
       records: {
         // =====================================================================
@@ -6961,39 +6538,23 @@ export const getPersonalRecords = async (req, res) => {
         // =====================================================================
 
         longestActivity: {
-          activityId:
-            longestActivity.id,
+          activityId: longestActivity.id,
 
-          mode:
-            longestActivity.mode,
+          mode: longestActivity.mode,
 
-          distanceKm:
-            Number(
-              longestActivity.distanceKm ??
-                0
-            ),
+          distanceKm: Number(longestActivity.distanceKm ?? 0),
 
-          durationSec:
-            longestActivity.durationSec,
+          durationSec: longestActivity.durationSec,
 
-          durationFormatted:
-            formatDuration(
-              longestActivity.durationSec
-            ),
+          durationFormatted: formatDuration(longestActivity.durationSec),
 
-          movingTimeSec:
-            longestActivity.movingTime,
+          movingTimeSec: longestActivity.movingTime,
 
-          movingTimeFormatted:
-            formatDuration(
-              longestActivity.movingTime
-            ),
+          movingTimeFormatted: formatDuration(longestActivity.movingTime),
 
-          startedAt:
-            longestActivity.startedAt,
+          startedAt: longestActivity.startedAt,
 
-          endedAt:
-            longestActivity.endedAt,
+          endedAt: longestActivity.endedAt,
         },
 
         // =====================================================================
@@ -7015,55 +6576,32 @@ export const getPersonalRecords = async (req, res) => {
         // =====================================================================
 
         highestSpeed: {
-          activityId:
-            highestSpeedActivity.id,
+          activityId: highestSpeedActivity.id,
 
-          mode:
-            highestSpeedActivity.mode,
+          mode: highestSpeedActivity.mode,
 
-          topSpeed:
-            Number(
-              highestSpeedActivity.topSpeed ??
-                0
-            ),
+          topSpeed: Number(highestSpeedActivity.topSpeed ?? 0),
 
-          distanceKm:
-            Number(
-              highestSpeedActivity.distanceKm ??
-                0
-            ),
+          distanceKm: Number(highestSpeedActivity.distanceKm ?? 0),
 
-          startedAt:
-            highestSpeedActivity.startedAt,
+          startedAt: highestSpeedActivity.startedAt,
 
-          endedAt:
-            highestSpeedActivity.endedAt,
+          endedAt: highestSpeedActivity.endedAt,
         },
       },
     });
   } catch (error) {
-    console.error(
-      'GET_PERSONAL_RECORDS ERROR:',
-      error
-    );
+    console.error("GET_PERSONAL_RECORDS ERROR:", error);
 
     return res.status(500).json({
       success: false,
 
-      message:
-        'Failed to fetch personal records',
+      message: "Failed to fetch personal records",
 
-      error:
-        process.env.NODE_ENV ===
-        'development'
-          ? error.message
-          : undefined,
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 };
-
-
-
 
 export const getLifetimeActivityStats = async (req, res) => {
   try {
@@ -7153,33 +6691,28 @@ export const getLifetimeActivityStats = async (req, res) => {
       // ---------------------------------------------------------
 
       const totalDistanceKm = activities.reduce(
-        (sum, activity) =>
-          sum + Number(activity.distanceKm ?? 0),
-        0
+        (sum, activity) => sum + Number(activity.distanceKm ?? 0),
+        0,
       );
 
       const totalDurationSec = activities.reduce(
-        (sum, activity) =>
-          sum + Number(activity.durationSec ?? 0),
-        0
+        (sum, activity) => sum + Number(activity.durationSec ?? 0),
+        0,
       );
 
       const totalMovingTimeSec = activities.reduce(
-        (sum, activity) =>
-          sum + Number(activity.movingTimeSec ?? 0),
-        0
+        (sum, activity) => sum + Number(activity.movingTimeSec ?? 0),
+        0,
       );
 
       const totalCalories = activities.reduce(
-        (sum, activity) =>
-          sum + Number(activity.calories ?? 0),
-        0
+        (sum, activity) => sum + Number(activity.calories ?? 0),
+        0,
       );
 
       const totalElevationGainM = activities.reduce(
-        (sum, activity) =>
-          sum + Number(activity.elevationGainM ?? 0),
-        0
+        (sum, activity) => sum + Number(activity.elevationGainM ?? 0),
+        0,
       );
 
       // ---------------------------------------------------------
@@ -7199,9 +6732,7 @@ export const getLifetimeActivityStats = async (req, res) => {
           return;
         }
 
-        const dateKey = date
-          .toISOString()
-          .slice(0, 10);
+        const dateKey = date.toISOString().slice(0, 10);
 
         activeDaySet.add(dateKey);
       });
@@ -7216,57 +6747,31 @@ export const getLifetimeActivityStats = async (req, res) => {
       let fastestActivity = null;
 
       activities.forEach((activity) => {
-        const distanceKm = Number(
-          activity.distanceKm ?? 0
-        );
+        const distanceKm = Number(activity.distanceKm ?? 0);
 
-        const movingTimeSec = Number(
-          activity.movingTimeSec ?? 0
-        );
+        const movingTimeSec = Number(activity.movingTimeSec ?? 0);
 
         // LONGEST
         if (
           distanceKm > 0 &&
-          (
-            !longestActivity ||
-            distanceKm >
-              longestActivity.distanceKm
-          )
+          (!longestActivity || distanceKm > longestActivity.distanceKm)
         ) {
           longestActivity = activity;
         }
 
         // FASTEST
-        if (
-          distanceKm > 0 &&
-          movingTimeSec > 0
-        ) {
-          const paceMinPerKm =
-            movingTimeSec /
-            60 /
-            distanceKm;
+        if (distanceKm > 0 && movingTimeSec > 0) {
+          const paceMinPerKm = movingTimeSec / 60 / distanceKm;
 
-          const speedKmh =
-            distanceKm /
-            (movingTimeSec / 3600);
+          const speedKmh = distanceKm / (movingTimeSec / 3600);
 
-          if (
-            !fastestActivity ||
-            paceMinPerKm <
-              fastestActivity.paceMinPerKm
-          ) {
+          if (!fastestActivity || paceMinPerKm < fastestActivity.paceMinPerKm) {
             fastestActivity = {
               ...activity,
 
-              paceMinPerKm: round(
-                paceMinPerKm,
-                2
-              ),
+              paceMinPerKm: round(paceMinPerKm, 2),
 
-              speedKmh: round(
-                speedKmh,
-                2
-              ),
+              speedKmh: round(speedKmh, 2),
             };
           }
         }
@@ -7277,11 +6782,8 @@ export const getLifetimeActivityStats = async (req, res) => {
       // ---------------------------------------------------------
 
       const averagePaceMinPerKm =
-        totalDistanceKm > 0 &&
-        totalMovingTimeSec > 0
-          ? totalMovingTimeSec /
-            60 /
-            totalDistanceKm
+        totalDistanceKm > 0 && totalMovingTimeSec > 0
+          ? totalMovingTimeSec / 60 / totalDistanceKm
           : 0;
 
       // ---------------------------------------------------------
@@ -7289,10 +6791,8 @@ export const getLifetimeActivityStats = async (req, res) => {
       // ---------------------------------------------------------
 
       const averageSpeedKmh =
-        totalDistanceKm > 0 &&
-        totalMovingTimeSec > 0
-          ? totalDistanceKm /
-            (totalMovingTimeSec / 3600)
+        totalDistanceKm > 0 && totalMovingTimeSec > 0
+          ? totalDistanceKm / (totalMovingTimeSec / 3600)
           : 0;
 
       // ---------------------------------------------------------
@@ -7300,15 +6800,11 @@ export const getLifetimeActivityStats = async (req, res) => {
       // ---------------------------------------------------------
 
       const firstActivity =
-        activities.length > 0
-          ? activities[0].startedAt
-          : null;
+        activities.length > 0 ? activities[0].startedAt : null;
 
       const latestActivity =
         activities.length > 0
-          ? activities[
-              activities.length - 1
-            ].startedAt
+          ? activities[activities.length - 1].startedAt
           : null;
 
       // ---------------------------------------------------------
@@ -7321,92 +6817,57 @@ export const getLifetimeActivityStats = async (req, res) => {
 
           activeDays: activeDays.length,
 
-          distanceKm: round(
-            totalDistanceKm,
-            3
-          ),
+          distanceKm: round(totalDistanceKm, 3),
 
-          durationSec:
-            totalDurationSec,
+          durationSec: totalDurationSec,
 
-          movingTimeSec:
-            totalMovingTimeSec,
+          movingTimeSec: totalMovingTimeSec,
 
-          calories: round(
-            totalCalories,
-            0
-          ),
+          calories: round(totalCalories, 0),
 
-          elevationGainM: round(
-            totalElevationGainM,
-            1
-          ),
+          elevationGainM: round(totalElevationGainM, 1),
         },
 
         averages: {
           distancePerActivityKm:
             activities.length > 0
-              ? round(
-                  totalDistanceKm /
-                    activities.length,
-                  3
-                )
+              ? round(totalDistanceKm / activities.length, 3)
               : 0,
 
           distancePerActiveDayKm:
             activeDays.length > 0
-              ? round(
-                  totalDistanceKm /
-                    activeDays.length,
-                  3
-                )
+              ? round(totalDistanceKm / activeDays.length, 3)
               : 0,
 
-          paceMinPerKm: round(
-            averagePaceMinPerKm,
-            2
-          ),
+          paceMinPerKm: round(averagePaceMinPerKm, 2),
 
-          speedKmh: round(
-            averageSpeedKmh,
-            2
-          ),
+          speedKmh: round(averageSpeedKmh, 2),
         },
 
         records: {
-          longestActivity:
-            longestActivity
-              ? {
-                  id:
-                    longestActivity.id,
+          longestActivity: longestActivity
+            ? {
+                id: longestActivity.id,
 
-                  distanceKm:
-                    longestActivity.distanceKm,
+                distanceKm: longestActivity.distanceKm,
 
-                  date:
-                    longestActivity.startedAt,
-                }
-              : null,
+                date: longestActivity.startedAt,
+              }
+            : null,
 
-          fastestActivity:
-            fastestActivity
-              ? {
-                  id:
-                    fastestActivity.id,
+          fastestActivity: fastestActivity
+            ? {
+                id: fastestActivity.id,
 
-                  paceMinPerKm:
-                    fastestActivity.paceMinPerKm,
+                paceMinPerKm: fastestActivity.paceMinPerKm,
 
-                  speedKmh:
-                    fastestActivity.speedKmh,
+                speedKmh: fastestActivity.speedKmh,
 
-                  distanceKm:
-                    fastestActivity.distanceKm,
+                distanceKm: fastestActivity.distanceKm,
 
-                  date:
-                    fastestActivity.startedAt,
-                }
-              : null,
+                date: fastestActivity.startedAt,
+              }
+            : null,
         },
 
         activityPeriod: {
@@ -7424,161 +6885,101 @@ export const getLifetimeActivityStats = async (req, res) => {
     // FETCH ALL USER ACTIVITIES
     // =========================================================
 
-    const activities =
-      await prisma.activity.findMany({
-        where: {
-          userId,
-        },
+    const activities = await prisma.activity.findMany({
+      where: {
+        userId,
+      },
 
-        orderBy: {
-          startedAt: "asc",
-        },
+      orderBy: {
+        startedAt: "asc",
+      },
 
-        select: {
-          id: true,
-          mode: true,
-          distanceKm: true,
-          durationSec: true,
-          movingTime: true,
-          calories: true,
-          elevationGain: true,
-          startedAt: true,
-          endedAt: true,
-        },
-      });
+      select: {
+        id: true,
+        mode: true,
+        distanceKm: true,
+        durationSec: true,
+        movingTime: true,
+        calories: true,
+        elevationGain: true,
+        startedAt: true,
+        endedAt: true,
+      },
+    });
 
     // =========================================================
     // FORMAT ACTIVITIES
     // =========================================================
 
-    const formattedActivities =
-      activities.map((activity) => {
-        const distanceKm = Math.max(
-          0,
-          Number(
-            activity.distanceKm ?? 0
-          )
-        );
+    const formattedActivities = activities.map((activity) => {
+      const distanceKm = Math.max(0, Number(activity.distanceKm ?? 0));
 
-        const durationSec = Math.max(
-          0,
-          Number(
-            activity.durationSec ?? 0
-          )
-        );
+      const durationSec = Math.max(0, Number(activity.durationSec ?? 0));
 
-        const movingTimeSec =
-          Math.max(
-            0,
-            Number(
-              activity.movingTime ?? 0
-            )
-          );
+      const movingTimeSec = Math.max(0, Number(activity.movingTime ?? 0));
 
-        const paceMinPerKm =
-          distanceKm > 0 &&
-          movingTimeSec > 0
-            ? movingTimeSec /
-              60 /
-              distanceKm
-            : 0;
+      const paceMinPerKm =
+        distanceKm > 0 && movingTimeSec > 0
+          ? movingTimeSec / 60 / distanceKm
+          : 0;
 
-        const speedKmh =
-          distanceKm > 0 &&
-          movingTimeSec > 0
-            ? distanceKm /
-              (movingTimeSec / 3600)
-            : 0;
+      const speedKmh =
+        distanceKm > 0 && movingTimeSec > 0
+          ? distanceKm / (movingTimeSec / 3600)
+          : 0;
 
-        return {
-          id: activity.id,
+      return {
+        id: activity.id,
 
-          mode: normalizeMode(
-            activity.mode
-          ),
+        mode: normalizeMode(activity.mode),
 
-          distanceKm: round(
-            distanceKm,
-            3
-          ),
+        distanceKm: round(distanceKm, 3),
 
-          durationSec,
+        durationSec,
 
-          movingTimeSec,
+        movingTimeSec,
 
-          paceMinPerKm: round(
-            paceMinPerKm,
-            2
-          ),
+        paceMinPerKm: round(paceMinPerKm, 2),
 
-          speedKmh: round(
-            speedKmh,
-            2
-          ),
+        speedKmh: round(speedKmh, 2),
 
-          calories: round(
-            activity.calories,
-            0
-          ),
+        calories: round(activity.calories, 0),
 
-          elevationGainM: round(
-            activity.elevationGain,
-            1
-          ),
+        elevationGainM: round(activity.elevationGain, 1),
 
-          startedAt:
-            activity.startedAt,
+        startedAt: activity.startedAt,
 
-          endedAt:
-            activity.endedAt,
-        };
-      });
+        endedAt: activity.endedAt,
+      };
+    });
 
     // =========================================================
     // SEPARATE RUN / WALK / CYCLE
     // =========================================================
 
-    const runActivities =
-      formattedActivities.filter(
-        (activity) =>
-          activity.mode === "Run"
-      );
+    const runActivities = formattedActivities.filter(
+      (activity) => activity.mode === "Run",
+    );
 
-    const walkActivities =
-      formattedActivities.filter(
-        (activity) =>
-          activity.mode === "Walk"
-      );
+    const walkActivities = formattedActivities.filter(
+      (activity) => activity.mode === "Walk",
+    );
 
-    const cycleActivities =
-      formattedActivities.filter(
-        (activity) =>
-          activity.mode === "Cycle"
-      );
+    const cycleActivities = formattedActivities.filter(
+      (activity) => activity.mode === "Cycle",
+    );
 
     // =========================================================
     // CALCULATE STATS
     // =========================================================
 
-    const overallStats =
-      calculateStats(
-        formattedActivities
-      );
+    const overallStats = calculateStats(formattedActivities);
 
-    const runStats =
-      calculateStats(
-        runActivities
-      );
+    const runStats = calculateStats(runActivities);
 
-    const walkStats =
-      calculateStats(
-        walkActivities
-      );
+    const walkStats = calculateStats(walkActivities);
 
-    const cycleStats =
-      calculateStats(
-        cycleActivities
-      );
+    const cycleStats = calculateStats(cycleActivities);
 
     // =========================================================
     // RESPONSE
@@ -7587,8 +6988,7 @@ export const getLifetimeActivityStats = async (req, res) => {
     return res.status(200).json({
       success: true,
 
-      message:
-        "Lifetime activity stats loaded",
+      message: "Lifetime activity stats loaded",
 
       overall: overallStats,
 
@@ -7599,28 +6999,17 @@ export const getLifetimeActivityStats = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error(
-      "GET_LIFETIME_ACTIVITY_STATS ERROR:",
-      error
-    );
+    console.error("GET_LIFETIME_ACTIVITY_STATS ERROR:", error);
 
     return res.status(500).json({
       success: false,
 
-      message:
-        "Failed to fetch lifetime activity stats",
+      message: "Failed to fetch lifetime activity stats",
 
-      error:
-        process.env.NODE_ENV ===
-        "development"
-          ? error.message
-          : undefined,
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 };
-
-
-
 
 export const getActivityGraphStats = async (req, res) => {
   try {
@@ -7651,7 +7040,7 @@ export const getActivityGraphStats = async (req, res) => {
         },
       },
       orderBy: {
-        startedAt: 'asc',
+        startedAt: "asc",
       },
       select: {
         id: true,
@@ -7710,14 +7099,10 @@ export const getActivityGraphStats = async (req, res) => {
       elevationGainM: round(stats.elevationGainM, 1),
 
       avgPace:
-        stats.activities > 0
-          ? round(stats.avgPace / stats.activities, 2)
-          : 0,
+        stats.activities > 0 ? round(stats.avgPace / stats.activities, 2) : 0,
 
       avgSpeed:
-        stats.activities > 0
-          ? round(stats.avgSpeed / stats.activities, 2)
-          : 0,
+        stats.activities > 0 ? round(stats.avgSpeed / stats.activities, 2) : 0,
 
       topPace: round(stats.topPace, 2),
       topSpeed: round(stats.topSpeed, 2),
@@ -7729,7 +7114,7 @@ export const getActivityGraphStats = async (req, res) => {
       stats: emptyStats(),
     }));
 
-    const weeklyLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const weeklyLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
     const weekly = weeklyLabels.map((label, index) => ({
       label,
@@ -7738,8 +7123,18 @@ export const getActivityGraphStats = async (req, res) => {
     }));
 
     const monthlyLabels = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+      "Jan",
+      "Feb",
+      "Mar",
+      "Apr",
+      "May",
+      "Jun",
+      "Jul",
+      "Aug",
+      "Sep",
+      "Oct",
+      "Nov",
+      "Dec",
     ];
 
     const monthly = monthlyLabels.map((label, index) => ({
@@ -7767,7 +7162,7 @@ export const getActivityGraphStats = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: 'Activity graph stats loaded',
+      message: "Activity graph stats loaded",
 
       filters: {
         daily: {
@@ -7803,15 +7198,230 @@ export const getActivityGraphStats = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('GET_ACTIVITY_GRAPH_STATS ERROR:', error);
+    console.error("GET_ACTIVITY_GRAPH_STATS ERROR:", error);
 
     return res.status(500).json({
       success: false,
-      message: 'Failed to fetch activity graph stats',
-      error:
-        process.env.NODE_ENV === 'development'
-          ? error.message
-          : undefined,
+      message: "Failed to fetch activity graph stats",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
+};
+
+export const updateActivityVisibility = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { id } = req.params;
+
+    const normalizedVisibility = String(
+      req.body.visibility || "",
+    ).toUpperCase();
+
+    console.log("VISIBILITY UPDATE REQUEST:", {
+      userId,
+      activityId: id,
+      receivedVisibility: req.body.visibility,
+      normalizedVisibility,
+    });
+
+    const allowedVisibilities = ["PUBLIC", "FRIENDS", "PRIVATE"];
+
+    if (!allowedVisibilities.includes(normalizedVisibility)) {
+      return res.status(400).json({
+        success: false,
+        message: "Visibility must be PUBLIC, FRIENDS or PRIVATE",
+      });
+    }
+
+    const activity = await prisma.activity.findFirst({
+      where: {
+        id,
+        userId,
+      },
+    });
+
+    if (!activity) {
+      return res.status(404).json({
+        success: false,
+        message: "Activity not found",
+      });
+    }
+
+    console.log("VISIBILITY BEFORE UPDATE:", {
+      id: activity.id,
+      visibility: activity.visibility,
+    });
+
+    const updatedActivity = await prisma.activity.update({
+      where: {
+        id,
+      },
+      data: {
+        visibility: normalizedVisibility,
+      },
+    });
+
+    console.log("VISIBILITY AFTER UPDATE:", {
+      id: updatedActivity.id,
+      visibility: updatedActivity.visibility,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Activity visibility updated",
+      activity: updatedActivity,
+    });
+  } catch (error) {
+    console.error("UPDATE_ACTIVITY_VISIBILITY ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+};
+
+export const getVisibleActivityDetail = async (req, res) => {
+  try {
+    const viewerId = req.user.id;
+    const { activityId } = req.params;
+
+    // ---------------------------------------------------------
+    // FIND ACTIVITY
+    // ---------------------------------------------------------
+
+    const activity = await prisma.activity.findUnique({
+      where: {
+        id: activityId,
+      },
+      include: {
+        territories: true,
+        user: {
+          select: {
+            id: true,
+            username: true,
+            fullName: true,
+            city: true,
+            country: true,
+          },
+        },
+      },
+    });
+
+    if (!activity) {
+      return res.status(404).json({
+        success: false,
+        message: "Activity not found",
+      });
+    }
+
+    // ---------------------------------------------------------
+    // OWNER CAN ALWAYS VIEW
+    // ---------------------------------------------------------
+
+    const isOwner = activity.userId === viewerId;
+
+    if (!isOwner) {
+      const visibility = activity.visibility?.toUpperCase() ?? "PUBLIC";
+
+      // -------------------------------------------------------
+      // PRIVATE
+      // -------------------------------------------------------
+
+      if (visibility === "PRIVATE") {
+        return res.status(404).json({
+          success: false,
+          message: "Activity not found or you are not allowed to view it",
+        });
+      }
+
+      // -------------------------------------------------------
+      // FRIENDS ONLY
+      // -------------------------------------------------------
+
+      if (visibility === "FRIENDS") {
+        const friendship = await prisma.friendship.findFirst({
+          where: {
+            userId: viewerId,
+            friendId: activity.userId,
+          },
+          select: {
+            id: true,
+          },
+        });
+
+        if (!friendship) {
+          return res.status(404).json({
+            success: false,
+            message: "Activity not found or you are not allowed to view it",
+          });
+        }
+      }
+
+      // PUBLIC reaches here automatically and is allowed.
+    }
+
+    // ---------------------------------------------------------
+    // CALCULATE TERRITORY
+    // ---------------------------------------------------------
+
+    const totalAreaKm2 = activity.territories.reduce(
+      (sum, territory) => sum + Number(territory.areaKm2 || 0),
+      0,
+    );
+
+    const territoriesCaptured = activity.territories.length;
+
+    // ---------------------------------------------------------
+    // RESPONSE
+    // ---------------------------------------------------------
+
+    return res.status(200).json({
+      success: true,
+
+      activity: {
+        ...activity,
+
+        stats: {
+          distanceKm: activity.distanceKm,
+          durationSec: activity.durationSec,
+          movingTime: activity.movingTime,
+          stopTime: activity.stopTime,
+          elapsedTime: activity.elapsedTime,
+
+          avgPace: activity.avgPace,
+          topPace: activity.topPace,
+
+          avgSpeed: activity.avgSpeed,
+          topSpeed: activity.topSpeed,
+
+          calories: activity.calories,
+
+          elevationGain: activity.elevationGain,
+          elevationLoss: activity.elevationLoss,
+          highestElevation: activity.highestElevation,
+          lowestElevation: activity.lowestElevation,
+
+          totalAreaKm2,
+          territoriesCaptured,
+
+          kmSplits: activity.kmSplits,
+        },
+
+        map: {
+          routeEncoded: activity.routeEncoded,
+        },
+
+        totalAreaKm2,
+        territoriesCaptured,
+      },
+    });
+  } catch (error) {
+    console.error("GET_VISIBLE_ACTIVITY_DETAIL ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
     });
   }
 };

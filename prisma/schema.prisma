@@ -25,6 +25,7 @@ model User {
   city                    String?
   weight                  Float?
   height                  Float?
+  skinIndex Int @default(2) @map("skin_index")
   authProvider            AuthProvider           @default(EMAIL) @map("auth_provider")
   googleId                String?                @unique @map("google_id")
   appleId                 String?                @unique @map("apple_id")
@@ -340,6 +341,12 @@ model Friendship {
   @@index([friendId])
 }
 
+enum ActivityVisibility {
+  PUBLIC
+  PRIVATE
+  FRIENDS
+}
+
 model Activity {
   id String @id @default(uuid())
 
@@ -372,6 +379,8 @@ model Activity {
   createdAt     DateTime @default(now())
   includeInClan Boolean  @default(false) @map("include_in_clan")
   notes         String?
+
+  visibility ActivityVisibility @default(PUBLIC)
 
   user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   clanActivities ClanActivity[]

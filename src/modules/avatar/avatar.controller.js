@@ -14,11 +14,7 @@ const AVATAR_TYPES = [
   "SHOES",
 ];
 
-const AVATAR_STATUSES = [
-  "LOCKED",
-  "FREE",
-  "UNLOCKED",
-];
+const AVATAR_STATUSES = ["LOCKED", "FREE", "UNLOCKED"];
 
 /**
  * ============================================================
@@ -39,11 +35,7 @@ const AVATAR_STATUSES = [
  */
 export const addAvatar = async (req, res) => {
   try {
-    const {
-      type,
-      file,
-      status = "FREE",
-    } = req.body;
+    const { type, file, status = "FREE" } = req.body;
 
     if (!type || !file) {
       return res.status(400).json({
@@ -101,14 +93,10 @@ export const addAvatar = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Failed to add avatar.",
-      error:
-        process.env.NODE_ENV === "development"
-          ? error.message
-          : undefined,
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 };
-
 
 /**
  * ============================================================
@@ -168,11 +156,9 @@ export const getAvatars = async (req, res) => {
 
         userStatus: userAvatar?.status ?? null,
 
-        isEquipped:
-          userAvatar?.isEquipped ?? false,
+        isEquipped: userAvatar?.isEquipped ?? false,
 
-        unlockedAt:
-          userAvatar?.unlockedAt ?? null,
+        unlockedAt: userAvatar?.unlockedAt ?? null,
 
         createdAt: avatar.createdAt,
       };
@@ -193,7 +179,6 @@ export const getAvatars = async (req, res) => {
   }
 };
 
-
 /**
  * ============================================================
  * GET USER OWNED AVATARS
@@ -207,20 +192,19 @@ export const getMyAvatars = async (req, res) => {
   try {
     const userId = req.user.id;
 
-    const userAvatars =
-      await prisma.userAvatar.findMany({
-        where: {
-          userId,
-        },
+    const userAvatars = await prisma.userAvatar.findMany({
+      where: {
+        userId,
+      },
 
-        include: {
-          avatar: true,
-        },
+      include: {
+        avatar: true,
+      },
 
-        orderBy: {
-          createdAt: "asc",
-        },
-      });
+      orderBy: {
+        createdAt: "asc",
+      },
+    });
 
     return res.status(200).json({
       success: true,
@@ -244,19 +228,14 @@ export const getMyAvatars = async (req, res) => {
       })),
     });
   } catch (error) {
-    console.error(
-      "GET MY AVATARS ERROR:",
-      error
-    );
+    console.error("GET MY AVATARS ERROR:", error);
 
     return res.status(500).json({
       success: false,
-      message:
-        "Failed to get user's avatars.",
+      message: "Failed to get user's avatars.",
     });
   }
 };
-
 
 /**
  * ============================================================
@@ -287,10 +266,7 @@ export const getMyAvatars = async (req, res) => {
  *
  * All of those can be equipped together.
  */
-export const selectAvatar = async (
-  req,
-  res
-) => {
+export const selectAvatar = async (req, res) => {
   try {
     const userId = req.user.id;
     const { avatarId } = req.params;
@@ -302,12 +278,11 @@ export const selectAvatar = async (
       });
     }
 
-    const avatar =
-      await prisma.avatar.findUnique({
-        where: {
-          id: avatarId,
-        },
-      });
+    const avatar = await prisma.avatar.findUnique({
+      where: {
+        id: avatarId,
+      },
+    });
 
     if (!avatar) {
       return res.status(404).json({
@@ -320,15 +295,14 @@ export const selectAvatar = async (
      * Check whether user already owns
      * this particular avatar.
      */
-    const existingUserAvatar =
-      await prisma.userAvatar.findUnique({
-        where: {
-          userId_avatarId: {
-            userId,
-            avatarId,
-          },
+    const existingUserAvatar = await prisma.userAvatar.findUnique({
+      where: {
+        userId_avatarId: {
+          userId,
+          avatarId,
         },
-      });
+      },
+    });
 
     /*
      * LOCKED master avatars cannot be
@@ -337,113 +311,99 @@ export const selectAvatar = async (
      */
     if (
       avatar.status === "LOCKED" &&
-      (!existingUserAvatar ||
-        existingUserAvatar.status !==
-          "UNLOCKED")
+      (!existingUserAvatar || existingUserAvatar.status !== "UNLOCKED")
     ) {
       return res.status(403).json({
         success: false,
-        message:
-          "This avatar is locked.",
+        message: "This avatar is locked.",
       });
     }
 
-    const result =
-      await prisma.$transaction(
-        async (tx) => {
-          /*
-           * Get every avatar belonging
-           * to this same type.
-           *
-           * Example:
-           *
-           * selected = HAIR
-           *
-           * get all HAIR IDs
-           */
-          const sameTypeAvatars =
-            await tx.avatar.findMany({
-              where: {
-                type: avatar.type,
-              },
+    const result = await prisma.$transaction(async (tx) => {
+      /*
+       * Get every avatar belonging
+       * to this same type.
+       *
+       * Example:
+       *
+       * selected = HAIR
+       *
+       * get all HAIR IDs
+       */
+      const sameTypeAvatars = await tx.avatar.findMany({
+        where: {
+          type: avatar.type,
+        },
 
-              select: {
-                id: true,
-              },
-            });
+        select: {
+          id: true,
+        },
+      });
 
-          const sameTypeIds =
-            sameTypeAvatars.map(
-              (item) => item.id
-            );
+      const sameTypeIds = sameTypeAvatars.map((item) => item.id);
 
-          /*
-           * Unequip currently equipped
-           * avatar of same type.
-           */
-          if (sameTypeIds.length > 0) {
-            await tx.userAvatar.updateMany({
-              where: {
-                userId,
+      /*
+       * Unequip currently equipped
+       * avatar of same type.
+       */
+      if (sameTypeIds.length > 0) {
+        await tx.userAvatar.updateMany({
+          where: {
+            userId,
 
-                avatarId: {
-                  in: sameTypeIds,
-                },
+            avatarId: {
+              in: sameTypeIds,
+            },
 
-                isEquipped: true,
-              },
+            isEquipped: true,
+          },
 
-              data: {
-                isEquipped: false,
-              },
-            });
-          }
+          data: {
+            isEquipped: false,
+          },
+        });
+      }
 
-          /*
-           * Add to UserAvatar if this
-           * user hasn't used/owned it
-           * before.
-           *
-           * Otherwise simply equip it.
-           */
-          const selectedUserAvatar =
-            await tx.userAvatar.upsert({
-              where: {
-                userId_avatarId: {
-                  userId,
-                  avatarId,
-                },
-              },
+      /*
+       * Add to UserAvatar if this
+       * user hasn't used/owned it
+       * before.
+       *
+       * Otherwise simply equip it.
+       */
+      const selectedUserAvatar = await tx.userAvatar.upsert({
+        where: {
+          userId_avatarId: {
+            userId,
+            avatarId,
+          },
+        },
 
-              update: {
-                status: "UNLOCKED",
-                isEquipped: true,
+        update: {
+          status: "UNLOCKED",
+          isEquipped: true,
 
-                unlockedAt:
-                  existingUserAvatar
-                    ?.unlockedAt ??
-                  new Date(),
-              },
+          unlockedAt: existingUserAvatar?.unlockedAt ?? new Date(),
+        },
 
-              create: {
-                userId,
-                avatarId,
+        create: {
+          userId,
+          avatarId,
 
-                status: "UNLOCKED",
+          status: "UNLOCKED",
 
-                isEquipped: true,
+          isEquipped: true,
 
-                unlockedAt: new Date(),
-              },
+          unlockedAt: new Date(),
+        },
 
-              include: {
-                avatar: true,
-              },
-            });
+        include: {
+          avatar: true,
+        },
+      });
 
-          return selectedUserAvatar;
-        }
-      );
+      return selectedUserAvatar;
+    });
 
     return res.status(200).json({
       success: true,
@@ -452,36 +412,26 @@ export const selectAvatar = async (
       equippedAvatar: {
         userAvatarId: result.id,
 
-        avatarId:
-          result.avatar.id,
+        avatarId: result.avatar.id,
 
-        type:
-          result.avatar.type,
+        type: result.avatar.type,
 
-        file:
-          result.avatar.file,
+        file: result.avatar.file,
 
-        status:
-          result.status,
+        status: result.status,
 
-        isEquipped:
-          result.isEquipped,
+        isEquipped: result.isEquipped,
       },
     });
   } catch (error) {
-    console.error(
-      "SELECT AVATAR ERROR:",
-      error
-    );
+    console.error("SELECT AVATAR ERROR:", error);
 
     return res.status(500).json({
       success: false,
-      message:
-        "Failed to select avatar.",
+      message: "Failed to select avatar.",
     });
   }
 };
-
 
 /**
  * ============================================================
@@ -493,25 +443,29 @@ export const selectAvatar = async (
  * Returns every currently equipped
  * avatar component.
  */
-export const getEquippedAvatars = async (
-  req,
-  res
-) => {
+export const getEquippedAvatars = async (req, res) => {
   try {
     const userId = req.user.id;
+    const user = await prisma.user.findUnique({
+      where: {
+        id: userId,
+      },
+      select: {
+        skinIndex: true,
+      },
+    });
 
-    const equipped =
-      await prisma.userAvatar.findMany({
-        where: {
-          userId,
-          isEquipped: true,
-          status: "UNLOCKED",
-        },
+    const equipped = await prisma.userAvatar.findMany({
+      where: {
+        userId,
+        isEquipped: true,
+        status: "UNLOCKED",
+      },
 
-        include: {
-          avatar: true,
-        },
-      });
+      include: {
+        avatar: true,
+      },
+    });
 
     /*
      * Useful for Flutter.
@@ -544,41 +498,30 @@ export const getEquippedAvatars = async (
 
     return res.status(200).json({
       success: true,
-
+      skinIndex: user?.skinIndex ?? 2,
       avatar,
 
-      equipped: equipped.map(
-        (item) => ({
-          userAvatarId: item.id,
+      equipped: equipped.map((item) => ({
+        userAvatarId: item.id,
 
-          avatarId:
-            item.avatar.id,
+        avatarId: item.avatar.id,
 
-          type:
-            item.avatar.type,
+        type: item.avatar.type,
 
-          file:
-            item.avatar.file,
+        file: item.avatar.file,
 
-          isEquipped:
-            item.isEquipped,
-        })
-      ),
+        isEquipped: item.isEquipped,
+      })),
     });
   } catch (error) {
-    console.error(
-      "GET EQUIPPED AVATAR ERROR:",
-      error
-    );
+    console.error("GET EQUIPPED AVATAR ERROR:", error);
 
     return res.status(500).json({
       success: false,
-      message:
-        "Failed to get equipped avatar.",
+      message: "Failed to get equipped avatar.",
     });
   }
 };
-
 
 /**
  * ============================================================
@@ -591,38 +534,30 @@ export const getEquippedAvatars = async (
  *
  * GLASSES -> None
  */
-export const unequipAvatarType = async (
-  req,
-  res
-) => {
+export const unequipAvatarType = async (req, res) => {
   try {
     const userId = req.user.id;
 
-    const type =
-      req.params.type?.toUpperCase();
+    const type = req.params.type?.toUpperCase();
 
     if (!AVATAR_TYPES.includes(type)) {
       return res.status(400).json({
         success: false,
-        message:
-          "Invalid avatar type.",
+        message: "Invalid avatar type.",
       });
     }
 
-    const avatars =
-      await prisma.avatar.findMany({
-        where: {
-          type,
-        },
+    const avatars = await prisma.avatar.findMany({
+      where: {
+        type,
+      },
 
-        select: {
-          id: true,
-        },
-      });
+      select: {
+        id: true,
+      },
+    });
 
-    const avatarIds = avatars.map(
-      (avatar) => avatar.id
-    );
+    const avatarIds = avatars.map((avatar) => avatar.id);
 
     if (avatarIds.length > 0) {
       await prisma.userAvatar.updateMany({
@@ -642,19 +577,14 @@ export const unequipAvatarType = async (
 
     return res.status(200).json({
       success: true,
-      message:
-        `${type} unequipped successfully.`,
+      message: `${type} unequipped successfully.`,
     });
   } catch (error) {
-    console.error(
-      "UNEQUIP AVATAR ERROR:",
-      error
-    );
+    console.error("UNEQUIP AVATAR ERROR:", error);
 
     return res.status(500).json({
       success: false,
-      message:
-        "Failed to unequip avatar.",
+      message: "Failed to unequip avatar.",
     });
   }
 };
@@ -706,11 +636,7 @@ export const addMultipleAvatars = async (req, res) => {
       "SHOES",
     ];
 
-    const allowedStatuses = [
-      "LOCKED",
-      "FREE",
-      "UNLOCKED",
-    ];
+    const allowedStatuses = ["LOCKED", "FREE", "UNLOCKED"];
 
     const preparedAvatars = [];
 
@@ -726,9 +652,7 @@ export const addMultipleAvatars = async (req, res) => {
 
       const type = avatar.type.toUpperCase();
 
-      const status = (
-        avatar.status || "FREE"
-      ).toUpperCase();
+      const status = (avatar.status || "FREE").toUpperCase();
 
       if (!allowedTypes.includes(type)) {
         return res.status(400).json({
@@ -801,22 +725,15 @@ export const addMultipleAvatars = async (req, res) => {
       success: false,
       message: "Failed to add avatars.",
 
-      error:
-        process.env.NODE_ENV === "development"
-          ? error.message
-          : undefined,
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 };
 
-
-
-
-
 export const equipMultipleAvatars = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { avatarIds } = req.body;
+    const { avatarIds, skinIndex } = req.body;
 
     // =====================================================
     // VALIDATION
@@ -846,18 +763,24 @@ export const equipMultipleAvatars = async (req, res) => {
 
     // Make sure every supplied ID actually exists
     if (avatars.length !== uniqueAvatarIds.length) {
-      const foundIds = new Set(
-        avatars.map((avatar) => avatar.id)
-      );
+      const foundIds = new Set(avatars.map((avatar) => avatar.id));
 
-      const invalidIds = uniqueAvatarIds.filter(
-        (id) => !foundIds.has(id)
-      );
+      const invalidIds = uniqueAvatarIds.filter((id) => !foundIds.has(id));
 
       return res.status(404).json({
         success: false,
         message: "One or more avatars were not found.",
         invalidAvatarIds: invalidIds,
+      });
+    }
+
+    if (
+      skinIndex !== undefined &&
+      (!Number.isInteger(skinIndex) || skinIndex < 0)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "skinIndex must be a valid non-negative integer.",
       });
     }
 
@@ -882,21 +805,17 @@ export const equipMultipleAvatars = async (req, res) => {
     // GET USER'S EXISTING AVATAR RECORDS
     // =====================================================
 
-    const existingUserAvatars =
-      await prisma.userAvatar.findMany({
-        where: {
-          userId,
-          avatarId: {
-            in: uniqueAvatarIds,
-          },
+    const existingUserAvatars = await prisma.userAvatar.findMany({
+      where: {
+        userId,
+        avatarId: {
+          in: uniqueAvatarIds,
         },
-      });
+      },
+    });
 
     const existingMap = new Map(
-      existingUserAvatars.map((item) => [
-        item.avatarId,
-        item,
-      ])
+      existingUserAvatars.map((item) => [item.avatarId, item]),
     );
 
     // =====================================================
@@ -916,8 +835,7 @@ export const equipMultipleAvatars = async (req, res) => {
        */
       if (
         avatar.status === "LOCKED" &&
-        (!userAvatar ||
-          userAvatar.status !== "UNLOCKED")
+        (!userAvatar || userAvatar.status !== "UNLOCKED")
       ) {
         return res.status(403).json({
           success: false,
@@ -932,9 +850,7 @@ export const equipMultipleAvatars = async (req, res) => {
     }
 
     // Types being changed by this request
-    const selectedTypes = avatars.map(
-      (avatar) => avatar.type
-    );
+    const selectedTypes = avatars.map((avatar) => avatar.type);
 
     // =====================================================
     // TRANSACTION
@@ -942,127 +858,100 @@ export const equipMultipleAvatars = async (req, res) => {
 
     const result = await prisma.$transaction(
       async (tx) => {
-        /*
-         * Find ALL master avatars belonging to the types
-         * being updated.
-         *
-         * For example if request contains:
-         *
-         * HAIR
-         * HEAD
-         * TSHIRT
-         *
-         * we find every HAIR, HEAD and TSHIRT avatar.
-         */
-        const avatarsOfSelectedTypes =
-          await tx.avatar.findMany({
+        if (skinIndex !== undefined) {
+          await tx.user.update({
             where: {
-              type: {
-                in: selectedTypes,
-              },
+              id: userId,
             },
-
-            select: {
-              id: true,
+            data: {
+              skinIndex,
             },
           });
+        }
 
-        const sameTypeAvatarIds =
-          avatarsOfSelectedTypes.map(
-            (avatar) => avatar.id
-          );
+        // Find all avatar IDs belonging to selected types
+        const avatarsOfSelectedTypes = await tx.avatar.findMany({
+          where: {
+            type: {
+              in: selectedTypes,
+            },
+          },
+          select: {
+            id: true,
+          },
+        });
 
-        // =================================================
-        // UNEQUIP OLD AVATARS OF THOSE TYPES
-        // =================================================
+        const sameTypeAvatarIds = avatarsOfSelectedTypes.map(
+          (avatar) => avatar.id,
+        );
 
+        // Unequip old avatars of these types
         await tx.userAvatar.updateMany({
           where: {
             userId,
-
             avatarId: {
               in: sameTypeAvatarIds,
             },
-
             isEquipped: true,
           },
-
           data: {
             isEquipped: false,
           },
         });
 
-        // =================================================
-        // EQUIP EACH SELECTED AVATAR
-        // =================================================
-
+        // Equip selected avatars
         const selected = [];
 
         for (const avatar of avatars) {
-          const existing =
-            existingMap.get(avatar.id);
+          const existing = existingMap.get(avatar.id);
 
-          const userAvatar =
-            await tx.userAvatar.upsert({
-              where: {
-                userId_avatarId: {
-                  userId,
-                  avatarId: avatar.id,
-                },
-              },
-
-              update: {
-                isEquipped: true,
-
-                // If user already owned/unlocked it,
-                // keep it unlocked.
-                status: "UNLOCKED",
-
-                unlockedAt:
-                  existing?.unlockedAt ??
-                  new Date(),
-              },
-
-              create: {
+          const userAvatar = await tx.userAvatar.upsert({
+            where: {
+              userId_avatarId: {
                 userId,
                 avatarId: avatar.id,
-
-                status: "UNLOCKED",
-
-                isEquipped: true,
-
-                unlockedAt: new Date(),
               },
-
-              include: {
-                avatar: true,
-              },
-            });
-
-          selected.push(userAvatar);
-        }
-
-        // =================================================
-        // RETURN COMPLETE CURRENT AVATAR
-        // =================================================
-
-        const currentlyEquipped =
-          await tx.userAvatar.findMany({
-            where: {
-              userId,
-              isEquipped: true,
             },
-
+            update: {
+              isEquipped: true,
+              status: "UNLOCKED",
+              unlockedAt: existing?.unlockedAt ?? new Date(),
+            },
+            create: {
+              userId,
+              avatarId: avatar.id,
+              status: "UNLOCKED",
+              isEquipped: true,
+              unlockedAt: new Date(),
+            },
             include: {
               avatar: true,
             },
           });
 
+          selected.push(userAvatar);
+        }
+
+        // Get complete currently equipped avatar
+        const currentlyEquipped = await tx.userAvatar.findMany({
+          where: {
+            userId,
+            isEquipped: true,
+          },
+          include: {
+            avatar: true,
+          },
+        });
+
         return {
           selected,
           currentlyEquipped,
         };
-      }
+      },
+      {
+        maxWait: 10000,
+        timeout: 20000,
+      },
     );
 
     // =====================================================
@@ -1085,37 +974,29 @@ export const equipMultipleAvatars = async (req, res) => {
       success: true,
       message: "Avatar equipped successfully.",
 
-      equippedCount:
-        result.currentlyEquipped.length,
+      skinIndex: skinIndex,
+
+      equippedCount: result.currentlyEquipped.length,
 
       avatar: equippedAvatar,
 
-      equipped: result.currentlyEquipped.map(
-        (item) => ({
-          userAvatarId: item.id,
-          avatarId: item.avatar.id,
-          type: item.avatar.type,
-          file: item.avatar.file,
-          status: item.status,
-          isEquipped: item.isEquipped,
-        })
-      ),
+      equipped: result.currentlyEquipped.map((item) => ({
+        userAvatarId: item.id,
+        avatarId: item.avatar.id,
+        type: item.avatar.type,
+        file: item.avatar.file,
+        status: item.status,
+        isEquipped: item.isEquipped,
+      })),
     });
   } catch (error) {
-    console.error(
-      "EQUIP MULTIPLE AVATARS ERROR:",
-      error
-    );
+    console.error("EQUIP MULTIPLE AVATARS ERROR:", error);
 
     return res.status(500).json({
       success: false,
-      message:
-        "Failed to equip avatars.",
+      message: "Failed to equip avatars.",
 
-      error:
-        process.env.NODE_ENV === "development"
-          ? error.message
-          : undefined,
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 };

@@ -1,5 +1,68 @@
 import prisma from "../../../config/prisma.js";
 
+const attachUserAvatars = async (leaderboard) => {
+  if (!leaderboard.length) {
+    return leaderboard;
+  }
+
+  const userIds = leaderboard.map((item) => item.userId);
+
+  const users = await prisma.user.findMany({
+    where: {
+      id: {
+        in: userIds,
+      },
+    },
+
+    select: {
+      id: true,
+      skinIndex: true,
+
+      avatars: {
+        where: {
+          isEquipped: true,
+          status: "UNLOCKED",
+        },
+
+        include: {
+          avatar: true,
+        },
+      },
+    },
+  });
+
+  const avatarDataByUser = {};
+
+  for (const user of users) {
+    const avatar = {};
+
+    for (const item of user.avatars) {
+      avatar[item.avatar.type] = {
+        id: item.avatar.id,
+        file: item.avatar.file,
+        type: item.avatar.type,
+      };
+    }
+
+    avatarDataByUser[user.id] = {
+      skinIndex: user.skinIndex ?? 2,
+      avatar,
+    };
+  }
+
+  return leaderboard.map((item) => {
+    const avatarData = avatarDataByUser[item.userId];
+
+    return {
+      ...item,
+
+      skinIndex: avatarData?.skinIndex ?? 2,
+
+      avatar: avatarData?.avatar ?? {},
+    };
+  });
+};
+
 export const getDistanceLeaderboard = async (req, res) => {
   try {
     const leaderboard = await prisma.$queryRaw`
@@ -45,7 +108,7 @@ export const getDistanceLeaderboard = async (req, res) => {
       LIMIT 50;
     `;
 
-    const data = leaderboard.map((item, index) => ({
+    const basicData = leaderboard.map((item, index) => ({
       rank: index + 1,
       userId: item.userId,
       username: item.username,
@@ -65,6 +128,7 @@ export const getDistanceLeaderboard = async (req, res) => {
       territoriesOwned: Number(item.territoriesOwned ?? 0),
       territoriesCaptured: Number(item.territoriesCaptured ?? 0),
     }));
+    const data = await attachUserAvatars(basicData);
 
     return res.status(200).json({
       success: true,
@@ -125,7 +189,7 @@ export const getAreaLeaderboard = async (req, res) => {
       LIMIT 50;
     `;
 
-    const data = leaderboard.map((item, index) => ({
+    const basicData = leaderboard.map((item, index) => ({
       rank: index + 1,
       userId: item.userId,
       username: item.username,
@@ -141,6 +205,7 @@ export const getAreaLeaderboard = async (req, res) => {
       territoriesOwned: Number(item.territoriesOwned ?? 0),
       territoriesCaptured: Number(item.territoriesCaptured ?? 0),
     }));
+    const data = await attachUserAvatars(basicData);
 
     return res.status(200).json({
       success: true,
@@ -157,7 +222,6 @@ export const getAreaLeaderboard = async (req, res) => {
     });
   }
 };
-
 
 export const getLocalDistanceLeaderboard = async (req, res) => {
   try {
@@ -219,7 +283,7 @@ export const getLocalDistanceLeaderboard = async (req, res) => {
       LIMIT 50;
     `;
 
-    const data = leaderboard.map((item, index) => ({
+    const basicData = leaderboard.map((item, index) => ({
       rank: index + 1,
       userId: item.userId,
       username: item.username,
@@ -239,6 +303,7 @@ export const getLocalDistanceLeaderboard = async (req, res) => {
       territoriesOwned: Number(item.territoriesOwned ?? 0),
       territoriesCaptured: Number(item.territoriesCaptured ?? 0),
     }));
+    const data = await attachUserAvatars(basicData);
 
     return res.status(200).json({
       success: true,
@@ -257,7 +322,6 @@ export const getLocalDistanceLeaderboard = async (req, res) => {
     });
   }
 };
-
 
 export const getLocalAreaLeaderboard = async (req, res) => {
   try {
@@ -317,7 +381,7 @@ export const getLocalAreaLeaderboard = async (req, res) => {
       LIMIT 50;
     `;
 
-    const data = leaderboard.map((item, index) => ({
+    const basicData = leaderboard.map((item, index) => ({
       rank: index + 1,
       userId: item.userId,
       username: item.username,
@@ -333,6 +397,7 @@ export const getLocalAreaLeaderboard = async (req, res) => {
       territoriesOwned: Number(item.territoriesOwned ?? 0),
       territoriesCaptured: Number(item.territoriesCaptured ?? 0),
     }));
+    const data = await attachUserAvatars(basicData);
 
     return res.status(200).json({
       success: true,
@@ -351,4 +416,3 @@ export const getLocalAreaLeaderboard = async (req, res) => {
     });
   }
 };
-

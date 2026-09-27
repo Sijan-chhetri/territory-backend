@@ -3,6 +3,44 @@
 import prisma from "../../config/prisma.js";
 import { sendFCMToUser } from "../../config/fcm.service.js";
 
+// ============================================================================
+// AVATAR HELPERS
+// ============================================================================
+
+const avatarSelect = {
+  where: {
+    isEquipped: true,
+    status: "UNLOCKED",
+  },
+  include: {
+    avatar: true,
+  },
+};
+
+const formatUserWithAvatar = (user) => {
+  if (!user) return null;
+
+  const avatar = {};
+
+  for (const item of user.avatars ?? []) {
+    if (!item.avatar) continue;
+
+    avatar[item.avatar.type] = {
+      id: item.avatar.id,
+      file: item.avatar.file,
+      type: item.avatar.type,
+    };
+  }
+
+  const { avatars, ...userData } = user;
+
+  return {
+    ...userData,
+    skinIndex: user.skinIndex ?? 2,
+    avatar,
+  };
+};
+
 /**
  * ============================================================================
  * SEND FRIEND REQUEST
@@ -115,8 +153,6 @@ export const sendFriendRequest = async (req, res) => {
   }
 };
 
-
-
 /**
  * ============================================================================
  * GET ALL FRIEND REQUESTS
@@ -130,21 +166,25 @@ export const getFriendRequests = async (req, res) => {
       where: {
         receiverId: userId,
       },
+
       include: {
         sender: {
           select: {
             id: true,
             username: true,
             fullName: true,
+            skinIndex: true,
+
+            avatars: avatarSelect,
           },
         },
       },
+
       orderBy: {
         createdAt: "desc",
       },
     });
 
-    // If no friend requests found
     if (requests.length === 0) {
       return res.status(200).json({
         success: true,
@@ -153,9 +193,14 @@ export const getFriendRequests = async (req, res) => {
       });
     }
 
+    const formattedRequests = requests.map((request) => ({
+      ...request,
+      sender: formatUserWithAvatar(request.sender),
+    }));
+
     return res.status(200).json({
       success: true,
-      data: requests,
+      data: formattedRequests,
     });
   } catch (error) {
     console.log(error);
@@ -182,23 +227,33 @@ export const getPendingRequests = async (req, res) => {
         receiverId: userId,
         status: "PENDING",
       },
+
       include: {
         sender: {
           select: {
             id: true,
             username: true,
             fullName: true,
+            skinIndex: true,
+
+            avatars: avatarSelect,
           },
         },
       },
+
       orderBy: {
         createdAt: "desc",
       },
     });
 
+    const formattedRequests = requests.map((request) => ({
+      ...request,
+      sender: formatUserWithAvatar(request.sender),
+    }));
+
     return res.status(200).json({
       success: true,
-      data: requests,
+      data: formattedRequests,
     });
   } catch (error) {
     console.log(error);
@@ -343,6 +398,7 @@ export const searchUsers = async (req, res) => {
         id: {
           not: userId,
         },
+
         OR: [
           {
             username: {
@@ -358,11 +414,16 @@ export const searchUsers = async (req, res) => {
           },
         ],
       },
+
       select: {
         id: true,
         username: true,
         fullName: true,
+        skinIndex: true,
+
+        avatars: avatarSelect,
       },
+
       take: 20,
     });
 
@@ -392,7 +453,7 @@ export const searchUsers = async (req, res) => {
         });
 
         return {
-          ...user,
+          ...formatUserWithAvatar(user),
 
           isFriend: !!friendship,
 
@@ -402,7 +463,7 @@ export const searchUsers = async (req, res) => {
           requestReceived: !!receivedRequest,
           receivedRequestId: receivedRequest?.id || null,
         };
-      })
+      }),
     );
 
     return res.status(200).json({
@@ -433,23 +494,33 @@ export const getFriends = async (req, res) => {
       where: {
         userId,
       },
+
       include: {
         friend: {
           select: {
             id: true,
             username: true,
             fullName: true,
+            skinIndex: true,
+
+            avatars: avatarSelect,
           },
         },
       },
+
       orderBy: {
         createdAt: "desc",
       },
     });
 
+    const formattedFriends = friends.map((item) => ({
+      ...item,
+      friend: formatUserWithAvatar(item.friend),
+    }));
+
     return res.status(200).json({
       success: true,
-      data: friends,
+      data: formattedFriends,
     });
   } catch (error) {
     console.log(error);
@@ -501,7 +572,6 @@ export const removeFriend = async (req, res) => {
   }
 };
 
-
 /**
  * ============================================================================
  * GET MY FRIENDS
@@ -516,27 +586,33 @@ export const getMyFriends = async (req, res) => {
       where: {
         userId,
       },
+
       include: {
         friend: {
           select: {
             id: true,
             username: true,
             fullName: true,
-            // profileImage: true, 
-            // xp: true,           
-            // level: true,        
+            skinIndex: true,
+
+            avatars: avatarSelect,
           },
         },
       },
+
       orderBy: {
         createdAt: "desc",
       },
     });
 
+    const formattedFriends = friends.map((item) =>
+      formatUserWithAvatar(item.friend),
+    );
+
     return res.status(200).json({
       success: true,
-      count: friends.length,
-      friends: friends.map((item) => item.friend),
+      count: formattedFriends.length,
+      friends: formattedFriends,
     });
   } catch (error) {
     console.error("GET_MY_FRIENDS_ERROR:", error);
@@ -547,7 +623,6 @@ export const getMyFriends = async (req, res) => {
     });
   }
 };
-
 
 /**
  * ============================================================================
@@ -603,8 +678,6 @@ export const cancelFriendRequest = async (req, res) => {
   }
 };
 
-
-
 export const searchFriendsOnly = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -620,6 +693,7 @@ export const searchFriendsOnly = async (req, res) => {
     const friends = await prisma.friendship.findMany({
       where: {
         userId,
+
         friend: {
           OR: [
             {
@@ -637,26 +711,35 @@ export const searchFriendsOnly = async (req, res) => {
           ],
         },
       },
+
       include: {
         friend: {
           select: {
             id: true,
             username: true,
             fullName: true,
-            // profileImage: true, // optional
+            skinIndex: true,
+
+            avatars: avatarSelect,
           },
         },
       },
+
       orderBy: {
         createdAt: "desc",
       },
+
       take: 50,
     });
 
+    const formattedFriends = friends.map((item) =>
+      formatUserWithAvatar(item.friend),
+    );
+
     return res.status(200).json({
       success: true,
-      count: friends.length,
-      data: friends.map((item) => item.friend),
+      count: formattedFriends.length,
+      data: formattedFriends,
     });
   } catch (error) {
     console.error("SEARCH_FRIENDS_ONLY_ERROR:", error);
@@ -667,7 +750,6 @@ export const searchFriendsOnly = async (req, res) => {
     });
   }
 };
-
 
 /**
  * ============================================================================
@@ -684,24 +766,34 @@ export const getSentFriendRequests = async (req, res) => {
         senderId,
         status: "PENDING",
       },
+
       include: {
         receiver: {
           select: {
             id: true,
             username: true,
             fullName: true,
+            skinIndex: true,
+
+            avatars: avatarSelect,
           },
         },
       },
+
       orderBy: {
         createdAt: "desc",
       },
     });
 
+    const formattedRequests = requests.map((request) => ({
+      ...request,
+      receiver: formatUserWithAvatar(request.receiver),
+    }));
+
     return res.status(200).json({
       success: true,
-      count: requests.length,
-      data: requests,
+      count: formattedRequests.length,
+      data: formattedRequests,
     });
   } catch (error) {
     console.error("GET_SENT_FRIEND_REQUESTS_ERROR:", error);
