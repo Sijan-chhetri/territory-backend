@@ -1403,159 +1403,6 @@ const TERRITORY_COLORS = [
 
 
 
-// export const getAllTerritories = async (req, res) => {
-//   try {
-//     const territoryRows = await prisma.$queryRaw`
-//       WITH ranked AS (
-//         SELECT
-//           t.id,
-//           t."userId",
-//           t."activityId",
-//           t.name,
-//           t."areaKm2",
-//           t."capturedAt",
-//           t."createdAt",
-//           t."updatedAt",
-//           t.boundary,
-//           t.center,
-//           u.username,
-//           u.full_name AS "fullName",
-//           t."routeEncoded",
-//           t."routeSegmentsEncoded",
-//           ROW_NUMBER() OVER (ORDER BY t."updatedAt" DESC) AS rn
-//         FROM territories t
-
-// JOIN users u
-//   ON u.id = t."userId"
-
-// LEFT JOIN activities a
-//   ON a.id = t."activityId"
-
-// WHERE t.boundary IS NOT NULL
-//   AND NOT ST_IsEmpty(t.boundary)
-
-//   AND (
-//     a."include_in_clan" IS NULL
-//     OR a."include_in_clan" = false
-//   )
-//       ),
-//       clipped AS (
-//   SELECT
-//     r.id,
-//     r."userId",
-//     r."activityId",
-//     r.name,
-//     r."areaKm2",
-//     r."capturedAt",
-//     r."createdAt",
-//     r."updatedAt",
-//     r.username,
-//     r."fullName",
-//     r."routeEncoded",
-//     r."routeSegmentsEncoded",
-
-//     ST_Multi(
-//       ST_CollectionExtract(
-//         ST_MakeValid(
-//           ST_Difference(
-//             ST_MakeValid(r.boundary),
-//             COALESCE(
-//               (
-//                 SELECT ST_MakeValid(ST_UnaryUnion(ST_Collect(newer.boundary)))
-//                 FROM ranked newer
-//                 WHERE newer.rn < r.rn
-//                   AND newer.boundary IS NOT NULL
-//                   AND NOT ST_IsEmpty(newer.boundary)
-//                   AND ST_Intersects(r.boundary, newer.boundary)
-//               ),
-//               ST_GeomFromText('POLYGON EMPTY', 4326)
-//             )
-//           )
-//         ),
-//         3
-//       )
-//     ) AS clipped_boundary,
-
-//     ST_AsGeoJSON(r.center)::json AS center
-//   FROM ranked r
-// )
-//       SELECT
-//         id,
-//         "userId",
-//         "activityId",
-//         name,
-//         "areaKm2",
-//         "capturedAt",
-//         "createdAt",
-//         "updatedAt",
-//         username,
-//         "fullName",
-//         "routeEncoded",
-//         "routeSegmentsEncoded",
-//         center,
-//         ST_AsGeoJSON(clipped_boundary)::json AS boundary
-//       FROM clipped
-//       WHERE clipped_boundary IS NOT NULL
-//         AND NOT ST_IsEmpty(clipped_boundary)
-//         AND GeometryType(clipped_boundary) IN ('POLYGON', 'MULTIPOLYGON')
-//       ORDER BY "updatedAt" DESC;
-//     `;
-
-//     const seenUsers = [];
-
-//     for (const t of territoryRows) {
-//       if (!seenUsers.includes(t.userId)) {
-//         seenUsers.push(t.userId);
-//       }
-//     }
-
-//     const userColorMap = Object.fromEntries(
-//       seenUsers.map((userId, index) => [
-//         userId,
-//         TERRITORY_COLORS[Math.min(index, TERRITORY_COLORS.length - 1)],
-//       ])
-//     );
-
-//     const territories = territoryRows.map((t) => ({
-//       id: t.id,
-//       userId: t.userId,
-//       activityId: t.activityId,
-//       name: t.name,
-//       owner: {
-//         username: t.username,
-//         fullName: t.fullName,
-//       },
-//       areaKm2: Number(t.areaKm2),
-//       capturedAt: t.capturedAt,
-//       createdAt: t.createdAt,
-//       updatedAt: t.updatedAt,
-//       geojson: t.boundary,
-//       center: t.center,
-//       routeEncoded: t.routeEncoded,
-//       routeSegmentsEncoded: t.routeSegmentsEncoded ?? [],
-//       color:
-//         userColorMap[t.userId] ??
-//         TERRITORY_COLORS[TERRITORY_COLORS.length - 1],
-//     }));
-
-//     return res.status(200).json({
-//       success: true,
-//       count: territories.length,
-//       territories,
-//     });
-//   } catch (error) {
-//     console.error('GET_ALL_TERRITORIES ERROR:', error);
-
-//     return res.status(500).json({
-//       success: false,
-//       message: 'Failed to fetch territories',
-//       error: process.env.NODE_ENV === 'development' ? error.message : undefined,
-//     });
-//   }
-// };
-
-
-
 export const getAllTerritories = async (req, res) => {
   try {
     const territoryRows = await prisma.$queryRaw`
@@ -1575,85 +1422,63 @@ export const getAllTerritories = async (req, res) => {
           u.full_name AS "fullName",
           t."routeEncoded",
           t."routeSegmentsEncoded",
-
-          ROW_NUMBER() OVER (
-            ORDER BY t."updatedAt" DESC
-          ) AS rn
-
+          ROW_NUMBER() OVER (ORDER BY t."updatedAt" DESC) AS rn
         FROM territories t
 
-        JOIN users u
-          ON u.id = t."userId"
+JOIN users u
+  ON u.id = t."userId"
 
-        LEFT JOIN activities a
-          ON a.id = t."activityId"
+LEFT JOIN activities a
+  ON a.id = t."activityId"
 
-        WHERE
-          t.boundary IS NOT NULL
-          AND NOT ST_IsEmpty(t.boundary)
-          AND (
-            a."include_in_clan" IS NULL
-            OR a."include_in_clan" = false
-          )
+WHERE t.boundary IS NOT NULL
+  AND NOT ST_IsEmpty(t.boundary)
+
+  AND (
+    a."include_in_clan" IS NULL
+    OR a."include_in_clan" = false
+  )
       ),
-
-      overlaps AS (
-        SELECT
-          older.id AS older_id,
-          ST_UnaryUnion(
-            ST_Collect(newer.boundary)
-          ) AS newer_boundary
-
-        FROM ranked older
-
-        JOIN ranked newer
-          ON newer.rn < older.rn
-          AND newer.boundary && older.boundary
-          AND ST_Intersects(
-            older.boundary,
-            newer.boundary
-          )
-
-        GROUP BY older.id
-      ),
-
       clipped AS (
-        SELECT
-          r.id,
-          r."userId",
-          r."activityId",
-          r.name,
-          r."areaKm2",
-          r."capturedAt",
-          r."createdAt",
-          r."updatedAt",
-          r.username,
-          r."fullName",
-          r."routeEncoded",
-          r."routeSegmentsEncoded",
+  SELECT
+    r.id,
+    r."userId",
+    r."activityId",
+    r.name,
+    r."areaKm2",
+    r."capturedAt",
+    r."createdAt",
+    r."updatedAt",
+    r.username,
+    r."fullName",
+    r."routeEncoded",
+    r."routeSegmentsEncoded",
 
-          ST_Multi(
-            ST_CollectionExtract(
-              CASE
-                WHEN o.newer_boundary IS NULL
-                  THEN r.boundary
-                ELSE ST_Difference(
-                  r.boundary,
-                  o.newer_boundary
-                )
-              END,
-              3
+    ST_Multi(
+      ST_CollectionExtract(
+        ST_MakeValid(
+          ST_Difference(
+            ST_MakeValid(r.boundary),
+            COALESCE(
+              (
+                SELECT ST_MakeValid(ST_UnaryUnion(ST_Collect(newer.boundary)))
+                FROM ranked newer
+                WHERE newer.rn < r.rn
+                  AND newer.boundary IS NOT NULL
+                  AND NOT ST_IsEmpty(newer.boundary)
+                  AND ST_Intersects(r.boundary, newer.boundary)
+              ),
+              ST_GeomFromText('POLYGON EMPTY', 4326)
             )
-          ) AS clipped_boundary,
-
-          ST_AsGeoJSON(r.center)::json AS center
-
-        FROM ranked r
-
-        LEFT JOIN overlaps o
-          ON o.older_id = r.id
+          )
+        ),
+        3
       )
+    ) AS clipped_boundary,
 
+    ST_AsGeoJSON(r.center)::json AS center
+  FROM ranked r
+)
       SELECT
         id,
         "userId",
@@ -1668,70 +1493,50 @@ export const getAllTerritories = async (req, res) => {
         "routeEncoded",
         "routeSegmentsEncoded",
         center,
-
         ST_AsGeoJSON(clipped_boundary)::json AS boundary
-
       FROM clipped
-
-      WHERE
-        clipped_boundary IS NOT NULL
+      WHERE clipped_boundary IS NOT NULL
         AND NOT ST_IsEmpty(clipped_boundary)
-
+        AND GeometryType(clipped_boundary) IN ('POLYGON', 'MULTIPOLYGON')
       ORDER BY "updatedAt" DESC;
     `;
 
-    // =========================================================
-    // ASSIGN COLORS
-    // =========================================================
+    const seenUsers = [];
 
-    const userColorMap = {};
-    let colorIndex = 0;
-
-    const territories = territoryRows.map((t) => {
-      if (!userColorMap[t.userId]) {
-        userColorMap[t.userId] =
-          TERRITORY_COLORS[
-            Math.min(
-              colorIndex,
-              TERRITORY_COLORS.length - 1
-            )
-          ];
-
-        colorIndex++;
+    for (const t of territoryRows) {
+      if (!seenUsers.includes(t.userId)) {
+        seenUsers.push(t.userId);
       }
+    }
 
-      return {
-        id: t.id,
-        userId: t.userId,
-        activityId: t.activityId,
-        name: t.name,
+    const userColorMap = Object.fromEntries(
+      seenUsers.map((userId, index) => [
+        userId,
+        TERRITORY_COLORS[Math.min(index, TERRITORY_COLORS.length - 1)],
+      ])
+    );
 
-        owner: {
-          username: t.username,
-          fullName: t.fullName,
-        },
-
-        areaKm2: Number(t.areaKm2),
-
-        capturedAt: t.capturedAt,
-        createdAt: t.createdAt,
-        updatedAt: t.updatedAt,
-
-        geojson: t.boundary,
-        center: t.center,
-
-        routeEncoded: t.routeEncoded,
-
-        routeSegmentsEncoded:
-          t.routeSegmentsEncoded ?? [],
-
-        color:
-          userColorMap[t.userId] ??
-          TERRITORY_COLORS[
-            TERRITORY_COLORS.length - 1
-          ],
-      };
-    });
+    const territories = territoryRows.map((t) => ({
+      id: t.id,
+      userId: t.userId,
+      activityId: t.activityId,
+      name: t.name,
+      owner: {
+        username: t.username,
+        fullName: t.fullName,
+      },
+      areaKm2: Number(t.areaKm2),
+      capturedAt: t.capturedAt,
+      createdAt: t.createdAt,
+      updatedAt: t.updatedAt,
+      geojson: t.boundary,
+      center: t.center,
+      routeEncoded: t.routeEncoded,
+      routeSegmentsEncoded: t.routeSegmentsEncoded ?? [],
+      color:
+        userColorMap[t.userId] ??
+        TERRITORY_COLORS[TERRITORY_COLORS.length - 1],
+    }));
 
     return res.status(200).json({
       success: true,
@@ -1739,21 +1544,17 @@ export const getAllTerritories = async (req, res) => {
       territories,
     });
   } catch (error) {
-    console.error(
-      'GET_ALL_TERRITORIES ERROR:',
-      error
-    );
+    console.error('GET_ALL_TERRITORIES ERROR:', error);
 
     return res.status(500).json({
       success: false,
       message: 'Failed to fetch territories',
-      error:
-        process.env.NODE_ENV === 'development'
-          ? error.message
-          : undefined,
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
     });
   }
 };
+
+
 
 // ─────────────────────────────────────────────
 // Update Territory Route
