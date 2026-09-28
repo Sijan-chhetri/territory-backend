@@ -7433,17 +7433,43 @@ export const getVisibleActivityDetail = async (req, res) => {
 // Delete My Activity
 // DELETE /api/activities/:id
 // ─────────────────────────────────────────────
-
 export const deleteActivity = async (req, res) => {
   try {
-    const userId = req.user.id;
+    const userId = req.user?.id;
     const { id } = req.params;
+
+    console.log("==========================================");
+    console.log("DELETE ACTIVITY REQUEST");
+    console.log("User ID:", userId);
+    console.log("Activity ID:", id);
+    console.log("==========================================");
+
+    // =========================================================
+    // VALIDATE USER
+    // =========================================================
+
+    if (!userId) {
+      console.error("DELETE_ACTIVITY 401 ERROR:", {
+        message: "Unauthorized user",
+        activityId: id,
+      });
+
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized",
+      });
+    }
 
     // =========================================================
     // VALIDATE ACTIVITY ID
     // =========================================================
 
     if (!id) {
+      console.error("DELETE_ACTIVITY 400 ERROR:", {
+        userId,
+        message: "Activity ID is required",
+      });
+
       return res.status(400).json({
         success: false,
         message: "Activity ID is required",
@@ -7466,12 +7492,27 @@ export const deleteActivity = async (req, res) => {
       },
     });
 
+    // =========================================================
+    // ACTIVITY NOT FOUND
+    // =========================================================
+
     if (!activity) {
+      console.error("DELETE_ACTIVITY 404 ERROR:", {
+        userId,
+        activityId: id,
+        message: "Activity not found or does not belong to user",
+      });
+
       return res.status(404).json({
         success: false,
         message: "Activity not found",
       });
     }
+
+    console.log("DELETE ACTIVITY FOUND:", {
+      activityId: activity.id,
+      userId: activity.userId,
+    });
 
     // =========================================================
     // DELETE ACTIVITY
@@ -7484,6 +7525,16 @@ export const deleteActivity = async (req, res) => {
     });
 
     // =========================================================
+    // SUCCESS LOG
+    // =========================================================
+
+    console.log("DELETE_ACTIVITY SUCCESS:", {
+      userId,
+      activityId: id,
+      message: "Activity deleted successfully",
+    });
+
+    // =========================================================
     // RESPONSE
     // =========================================================
 
@@ -7493,14 +7544,25 @@ export const deleteActivity = async (req, res) => {
       activityId: id,
     });
   } catch (error) {
-    console.error("DELETE_ACTIVITY ERROR:", error);
+    // =========================================================
+    // UNEXPECTED ERROR
+    // =========================================================
+
+    console.error("==========================================");
+    console.error("DELETE_ACTIVITY 500 ERROR");
+    console.error("Message:", error?.message);
+    console.error("Code:", error?.code);
+    console.error("Meta:", error?.meta);
+    console.error("Stack:", error?.stack);
+    console.error("Full error:", error);
+    console.error("==========================================");
 
     return res.status(500).json({
       success: false,
       message: "Failed to delete activity",
       error:
         process.env.NODE_ENV === "development"
-          ? error.message
+          ? error?.message
           : undefined,
     });
   }
