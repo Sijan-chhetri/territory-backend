@@ -633,6 +633,7 @@ model ClanEvent {
   endsAt   DateTime
 
   maxParticipants Int?
+  targetDistanceKm Float?
   status          ClanEventStatus @default(UPCOMING)
 
   // ============================================================

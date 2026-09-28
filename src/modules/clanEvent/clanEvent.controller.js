@@ -2073,6 +2073,47 @@ const buildEventResultsSnapshot = async (eventId) => {
     isFinalized: participant.status === "FINALIZED",
   }));
 
+  // ============================================================
+  // BEST SPLIT ACROSS ALL CLUB EVENT PARTICIPANTS
+  // ============================================================
+  //
+  // In Flutter, topSpeed is derived from the participant's
+  // fastest kilometre split:
+  //
+  // speed km/h = 60 / pace min/km
+  //
+  // Therefore:
+  // pace min/km = 60 / speed km/h
+  //
+
+  let bestSplitPace = 0;
+  let bestSplitParticipant = null;
+
+  for (const item of results) {
+    const topSpeed = Number(item.topSpeed ?? 0);
+
+    if (!Number.isFinite(topSpeed) || topSpeed <= 0) {
+      continue;
+    }
+
+    const splitPace = 60 / topSpeed;
+
+    if (!Number.isFinite(splitPace) || splitPace <= 0) {
+      continue;
+    }
+
+    if (bestSplitPace === 0 || splitPace < bestSplitPace) {
+      bestSplitPace = splitPace;
+
+      bestSplitParticipant = {
+        userId: item.userId,
+        participantId: item.participantId,
+        user: item.user,
+        pace: splitPace,
+      };
+    }
+  }
+
   /**
    * Combined event totals.
    */
@@ -2118,6 +2159,10 @@ const buildEventResultsSnapshot = async (eventId) => {
       ...totals,
       avgPace,
     },
+
+    bestSplitPace,
+
+    bestSplitParticipant,
 
     startedParticipants: results.length,
 
@@ -2185,8 +2230,15 @@ export const createClanEvent = async (req, res) => {
   try {
     const userId = req.user.id;
 
-    const { title, description, location, startsAt, endsAt, maxParticipants } =
-      req.body;
+    const {
+      title,
+      description,
+      location,
+      startsAt,
+      endsAt,
+      maxParticipants,
+      targetDistanceKm,
+    } = req.body;
 
     if (!title?.trim()) {
       return res.status(400).json({
@@ -2200,6 +2252,26 @@ export const createClanEvent = async (req, res) => {
         success: false,
         message: "Event start time and end time are required",
       });
+    }
+
+    let parsedTargetDistanceKm = null;
+
+    if (
+      targetDistanceKm !== undefined &&
+      targetDistanceKm !== null &&
+      targetDistanceKm !== ""
+    ) {
+      parsedTargetDistanceKm = Number(targetDistanceKm);
+
+      if (
+        !Number.isFinite(parsedTargetDistanceKm) ||
+        parsedTargetDistanceKm <= 0
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Target distance must be greater than 0 km",
+        });
+      }
     }
 
     const startDate = new Date(startsAt);
@@ -2288,6 +2360,8 @@ export const createClanEvent = async (req, res) => {
         endsAt: endDate,
 
         maxParticipants: parsedMaxParticipants,
+
+        targetDistanceKm: parsedTargetDistanceKm,
       },
 
       include: {
@@ -2516,8 +2590,6 @@ export const createClanEvent = async (req, res) => {
     });
   }
 };
-
-
 
 /**
  * |--------------------------------------------------------------------------
@@ -2870,6 +2942,7 @@ export const getMyClanEvents = async (req, res) => {
 
       location: event.location,
 
+      targetDistanceKm: event.targetDistanceKm,
       startsAt: event.startsAt,
 
       endsAt: event.endsAt,
@@ -4232,6 +4305,8 @@ export const getClanEventRunStatus = async (req, res) => {
 
         title: event.title,
 
+        targetDistanceKm: event.targetDistanceKm,
+
         status: event.status,
 
         startsAt: event.startsAt,
@@ -4520,6 +4595,8 @@ export const getClanEventRunResults = async (req, res) => {
 
         title: event.title,
 
+        targetDistanceKm: event.targetDistanceKm,
+
         status: event.status,
 
         startsAt: event.startsAt,
@@ -4558,6 +4635,10 @@ export const getClanEventRunResults = async (req, res) => {
       finalizedParticipants: snapshot.finalizedParticipants,
 
       pendingFinalizations: snapshot.pendingFinalizations,
+
+      bestSplitPace: snapshot.bestSplitPace,
+
+      bestSplitParticipant: snapshot.bestSplitParticipant,
 
       resultsFinal:
         Boolean(event.leaderStoppedAt) && snapshot.pendingFinalizations === 0,
@@ -4845,8 +4926,15 @@ export const updateClanEvent = async (req, res) => {
     // GET UPDATED DATA
     // =========================================================
 
-    const { title, description, location, startsAt, endsAt, maxParticipants } =
-      req.body;
+    const {
+      title,
+      description,
+      location,
+      startsAt,
+      endsAt,
+      maxParticipants,
+      targetDistanceKm,
+    } = req.body;
 
     // =========================================================
     // VALIDATION
@@ -4940,6 +5028,30 @@ export const updateClanEvent = async (req, res) => {
     }
 
     // =========================================================
+    // TARGET DISTANCE VALIDATION
+    // =========================================================
+
+    let parsedTargetDistanceKm = null;
+
+    if (
+      targetDistanceKm !== undefined &&
+      targetDistanceKm !== null &&
+      targetDistanceKm !== ""
+    ) {
+      parsedTargetDistanceKm = Number(targetDistanceKm);
+
+      if (
+        !Number.isFinite(parsedTargetDistanceKm) ||
+        parsedTargetDistanceKm <= 0
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Target distance must be greater than 0 km",
+        });
+      }
+    }
+
+    // =========================================================
     // UPDATE EVENT
     // =========================================================
 
@@ -4955,6 +5067,7 @@ export const updateClanEvent = async (req, res) => {
         startsAt: startDate,
         endsAt: endDate,
         maxParticipants: parsedMaxParticipants,
+        targetDistanceKm: parsedTargetDistanceKm,
       },
 
       include: {
@@ -5268,6 +5381,8 @@ export const discoverClanEvents = async (req, res) => {
         description: event.description,
 
         location: event.location,
+
+        targetDistanceKm: event.targetDistanceKm,
 
         startsAt: event.startsAt,
 
