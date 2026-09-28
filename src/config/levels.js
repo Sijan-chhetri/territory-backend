@@ -115,7 +115,6 @@ export const LEVELS = [
   { level: 108, kmNeeded: 51665, xpNeeded: 2583250 },
   { level: 109, kmNeeded: 52685, xpNeeded: 2634250 },
   { level: 110, kmNeeded: 53715, xpNeeded: 2685750 },
-
   { level: 111, kmNeeded: 54755, xpNeeded: 2737750 },
   { level: 112, kmNeeded: 55805, xpNeeded: 2790250 },
   { level: 113, kmNeeded: 56865, xpNeeded: 2843250 },
@@ -126,7 +125,6 @@ export const LEVELS = [
   { level: 118, kmNeeded: 62315, xpNeeded: 3115750 },
   { level: 119, kmNeeded: 63435, xpNeeded: 3171750 },
   { level: 120, kmNeeded: 64565, xpNeeded: 3228250 },
-
   { level: 121, kmNeeded: 65705, xpNeeded: 3285250 },
   { level: 122, kmNeeded: 66855, xpNeeded: 3342750 },
   { level: 123, kmNeeded: 68015, xpNeeded: 3400750 },

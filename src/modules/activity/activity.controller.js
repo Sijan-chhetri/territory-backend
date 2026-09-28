@@ -1111,7 +1111,7 @@ export const finishActivity = async (req, res) => {
                 route
               )::geography,
 
-              100
+              150
             )
 
             /*
