@@ -388,22 +388,109 @@ export const changeUsername = async (req, res) => {
 // Get Users Who Are Not My Friends
 // GET /api/auth/users/not-friends
 // ─────────────────────────────────────────────
+// export const getUsersWhoAreNotMyFriends = async (req, res) => {
+//   try {
+//     const userId = req.user.id;
+
+//     const friendships = await prisma.friendship.findMany({
+//       where: { userId },
+//       select: { friendId: true },
+//     });
+
+//     const friendIds = friendships.map((f) => f.friendId);
+
+//     const pendingRequests = await prisma.friendRequest.findMany({
+//       where: {
+//         OR: [
+//           { senderId: userId, status: "PENDING" },
+//           { receiverId: userId, status: "PENDING" },
+//         ],
+//       },
+//       select: {
+//         id: true,
+//         senderId: true,
+//         receiverId: true,
+//         status: true,
+//       },
+//     });
+
+//     const pendingUserIds = pendingRequests.map((r) =>
+//       r.senderId === userId ? r.receiverId : r.senderId,
+//     );
+
+//     const users = await prisma.user.findMany({
+//       where: {
+//         id: {
+//           notIn: [userId, ...friendIds],
+//         },
+//       },
+//       select: {
+//         id: true,
+//         username: true,
+//         fullName: true,
+//         city: true,
+//         country: true,
+//       },
+//       take: 5,
+//       orderBy: { createdAt: "desc" },
+//     });
+
+//     const result = users.map((u) => ({
+//       ...u,
+//       isPending: pendingUserIds.includes(u.id),
+//     }));
+
+//     return res.status(200).json({
+//       success: true,
+//       count: result.length,
+//       users: result,
+//     });
+//   } catch (error) {
+//     console.error("GET_NOT_FRIEND_USERS_ERROR:", error);
+//     return res.status(500).json({
+//       success: false,
+//       message: "Something went wrong",
+//     });
+//   }
+// };
+
+// ─────────────────────────────────────────────
+// Get Users Who Are Not My Friends
+// Ranked by Mutual Friends
+// GET /api/auth/users/not-friends
+// ─────────────────────────────────────────────
 export const getUsersWhoAreNotMyFriends = async (req, res) => {
   try {
     const userId = req.user.id;
 
+    // ---------------------------------------------------------
+    // 1. GET MY CURRENT FRIENDS
+    // ---------------------------------------------------------
     const friendships = await prisma.friendship.findMany({
-      where: { userId },
-      select: { friendId: true },
+      where: {
+        userId,
+      },
+      select: {
+        friendId: true,
+      },
     });
 
     const friendIds = friendships.map((f) => f.friendId);
 
+    // ---------------------------------------------------------
+    // 2. GET MY PENDING FRIEND REQUESTS
+    // ---------------------------------------------------------
     const pendingRequests = await prisma.friendRequest.findMany({
       where: {
         OR: [
-          { senderId: userId, status: "PENDING" },
-          { receiverId: userId, status: "PENDING" },
+          {
+            senderId: userId,
+            status: "PENDING",
+          },
+          {
+            receiverId: userId,
+            status: "PENDING",
+          },
         ],
       },
       select: {
@@ -414,14 +501,21 @@ export const getUsersWhoAreNotMyFriends = async (req, res) => {
       },
     });
 
-    const pendingUserIds = pendingRequests.map((r) =>
-      r.senderId === userId ? r.receiverId : r.senderId,
+    const pendingUserIds = pendingRequests.map((request) =>
+      request.senderId === userId ? request.receiverId : request.senderId,
     );
 
+    // ---------------------------------------------------------
+    // 3. GET ALL POSSIBLE SUGGESTED USERS
+    //
+    // Exclude:
+    // - myself
+    // - existing friends
+    // ---------------------------------------------------------
     const users = await prisma.user.findMany({
       where: {
         id: {
-          notIn: [userId, ...friendIds],
+          notIn: [userId, ...friendIds, ...pendingUserIds],
         },
       },
       select: {
@@ -430,23 +524,100 @@ export const getUsersWhoAreNotMyFriends = async (req, res) => {
         fullName: true,
         city: true,
         country: true,
+        createdAt: true,
       },
-      take: 5,
-      orderBy: { createdAt: "desc" },
     });
 
-    const result = users.map((u) => ({
-      ...u,
-      isPending: pendingUserIds.includes(u.id),
+    // ---------------------------------------------------------
+    // 4. GET FRIENDSHIPS OF ALL POSSIBLE USERS
+    //
+    // We need these to calculate mutual friends.
+    // ---------------------------------------------------------
+    const candidateIds = users.map((user) => user.id);
+
+    const candidateFriendships =
+      candidateIds.length > 0
+        ? await prisma.friendship.findMany({
+            where: {
+              userId: {
+                in: candidateIds,
+              },
+            },
+            select: {
+              userId: true,
+              friendId: true,
+            },
+          })
+        : [];
+
+    // ---------------------------------------------------------
+    // 5. CREATE A SET OF MY FRIEND IDS
+    //
+    // Set makes lookup faster.
+    // ---------------------------------------------------------
+    const myFriendIds = new Set(friendIds);
+
+    // ---------------------------------------------------------
+    // 6. COUNT MUTUAL FRIENDS FOR EACH USER
+    // ---------------------------------------------------------
+    const mutualCountByUser = new Map();
+
+    for (const friendship of candidateFriendships) {
+      if (myFriendIds.has(friendship.friendId)) {
+        mutualCountByUser.set(
+          friendship.userId,
+          (mutualCountByUser.get(friendship.userId) || 0) + 1,
+        );
+      }
+    }
+
+    // ---------------------------------------------------------
+    // 7. BUILD RESULT
+    // ---------------------------------------------------------
+    const result = users.map((user) => ({
+      id: user.id,
+      username: user.username,
+      fullName: user.fullName,
+      city: user.city,
+      country: user.country,
+
+      mutualFriends: mutualCountByUser.get(user.id) || 0,
+
+      isPending: pendingUserIds.includes(user.id),
+
+      createdAt: user.createdAt,
     }));
+
+    // ---------------------------------------------------------
+    // 8. SORT
+    //
+    // First:
+    //   Highest mutual friends
+    //
+    // If mutual friend count is the same:
+    //   Newest user first
+    // ---------------------------------------------------------
+    result.sort((a, b) => {
+      if (b.mutualFriends !== a.mutualFriends) {
+        return b.mutualFriends - a.mutualFriends;
+      }
+
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
+
+    // ---------------------------------------------------------
+    // 9. RETURN ONLY TOP 5
+    // ---------------------------------------------------------
+    const suggestions = result.slice(0, 5);
 
     return res.status(200).json({
       success: true,
-      count: result.length,
-      users: result,
+      count: suggestions.length,
+      users: suggestions,
     });
   } catch (error) {
     console.error("GET_NOT_FRIEND_USERS_ERROR:", error);
+
     return res.status(500).json({
       success: false,
       message: "Something went wrong",
