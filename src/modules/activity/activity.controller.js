@@ -2501,7 +2501,7 @@ export const finishActivity = async (req, res) => {
     return res.status(500).json({
       success: false,
 
-      message: "Server error",
+      message: "The activity could not be saved due to a server error.",
 
       error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
