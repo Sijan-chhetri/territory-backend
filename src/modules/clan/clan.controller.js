@@ -3639,9 +3639,21 @@ export const leaveClan = async (req, res) => {
       // DELETE THE ENTIRE CLUB
       // =========================================================
 
+      // =========================================================
+      // LAST MEMBER LEAVING
+      // DELETE THE ENTIRE CLUB
+      // =========================================================
+
       if (isLastMember) {
         // Delete club activity
         await tx.clanActivity.deleteMany({
+          where: {
+            clanId,
+          },
+        });
+
+        // Delete all club events
+        await tx.clanEvent.deleteMany({
           where: {
             clanId,
           },
@@ -3668,10 +3680,7 @@ export const leaveClan = async (req, res) => {
           },
         });
 
-        // =====================================================
-        // DELETE CLUB
-        // =====================================================
-
+        // Delete the club
         await tx.clan.delete({
           where: {
             id: clanId,
