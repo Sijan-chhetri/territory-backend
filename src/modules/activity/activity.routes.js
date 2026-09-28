@@ -16,6 +16,7 @@ import {
   getFriendActivityDetails,
   updateActivityVisibility,
   getVisibleActivityDetail,
+  deleteActivity
 } from "./activity.controller.js";
 
 const router = Router();
@@ -53,5 +54,7 @@ router.get("/stats/weekly", authMiddleware, getWeeklyActivityStats);
 router.get("/stats/lifetime", authMiddleware, getLifetimeActivityStats);
 
 router.get("/stats/personal-records", authMiddleware, getPersonalRecords);
+
+router.delete("/:id", authMiddleware, deleteActivity);
 
 export default router;

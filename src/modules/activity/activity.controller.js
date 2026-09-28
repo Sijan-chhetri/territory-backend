@@ -7425,3 +7425,83 @@ export const getVisibleActivityDetail = async (req, res) => {
     });
   }
 };
+
+
+
+
+// ─────────────────────────────────────────────
+// Delete My Activity
+// DELETE /api/activities/:id
+// ─────────────────────────────────────────────
+
+export const deleteActivity = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { id } = req.params;
+
+    // =========================================================
+    // VALIDATE ACTIVITY ID
+    // =========================================================
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: "Activity ID is required",
+      });
+    }
+
+    // =========================================================
+    // FIND ACTIVITY
+    // Make sure the activity belongs to the logged-in user
+    // =========================================================
+
+    const activity = await prisma.activity.findFirst({
+      where: {
+        id,
+        userId,
+      },
+      select: {
+        id: true,
+        userId: true,
+      },
+    });
+
+    if (!activity) {
+      return res.status(404).json({
+        success: false,
+        message: "Activity not found",
+      });
+    }
+
+    // =========================================================
+    // DELETE ACTIVITY
+    // =========================================================
+
+    await prisma.activity.delete({
+      where: {
+        id,
+      },
+    });
+
+    // =========================================================
+    // RESPONSE
+    // =========================================================
+
+    return res.status(200).json({
+      success: true,
+      message: "Activity deleted successfully",
+      activityId: id,
+    });
+  } catch (error) {
+    console.error("DELETE_ACTIVITY ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to delete activity",
+      error:
+        process.env.NODE_ENV === "development"
+          ? error.message
+          : undefined,
+    });
+  }
+};

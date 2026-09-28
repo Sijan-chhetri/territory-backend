@@ -25,7 +25,7 @@ model User {
   city                    String?
   weight                  Float?
   height                  Float?
-  skinIndex Int @default(2) @map("skin_index")
+  skinIndex               Int                    @default(2) @map("skin_index")
   authProvider            AuthProvider           @default(EMAIL) @map("auth_provider")
   googleId                String?                @unique @map("google_id")
   appleId                 String?                @unique @map("apple_id")
@@ -51,7 +51,7 @@ model User {
   xpTransactions          XPTransaction[]
   clanMessages            ClanMessage[]
   createdClanEvents       ClanEvent[]            @relation("CreatedClanEvents")
-  ledClanEvents ClanEvent[] @relation("ClanEventRunLeader")
+  ledClanEvents           ClanEvent[]            @relation("ClanEventRunLeader")
   clanEventParticipants   ClanEventParticipant[]
   createdClubWars         ClubWar[]              @relation("CreatedClubWars")
   passwordResetOtps       PasswordResetOtp[]
@@ -287,7 +287,7 @@ model ClanActivity {
   /// * | TIMESTAMPS
   /// * |--------------------------------------------------------------------------
   createdAt           DateTime  @default(now())
-  activity            Activity? @relation(fields: [activityId], references: [id])
+  activity            Activity? @relation(fields: [activityId], references: [id], onDelete: SetNull)
   clan                Clan      @relation(fields: [clanId], references: [id], onDelete: Cascade)
   user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -410,13 +410,29 @@ model Territory {
   updatedAt            DateTime                 @updatedAt
   routeSegmentsEncoded Json?
   clanTerritories      ClanTerritory[]
-  activity             Activity?                @relation(fields: [activityId], references: [id])
+  activity             Activity?                @relation(fields: [activityId], references: [id], onDelete: SetNull)
   user                 User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([activityId])
   @@index([landmassId])
   @@map("territories")
+}
+
+model XPTransaction {
+  id          String    @id @default(uuid())
+  userId      String
+  activityId  String?
+  amount      Int
+  type        String
+  description String?
+  createdAt   DateTime  @default(now())
+  activity    Activity? @relation(fields: [activityId], references: [id], onDelete: SetNull)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([type])
+  @@map("xp_transactions")
 }
 
 model Notification {
@@ -488,22 +504,6 @@ model UserProgress {
 
   @@index([level])
   @@map("user_progress")
-}
-
-model XPTransaction {
-  id          String    @id @default(uuid())
-  userId      String
-  activityId  String?
-  amount      Int
-  type        String
-  description String?
-  createdAt   DateTime  @default(now())
-  activity    Activity? @relation(fields: [activityId], references: [id])
-  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
-  @@index([type])
-  @@map("xp_transactions")
 }
 
 model Badge {
@@ -667,9 +667,9 @@ model ClanEvent {
 
   clan Clan @relation(fields: [clanId], references: [id], onDelete: Cascade)
 
-createdBy User @relation("CreatedClanEvents", fields: [createdById], references: [id], onDelete: Cascade)
+  createdBy User @relation("CreatedClanEvents", fields: [createdById], references: [id], onDelete: Cascade)
 
-runLeader User? @relation("ClanEventRunLeader", fields: [runLeaderId], references: [id], onDelete: SetNull)
+  runLeader User? @relation("ClanEventRunLeader", fields: [runLeaderId], references: [id], onDelete: SetNull)
 
   participants ClanEventParticipant[]
 
@@ -686,9 +686,9 @@ model ClanEventParticipant {
   eventId String
   userId  String
 
-  joinedAt DateTime @default(now())
+  joinedAt  DateTime @default(now())
   createdAt DateTime @default(now())
-updatedAt DateTime @updatedAt
+  updatedAt DateTime @updatedAt
 
   // ============================================================
   // EVENT ROLE / STATE
@@ -736,9 +736,9 @@ updatedAt DateTime @updatedAt
   // EVENT-ONLY STATS
   // ============================================================
 
-  distanceKm    Float @default(0)
-  elapsedTime   Int   @default(0)
-  movingTime    Int   @default(0)
+  distanceKm  Float @default(0)
+  elapsedTime Int   @default(0)
+  movingTime  Int   @default(0)
 
   calories      Float @default(0)
   elevationGain Float @default(0)
@@ -759,18 +759,16 @@ updatedAt DateTime @updatedAt
 
   event ClanEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
 
-user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-activity Activity? @relation(fields: [activityId], references: [id], onDelete: SetNull)
+  activity Activity? @relation(fields: [activityId], references: [id], onDelete: SetNull)
 
   @@unique([eventId, userId])
   @@unique([userId, clientActivityId])
-
   @@index([eventId])
   @@index([userId])
   @@index([eventId, status])
   @@index([eventId, rank])
-
   @@map("clan_event_participants")
 }
 
