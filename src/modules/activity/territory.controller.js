@@ -1403,10 +1403,162 @@ const TERRITORY_COLORS = [
 
 
 
+// export const getAllTerritories = async (req, res) => {
+//   try {
+//     const territoryRows = await prisma.$queryRaw`
+//       WITH ranked AS (
+//         SELECT
+//           t.id,
+//           t."userId",
+//           t."activityId",
+//           t.name,
+//           t."areaKm2",
+//           t."capturedAt",
+//           t."createdAt",
+//           t."updatedAt",
+//           t.boundary,
+//           t.center,
+//           u.username,
+//           u.full_name AS "fullName",
+//           t."routeEncoded",
+//           t."routeSegmentsEncoded",
+//           ROW_NUMBER() OVER (ORDER BY t."updatedAt" DESC) AS rn
+//         FROM territories t
+
+// JOIN users u
+//   ON u.id = t."userId"
+
+// LEFT JOIN activities a
+//   ON a.id = t."activityId"
+
+// WHERE t.boundary IS NOT NULL
+//   AND NOT ST_IsEmpty(t.boundary)
+
+//   AND (
+//     a."include_in_clan" IS NULL
+//     OR a."include_in_clan" = false
+//   )
+//       ),
+//       clipped AS (
+//   SELECT
+//     r.id,
+//     r."userId",
+//     r."activityId",
+//     r.name,
+//     r."areaKm2",
+//     r."capturedAt",
+//     r."createdAt",
+//     r."updatedAt",
+//     r.username,
+//     r."fullName",
+//     r."routeEncoded",
+//     r."routeSegmentsEncoded",
+
+//     ST_Multi(
+//       ST_CollectionExtract(
+//         ST_MakeValid(
+//           ST_Difference(
+//             ST_MakeValid(r.boundary),
+//             COALESCE(
+//               (
+//                 SELECT ST_MakeValid(ST_UnaryUnion(ST_Collect(newer.boundary)))
+//                 FROM ranked newer
+//                 WHERE newer.rn < r.rn
+//                   AND newer.boundary IS NOT NULL
+//                   AND NOT ST_IsEmpty(newer.boundary)
+//                   AND ST_Intersects(r.boundary, newer.boundary)
+//               ),
+//               ST_GeomFromText('POLYGON EMPTY', 4326)
+//             )
+//           )
+//         ),
+//         3
+//       )
+//     ) AS clipped_boundary,
+
+//     ST_AsGeoJSON(r.center)::json AS center
+//   FROM ranked r
+// )
+//       SELECT
+//         id,
+//         "userId",
+//         "activityId",
+//         name,
+//         "areaKm2",
+//         "capturedAt",
+//         "createdAt",
+//         "updatedAt",
+//         username,
+//         "fullName",
+//         "routeEncoded",
+//         "routeSegmentsEncoded",
+//         center,
+//         ST_AsGeoJSON(clipped_boundary)::json AS boundary
+//       FROM clipped
+//       WHERE clipped_boundary IS NOT NULL
+//         AND NOT ST_IsEmpty(clipped_boundary)
+//         AND GeometryType(clipped_boundary) IN ('POLYGON', 'MULTIPOLYGON')
+//       ORDER BY "updatedAt" DESC;
+//     `;
+
+//     const seenUsers = [];
+
+//     for (const t of territoryRows) {
+//       if (!seenUsers.includes(t.userId)) {
+//         seenUsers.push(t.userId);
+//       }
+//     }
+
+//     const userColorMap = Object.fromEntries(
+//       seenUsers.map((userId, index) => [
+//         userId,
+//         TERRITORY_COLORS[Math.min(index, TERRITORY_COLORS.length - 1)],
+//       ])
+//     );
+
+//     const territories = territoryRows.map((t) => ({
+//       id: t.id,
+//       userId: t.userId,
+//       activityId: t.activityId,
+//       name: t.name,
+//       owner: {
+//         username: t.username,
+//         fullName: t.fullName,
+//       },
+//       areaKm2: Number(t.areaKm2),
+//       capturedAt: t.capturedAt,
+//       createdAt: t.createdAt,
+//       updatedAt: t.updatedAt,
+//       geojson: t.boundary,
+//       center: t.center,
+//       routeEncoded: t.routeEncoded,
+//       routeSegmentsEncoded: t.routeSegmentsEncoded ?? [],
+//       color:
+//         userColorMap[t.userId] ??
+//         TERRITORY_COLORS[TERRITORY_COLORS.length - 1],
+//     }));
+
+//     return res.status(200).json({
+//       success: true,
+//       count: territories.length,
+//       territories,
+//     });
+//   } catch (error) {
+//     console.error('GET_ALL_TERRITORIES ERROR:', error);
+
+//     return res.status(500).json({
+//       success: false,
+//       message: 'Failed to fetch territories',
+//       error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+//     });
+//   }
+// };
+
+
 export const getAllTerritories = async (req, res) => {
   try {
     const territoryRows = await prisma.$queryRaw`
-      WITH ranked AS (
+      WITH base AS (
         SELECT
           t.id,
           t."userId",
@@ -1416,69 +1568,145 @@ export const getAllTerritories = async (req, res) => {
           t."capturedAt",
           t."createdAt",
           t."updatedAt",
-          t.boundary,
+
+          -- Validate once here instead of repeatedly below.
+          ST_MakeValid(t.boundary) AS boundary,
+
           t.center,
+
           u.username,
           u.full_name AS "fullName",
+
           t."routeEncoded",
-          t."routeSegmentsEncoded",
-          ROW_NUMBER() OVER (ORDER BY t."updatedAt" DESC) AS rn
+          t."routeSegmentsEncoded"
+
         FROM territories t
 
-JOIN users u
-  ON u.id = t."userId"
+        JOIN users u
+          ON u.id = t."userId"
 
-LEFT JOIN activities a
-  ON a.id = t."activityId"
+        LEFT JOIN activities a
+          ON a.id = t."activityId"
 
-WHERE t.boundary IS NOT NULL
-  AND NOT ST_IsEmpty(t.boundary)
+        WHERE
+          t.boundary IS NOT NULL
 
-  AND (
-    a."include_in_clan" IS NULL
-    OR a."include_in_clan" = false
-  )
-      ),
-      clipped AS (
-  SELECT
-    r.id,
-    r."userId",
-    r."activityId",
-    r.name,
-    r."areaKm2",
-    r."capturedAt",
-    r."createdAt",
-    r."updatedAt",
-    r.username,
-    r."fullName",
-    r."routeEncoded",
-    r."routeSegmentsEncoded",
+          AND NOT ST_IsEmpty(t.boundary)
 
-    ST_Multi(
-      ST_CollectionExtract(
-        ST_MakeValid(
-          ST_Difference(
-            ST_MakeValid(r.boundary),
-            COALESCE(
-              (
-                SELECT ST_MakeValid(ST_UnaryUnion(ST_Collect(newer.boundary)))
-                FROM ranked newer
-                WHERE newer.rn < r.rn
-                  AND newer.boundary IS NOT NULL
-                  AND NOT ST_IsEmpty(newer.boundary)
-                  AND ST_Intersects(r.boundary, newer.boundary)
-              ),
-              ST_GeomFromText('POLYGON EMPTY', 4326)
-            )
+          AND (
+            a."include_in_clan" IS NULL
+            OR a."include_in_clan" = false
           )
-        ),
-        3
-      )
-    ) AS clipped_boundary,
+      ),
 
-    ST_AsGeoJSON(r.center)::json AS center
-  FROM ranked r
-)
+      ranked AS (
+        SELECT
+          b.*,
+
+          ROW_NUMBER() OVER (
+            ORDER BY
+              b."updatedAt" DESC,
+              b.id DESC
+          ) AS rn
+
+        FROM base b
+      ),
+
+      /*
+       * Build one cumulative union.
+       *
+       * For each territory, previous_union contains every territory
+       * newer than the current territory.
+       *
+       * This avoids the expensive correlated:
+       *
+       * SELECT ST_UnaryUnion(ST_Collect(...))
+       * FROM ranked newer
+       * WHERE newer.rn < r.rn
+       *
+       * being executed independently for every territory.
+       */
+      cumulative AS (
+        SELECT
+          r.*,
+
+          ST_Union(r.boundary) OVER (
+            ORDER BY
+              r."updatedAt" DESC,
+              r.id DESC
+
+            ROWS BETWEEN
+              UNBOUNDED PRECEDING
+              AND 1 PRECEDING
+          ) AS previous_union
+
+        FROM ranked r
+      ),
+
+      clipped AS (
+        SELECT
+          c.id,
+          c."userId",
+          c."activityId",
+          c.name,
+          c."areaKm2",
+          c."capturedAt",
+          c."createdAt",
+          c."updatedAt",
+
+          c.username,
+          c."fullName",
+
+          c."routeEncoded",
+          c."routeSegmentsEncoded",
+
+          ST_AsGeoJSON(c.center)::json AS center,
+
+          /*
+           * First territory has no newer territory,
+           * therefore return its original boundary.
+           */
+          CASE
+            WHEN c.previous_union IS NULL THEN
+              ST_Multi(
+                ST_CollectionExtract(
+                  c.boundary,
+                  3
+                )
+              )
+
+            /*
+             * Avoid ST_Difference entirely when there
+             * is no intersection.
+             */
+            WHEN NOT ST_Intersects(
+              c.boundary,
+              c.previous_union
+            ) THEN
+              ST_Multi(
+                ST_CollectionExtract(
+                  c.boundary,
+                  3
+                )
+              )
+
+            ELSE
+              ST_Multi(
+                ST_CollectionExtract(
+                  ST_MakeValid(
+                    ST_Difference(
+                      c.boundary,
+                      c.previous_union
+                    )
+                  ),
+                  3
+                )
+              )
+          END AS clipped_boundary
+
+        FROM cumulative c
+      )
+
       SELECT
         id,
         "userId",
@@ -1488,72 +1716,129 @@ WHERE t.boundary IS NOT NULL
         "capturedAt",
         "createdAt",
         "updatedAt",
+
         username,
         "fullName",
+
         "routeEncoded",
         "routeSegmentsEncoded",
+
         center,
+
         ST_AsGeoJSON(clipped_boundary)::json AS boundary
+
       FROM clipped
-      WHERE clipped_boundary IS NOT NULL
+
+      WHERE
+        clipped_boundary IS NOT NULL
+
         AND NOT ST_IsEmpty(clipped_boundary)
-        AND GeometryType(clipped_boundary) IN ('POLYGON', 'MULTIPOLYGON')
-      ORDER BY "updatedAt" DESC;
+
+        AND GeometryType(clipped_boundary)
+          IN ('POLYGON', 'MULTIPOLYGON')
+
+      ORDER BY
+        "updatedAt" DESC,
+        id DESC;
     `;
 
-    const seenUsers = [];
+    // =========================================================
+    // ASSIGN COLORS TO USERS
+    // =========================================================
 
-    for (const t of territoryRows) {
-      if (!seenUsers.includes(t.userId)) {
-        seenUsers.push(t.userId);
-      }
+    const seenUsers = new Set();
+
+    for (const territory of territoryRows) {
+      seenUsers.add(territory.userId);
     }
 
-    const userColorMap = Object.fromEntries(
-      seenUsers.map((userId, index) => [
-        userId,
-        TERRITORY_COLORS[Math.min(index, TERRITORY_COLORS.length - 1)],
-      ])
-    );
+    const userColorMap = {};
+
+    let colorIndex = 0;
+
+    for (const userId of seenUsers) {
+      userColorMap[userId] =
+        TERRITORY_COLORS[
+          Math.min(
+            colorIndex,
+            TERRITORY_COLORS.length - 1
+          )
+        ];
+
+      colorIndex++;
+    }
+
+    // =========================================================
+    // FORMAT RESPONSE
+    // =========================================================
 
     const territories = territoryRows.map((t) => ({
       id: t.id,
+
       userId: t.userId,
+
       activityId: t.activityId,
+
       name: t.name,
+
       owner: {
         username: t.username,
         fullName: t.fullName,
       },
+
       areaKm2: Number(t.areaKm2),
+
       capturedAt: t.capturedAt,
+
       createdAt: t.createdAt,
+
       updatedAt: t.updatedAt,
+
       geojson: t.boundary,
+
       center: t.center,
+
       routeEncoded: t.routeEncoded,
-      routeSegmentsEncoded: t.routeSegmentsEncoded ?? [],
+
+      routeSegmentsEncoded:
+        t.routeSegmentsEncoded ?? [],
+
       color:
         userColorMap[t.userId] ??
-        TERRITORY_COLORS[TERRITORY_COLORS.length - 1],
+        TERRITORY_COLORS[
+          TERRITORY_COLORS.length - 1
+        ],
     }));
+
+    // =========================================================
+    // RESPONSE
+    // =========================================================
 
     return res.status(200).json({
       success: true,
+
       count: territories.length,
+
       territories,
     });
   } catch (error) {
-    console.error('GET_ALL_TERRITORIES ERROR:', error);
+    console.error(
+      'GET_ALL_TERRITORIES ERROR:',
+      error
+    );
 
     return res.status(500).json({
       success: false,
+
       message: 'Failed to fetch territories',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+
+      error:
+        process.env.NODE_ENV === 'development'
+          ? error.message
+          : undefined,
     });
   }
 };
-
 
 
 // ─────────────────────────────────────────────
