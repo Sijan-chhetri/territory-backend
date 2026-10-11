@@ -1886,6 +1886,7 @@ export const updateTerritoryRoute = async (req, res) => {
         message: 'routeEncoded or routeSegmentsEncoded is required',
       });
     }
+    
 
     const lineGeoJsonSegments = [];
 
