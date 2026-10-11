@@ -1791,192 +1791,110 @@ const TERRITORY_COLORS = [
 //old one to use if anything is wrong
 //------------------------------------------------
 
+
+
+
+
+
+
 export const getAllTerritories = async (req, res) => {
+  const startTime = Date.now();
+
   try {
+    // =========================================================
+    // LIMIT
+    // =========================================================
+
+    // Example:
+    // GET /api/territories?limit=100
+    //
+    // Default = 100
+    // Maximum = 300
+
+    const requestedLimit = parseInt(req.query.limit, 10);
+
+    const limit =
+      Number.isInteger(requestedLimit) && requestedLimit > 0
+        ? Math.min(requestedLimit, 300)
+        : 100;
+
+    // =========================================================
+    // FETCH TERRITORIES
+    // =========================================================
+
     const territoryRows = await prisma.$queryRaw`
-      WITH base AS (
-        SELECT
-          t.id,
-          t."userId",
-          t."activityId",
-          t.name,
-          t."areaKm2",
-          t."capturedAt",
-          t."createdAt",
-          t."updatedAt",
-
-          -- Validate once here instead of repeatedly below.
-          ST_MakeValid(t.boundary) AS boundary,
-
-          t.center,
-
-          u.username,
-          u.full_name AS "fullName",
-
-          t."routeEncoded",
-          t."routeSegmentsEncoded"
-
-        FROM territories t
-
-        JOIN users u
-          ON u.id = t."userId"
-
-        LEFT JOIN activities a
-          ON a.id = t."activityId"
-
-        WHERE
-          t.boundary IS NOT NULL
-
-          AND NOT ST_IsEmpty(t.boundary)
-
-          AND (
-            a."include_in_clan" IS NULL
-            OR a."include_in_clan" = false
-          )
-      ),
-
-      ranked AS (
-        SELECT
-          b.*,
-
-          ROW_NUMBER() OVER (
-            ORDER BY
-              b."updatedAt" DESC,
-              b.id DESC
-          ) AS rn
-
-        FROM base b
-      ),
-
-      /*
-       * Build one cumulative union.
-       *
-       * For each territory, previous_union contains every territory
-       * newer than the current territory.
-       *
-       * This avoids the expensive correlated:
-       *
-       * SELECT ST_UnaryUnion(ST_Collect(...))
-       * FROM ranked newer
-       * WHERE newer.rn < r.rn
-       *
-       * being executed independently for every territory.
-       */
-      cumulative AS (
-        SELECT
-          r.*,
-
-          ST_Union(r.boundary) OVER (
-            ORDER BY
-              r."updatedAt" DESC,
-              r.id DESC
-
-            ROWS BETWEEN
-              UNBOUNDED PRECEDING
-              AND 1 PRECEDING
-          ) AS previous_union
-
-        FROM ranked r
-      ),
-
-      clipped AS (
-        SELECT
-          c.id,
-          c."userId",
-          c."activityId",
-          c.name,
-          c."areaKm2",
-          c."capturedAt",
-          c."createdAt",
-          c."updatedAt",
-
-          c.username,
-          c."fullName",
-
-          c."routeEncoded",
-          c."routeSegmentsEncoded",
-
-          ST_AsGeoJSON(c.center)::json AS center,
-
-          /*
-           * First territory has no newer territory,
-           * therefore return its original boundary.
-           */
-          CASE
-            WHEN c.previous_union IS NULL THEN
-              ST_Multi(
-                ST_CollectionExtract(
-                  c.boundary,
-                  3
-                )
-              )
-
-            /*
-             * Avoid ST_Difference entirely when there
-             * is no intersection.
-             */
-            WHEN NOT ST_Intersects(
-              c.boundary,
-              c.previous_union
-            ) THEN
-              ST_Multi(
-                ST_CollectionExtract(
-                  c.boundary,
-                  3
-                )
-              )
-
-            ELSE
-              ST_Multi(
-                ST_CollectionExtract(
-                  ST_MakeValid(
-                    ST_Difference(
-                      c.boundary,
-                      c.previous_union
-                    )
-                  ),
-                  3
-                )
-              )
-          END AS clipped_boundary
-
-        FROM cumulative c
-      )
-
       SELECT
-        id,
-        "userId",
-        "activityId",
-        name,
-        "areaKm2",
-        "capturedAt",
-        "createdAt",
-        "updatedAt",
+        t.id,
+        t."userId",
+        t."activityId",
+        t.name,
+        t."areaKm2",
+        t."capturedAt",
+        t."createdAt",
+        t."updatedAt",
 
-        username,
-        "fullName",
+        u.username,
+        u.full_name AS "fullName",
 
-        "routeEncoded",
-        "routeSegmentsEncoded",
+        t."routeEncoded",
+        t."routeSegmentsEncoded",
 
-        center,
+        -- ============================
+        -- CENTER
+        -- ============================
 
-        ST_AsGeoJSON(clipped_boundary)::json AS boundary
+        CASE
+          WHEN t.center IS NULL THEN NULL
+          ELSE ST_AsGeoJSON(t.center)::json
+        END AS center,
 
-      FROM clipped
+        -- ============================
+        -- BOUNDARY
+        -- ============================
+
+        ST_AsGeoJSON(
+          ST_SimplifyPreserveTopology(
+            CASE
+              WHEN ST_IsValid(t.boundary)
+                THEN t.boundary
+              ELSE ST_MakeValid(t.boundary)
+            END,
+
+            -- Simplification tolerance
+            0.00001
+          )
+        )::json AS boundary
+
+      FROM territories t
+
+      JOIN users u
+        ON u.id = t."userId"
+
+      LEFT JOIN activities a
+        ON a.id = t."activityId"
 
       WHERE
-        clipped_boundary IS NOT NULL
+        t.boundary IS NOT NULL
 
-        AND NOT ST_IsEmpty(clipped_boundary)
+        AND NOT ST_IsEmpty(t.boundary)
 
-        AND GeometryType(clipped_boundary)
-          IN ('POLYGON', 'MULTIPOLYGON')
+        AND (
+          a."include_in_clan" IS NULL
+          OR a."include_in_clan" = false
+        )
 
       ORDER BY
-        "updatedAt" DESC,
-        id DESC;
+        t."updatedAt" DESC,
+        t.id DESC
+
+      LIMIT ${limit};
     `;
+
+    console.log(
+      `Territory SQL finished in ${
+        (Date.now() - startTime) / 1000
+      } seconds`,
+    );
 
     // =========================================================
     // ASSIGN COLORS TO USERS
@@ -1997,7 +1915,7 @@ export const getAllTerritories = async (req, res) => {
         TERRITORY_COLORS[
           Math.min(
             colorIndex,
-            TERRITORY_COLORS.length - 1
+            TERRITORY_COLORS.length - 1,
           )
         ];
 
@@ -2050,17 +1968,32 @@ export const getAllTerritories = async (req, res) => {
     // RESPONSE
     // =========================================================
 
+    const totalTime =
+      (Date.now() - startTime) / 1000;
+
+    console.log(
+      `GET ALL TERRITORIES completed in ${totalTime} seconds`,
+    );
+
     return res.status(200).json({
       success: true,
 
       count: territories.length,
 
       territories,
+
+      processingTime: `${totalTime}s`,
     });
   } catch (error) {
     console.error(
       'GET_ALL_TERRITORIES ERROR:',
-      error
+      error,
+    );
+
+    console.error(
+      `Failed after ${
+        (Date.now() - startTime) / 1000
+      } seconds`,
     );
 
     return res.status(500).json({
@@ -2075,6 +2008,9 @@ export const getAllTerritories = async (req, res) => {
     });
   }
 };
+
+
+
 
 
 
