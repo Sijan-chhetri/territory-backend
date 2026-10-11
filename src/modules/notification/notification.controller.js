@@ -115,22 +115,121 @@ export const createNotification = async ({
  * ============================================================================
  */
 
+const USER_UUID_REGEX =
+  /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
+
 export const getMyNotifications = async (req, res) => {
   try {
+    const userId = req.user.id;
+
+    // =========================================================
+    // 1. FETCH NOTIFICATIONS
+    // =========================================================
+
     const notifications = await prisma.notification.findMany({
       where: {
-        userId: req.user.id,
+        userId,
       },
       orderBy: {
         createdAt: "desc",
       },
     });
 
+    if (notifications.length === 0) {
+      return res.status(200).json({
+        success: true,
+        count: 0,
+        notifications: [],
+      });
+    }
+
+    // =========================================================
+    // 2. EXTRACT UNIQUE USER IDS
+    // =========================================================
+
+    const uniqueUserIds = new Set();
+
+    for (const notification of notifications) {
+      if (!notification.message) continue;
+
+      const matches = notification.message.match(
+        USER_UUID_REGEX
+      );
+
+      if (!matches) continue;
+
+      for (const id of matches) {
+        uniqueUserIds.add(id.toLowerCase());
+      }
+    }
+
+    // =========================================================
+    // 3. FETCH USERNAMES IN ONE QUERY
+    // =========================================================
+
+    const usernameMap = new Map();
+
+    if (uniqueUserIds.size > 0) {
+      const users = await prisma.user.findMany({
+        where: {
+          id: {
+            in: [...uniqueUserIds],
+          },
+        },
+        select: {
+          id: true,
+          username: true,
+        },
+      });
+
+      for (const user of users) {
+        usernameMap.set(
+          user.id.toLowerCase(),
+          user.username
+        );
+      }
+    }
+
+    // =========================================================
+    // 4. REPLACE USER IDS WITH USERNAMES
+    // =========================================================
+
+    const formattedNotifications = notifications.map(
+      (notification) => {
+        const message = notification.message;
+
+        if (!message || uniqueUserIds.size === 0) {
+          return notification;
+        }
+
+        const formattedMessage = message.replace(
+          USER_UUID_REGEX,
+          (id) => {
+            const username = usernameMap.get(
+              id.toLowerCase()
+            );
+
+            return username ? `@${username}` : id;
+          }
+        );
+
+        return {
+          ...notification,
+          message: formattedMessage,
+        };
+      }
+    );
+
+    // =========================================================
+    // 5. RESPONSE
+    // =========================================================
+
     return res.status(200).json({
       success: true,
-      count: notifications.length,
-      notifications,
+      count: formattedNotifications.length,
+      notifications: formattedNotifications,
     });
+
   } catch (error) {
     console.error("GET_NOTIFICATIONS_ERROR:", error);
 
