@@ -2293,46 +2293,62 @@ const TERRITORY_COLORS = [
 
 
 
-
 export const getAllTerritories = async (req, res) => {
   const startTime = Date.now();
 
   try {
     // ============================================================
-    // STEP 1: LIMIT
+    // STEP 1: PAGINATION LIMIT
     // ============================================================
 
-    const requestedLimit = parseInt(req.query.limit, 10);
+    const requestedLimit = Number.parseInt(
+      req.query.limit,
+      10
+    );
 
     const limit =
-      Number.isInteger(requestedLimit) && requestedLimit > 0
+      Number.isInteger(requestedLimit) &&
+      requestedLimit > 0
         ? Math.min(requestedLimit, 300)
         : 100;
 
     // ============================================================
-    // STEP 2: FETCH VISIBLE TERRITORIES
+    // STEP 2: FETCH AND RESOLVE VISIBLE TERRITORIES
     // ============================================================
     //
-    // DURO DISPLAY RULES:
+    // DURO TERRITORY DISPLAY RULES
     //
-    // 1. Newest territory takes priority.
-    // 2. Older polygons must not cover newer polygons.
-    // 3. Older polygons keep their remaining area.
-    // 4. No 24-hour restriction.
-    // 5. Personal and club territories stay separate.
-    // 6. Exclude empty polygons.
-    // 7. Preserve polygon holes.
+    // 1. Newer territory takes priority over older territory.
+    //
+    // 2. If a newer territory overlaps an older territory,
+    //    remove that overlapping area from the older
+    //    territory's visible polygon.
+    //
+    // 3. If a territory is completely covered, hide it.
+    //
+    // 4. If partially covered, show only its remaining area.
+    //
+    // 5. No 24-hour restriction.
+    //
+    // 6. Same rules apply across different users.
+    //
+    // 7. Older territories belonging to the same user
+    //    also lose overlapping visible portions.
+    //
+    // 8. Only personal territories are returned.
+    //    Club territories remain separate.
+    //
+    // 9. Existing database boundaries are not modified.
+    //
+    // 10. Preserve Polygon and MultiPolygon holes.
     //
     // IMPORTANT:
-    // createdAt determines capture precedence.
-    // updatedAt is NOT ownership precedence because old
-    // territories can be modified during later captures.
-    //
-    // This query only changes the displayed geometry.
-    // It does not modify the database.
+    // capturedAt / createdAt determine precedence.
+    // updatedAt is NOT used because an old territory
+    // can be modified by a newer capture.
 
     const territoryRows = await prisma.$queryRaw`
-      WITH selected_territories AS (
+      WITH selected_territories AS MATERIALIZED (
         SELECT
           t.id,
           t."userId",
@@ -2361,7 +2377,9 @@ export const getAllTerritories = async (req, res) => {
         LEFT JOIN activities a
           ON a.id = t."activityId"
 
-        WHERE t.boundary IS NOT NULL
+        WHERE
+          t.boundary IS NOT NULL
+
           AND NOT ST_IsEmpty(t.boundary)
 
           AND COALESCE(
@@ -2376,15 +2394,49 @@ export const getAllTerritories = async (req, res) => {
         LIMIT ${limit}
       ),
 
-      // ==========================================================
-      // STEP 3: FIND NEWER OVERLAPPING POLYGONS
-      // ==========================================================
-      //
-      // Check ALL newer matching-mode territories,
-      // not just the selected limit.
-      //
-      // This matters when a newer territory is outside
-      // the returned page but still overlaps an old one.
+      -- ==========================================================
+      -- STEP 3: PREPARE POLYGON GEOMETRIES
+      -- ==========================================================
+      --
+      -- Fix invalid geometry and keep only polygonal components.
+      -- This supports both Polygon and MultiPolygon boundaries.
+      --
+      -- This does not update the stored geometry.
+
+      prepared_territories AS (
+        SELECT
+          t.*,
+
+          ST_Multi(
+            ST_CollectionExtract(
+              ST_MakeValid(t.boundary),
+              3
+            )
+          ) AS valid_boundary
+
+        FROM selected_territories t
+      ),
+
+      -- ==========================================================
+      -- STEP 4: FIND NEWER OVERLAPPING TERRITORIES
+      -- ==========================================================
+      --
+      -- For each selected territory:
+      --
+      -- Find ALL newer territories that overlap it.
+      --
+      -- These newer territories may belong to:
+      -- - The same user
+      -- - Different users
+      --
+      -- Only territories from the same capture mode
+      -- are considered.
+      --
+      -- Use the raw stored polygon of newer territories
+      -- when calculating overlap.
+      --
+      -- The newer territories are not restricted to the
+      -- selected result limit.
 
       clipped_territories AS (
         SELECT
@@ -2394,12 +2446,12 @@ export const getAllTerritories = async (req, res) => {
             ST_CollectionExtract(
               ST_MakeValid(
                 CASE
-                  WHEN newer.geom IS NULL
-                  THEN ST_MakeValid(t.boundary)
+                  WHEN newer.newer_union IS NULL
+                  THEN t.valid_boundary
 
                   ELSE ST_Difference(
-                    ST_MakeValid(t.boundary),
-                    newer.geom
+                    t.valid_boundary,
+                    newer.newer_union
                   )
                 END
               ),
@@ -2407,24 +2459,29 @@ export const getAllTerritories = async (req, res) => {
             )
           ) AS visible_boundary
 
-        FROM selected_territories t
+        FROM prepared_territories t
 
         LEFT JOIN LATERAL (
           SELECT
             ST_UnaryUnion(
               ST_Collect(
-                ST_MakeValid(n.boundary)
+                ST_CollectionExtract(
+                  ST_MakeValid(n.boundary),
+                  3
+                )
               )
-            ) AS geom
+            ) AS newer_union
 
           FROM territories n
 
           LEFT JOIN activities na
             ON na.id = n."activityId"
 
-          WHERE n.id <> t.id
+          WHERE
+            n.id <> t.id
 
             AND n.boundary IS NOT NULL
+
             AND NOT ST_IsEmpty(n.boundary)
 
             AND COALESCE(
@@ -2432,17 +2489,21 @@ export const getAllTerritories = async (req, res) => {
               false
             ) = t.in_clan
 
+            -- Newer territory has priority.
             AND (
               n."createdAt" > t."createdAt"
+
               OR (
                 n."createdAt" = t."createdAt"
+
                 AND n.id::text > t.id::text
               )
             )
 
-            -- Allow PostGIS spatial index filtering.
+            -- Bounding box check for spatial index.
             AND n.boundary && t.boundary
 
+            -- Exact geometry intersection check.
             AND ST_Intersects(
               n.boundary,
               t.boundary
@@ -2451,48 +2512,88 @@ export const getAllTerritories = async (req, res) => {
         ) newer ON TRUE
       ),
 
-      // ==========================================================
-      // STEP 4: REMOVE EMPTY VISIBLE POLYGONS
-      // ==========================================================
+      -- ==========================================================
+      -- STEP 5: REMOVE EMPTY TERRITORIES
+      -- ==========================================================
+      --
+      -- A fully captured territory will have no visible area.
+      --
+      -- Do not send empty polygons to Flutter.
 
       visible_territories AS (
-        SELECT *
-        FROM clipped_territories
+        SELECT
+          t.*
 
-        WHERE visible_boundary IS NOT NULL
-          AND NOT ST_IsEmpty(visible_boundary)
+        FROM clipped_territories t
+
+        WHERE
+          t.visible_boundary IS NOT NULL
+
+          AND NOT ST_IsEmpty(
+            t.visible_boundary
+          )
+      ),
+
+      -- ==========================================================
+      -- STEP 6: CALCULATE FINAL VISIBLE AREAS
+      -- ==========================================================
+      --
+      -- Calculate area based on the visible polygon,
+      -- not the original stored territory area.
+      --
+      -- This ensures the API reflects only visible land.
+
+      measured_territories AS (
+        SELECT
+          t.*,
+
+          ST_Area(
+            t.visible_boundary::geography
+          ) AS visible_area_m2
+
+        FROM visible_territories t
       )
 
-      // ==========================================================
-      // STEP 5: FORMAT FINAL GEOMETRY
-      // ==========================================================
-      //
-      // Do not independently simplify territory boundaries
-      // here because simplification may reintroduce tiny
-      // overlaps or gaps between adjacent polygons.
-      //
-      // Return Polygon/MultiPolygon with interior holes.
-      //
-      // Calculate area and center from the visible shape.
+      -- ==========================================================
+      -- STEP 7: RETURN FINAL TERRITORY GEOMETRIES
+      -- ==========================================================
+      --
+      -- IMPORTANT:
+      --
+      -- Do not simplify each polygon independently.
+      --
+      -- Simplification may reintroduce small overlaps
+      -- or gaps between neighboring boundaries.
+      --
+      -- The returned GeoJSON may contain interior rings
+      -- representing holes.
+      --
+      -- Flutter must render those holes correctly.
 
       SELECT
         t.id,
+
         t."userId",
+
         t."activityId",
+
         t.name,
 
-        ST_Area(
-          t.visible_boundary::geography
-        ) / 1000000.0 AS "areaKm2",
+        t.visible_area_m2 / 1000000.0
+          AS "areaKm2",
 
         t."capturedAt",
+
         t."createdAt",
+
         t."updatedAt",
 
         t.username,
+
         t."fullName",
 
         t."routeEncoded",
+
         t."routeSegmentsEncoded",
 
         ST_AsGeoJSON(
@@ -2505,31 +2606,35 @@ export const getAllTerritories = async (req, res) => {
           t.visible_boundary
         )::json AS boundary
 
-      FROM visible_territories t
+      FROM measured_territories t
 
-      WHERE ST_Area(
-        t.visible_boundary::geography
-      ) > 0
+      WHERE t.visible_area_m2 > 0
 
       ORDER BY
         t."createdAt" DESC,
         t.id::text DESC
     `;
 
+    const sqlTime =
+      (Date.now() - startTime) / 1000;
+
     console.log(
-      `Territory SQL finished in ${
-        (Date.now() - startTime) / 1000
-      } seconds`
+      `Territory SQL finished in ${sqlTime}s`
     );
 
     // ============================================================
-    // STEP 6: ASSIGN COLORS TO USERS
+    // STEP 8: ASSIGN USER COLORS
     // ============================================================
+    //
+    // Retain existing DURO color behavior.
+    //
+    // Each user receives the same color for all
+    // returned territories belonging to that user.
 
     const seenUsers = new Set();
 
     for (const territory of territoryRows) {
-      seenUsers.add(territory.userId);
+      seenUsers.add(String(territory.userId));
     }
 
     const userColorMap = {};
@@ -2549,56 +2654,88 @@ export const getAllTerritories = async (req, res) => {
     }
 
     // ============================================================
-    // STEP 7: FORMAT RESPONSE
+    // STEP 9: FORMAT TERRITORIES
+    // ============================================================
+    //
+    // Keep response structure compatible with the
+    // current DURO Flutter application.
+
+    const territories = territoryRows.map((t) => {
+      const ownerId = String(t.userId);
+
+      return {
+        id: t.id,
+
+        userId: t.userId,
+
+        activityId: t.activityId,
+
+        name: t.name,
+
+        owner: {
+          username: t.username,
+          fullName: t.fullName,
+        },
+
+        // Visible territory area after clipping.
+        areaKm2: Number(t.areaKm2 || 0),
+
+        capturedAt: t.capturedAt,
+
+        createdAt: t.createdAt,
+
+        updatedAt: t.updatedAt,
+
+        // Clipped visible Polygon/MultiPolygon.
+        geojson: t.boundary,
+
+        // Center of visible owned area.
+        center: t.center,
+
+        routeEncoded: t.routeEncoded,
+
+        routeSegmentsEncoded:
+          t.routeSegmentsEncoded ?? [],
+
+        color:
+          userColorMap[ownerId] ??
+          TERRITORY_COLORS[
+            TERRITORY_COLORS.length - 1
+          ],
+      };
+    });
+
+    // ============================================================
+    // STEP 10: DEBUG LOGGING
     // ============================================================
 
-    const territories = territoryRows.map((t) => ({
-      id: t.id,
+    console.log(
+      "GET_ALL_TERRITORIES:",
+      {
+        count: territories.length,
 
-      userId: t.userId,
+        polygons: territories.filter(
+          (t) => t.geojson?.type === "Polygon"
+        ).length,
 
-      activityId: t.activityId,
+        multiPolygons: territories.filter(
+          (t) => t.geojson?.type === "MultiPolygon"
+        ).length,
 
-      name: t.name,
-
-      owner: {
-        username: t.username,
-        fullName: t.fullName,
-      },
-
-      areaKm2: Number(t.areaKm2),
-
-      capturedAt: t.capturedAt,
-
-      createdAt: t.createdAt,
-
-      updatedAt: t.updatedAt,
-
-      geojson: t.boundary,
-
-      center: t.center,
-
-      routeEncoded: t.routeEncoded,
-
-      routeSegmentsEncoded:
-        t.routeSegmentsEncoded ?? [],
-
-      color:
-        userColorMap[t.userId] ??
-        TERRITORY_COLORS[
-          TERRITORY_COLORS.length - 1
-        ],
-    }));
+        durationSeconds:
+          (Date.now() - startTime) / 1000,
+      }
+    );
 
     // ============================================================
-    // STEP 8: RESPONSE
+    // STEP 11: SEND RESPONSE
     // ============================================================
 
     const totalTime =
       (Date.now() - startTime) / 1000;
 
     console.log(
-      `GET ALL TERRITORIES completed in ${totalTime} seconds`
+      `GET ALL TERRITORIES completed in ${totalTime}s`
     );
 
     return res.status(200).json({
@@ -2612,6 +2749,10 @@ export const getAllTerritories = async (req, res) => {
     });
 
   } catch (error) {
+    // ============================================================
+    // ERROR HANDLING
+    // ============================================================
+
     console.error(
       "GET_ALL_TERRITORIES ERROR:",
       error
