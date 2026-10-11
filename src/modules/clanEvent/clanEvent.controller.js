@@ -1,1652 +1,3 @@
-// // modules/clan-event/clan-event.controller.js
-
-// import prisma from "../../config/prisma.js";
-
-// import { sendClanEventInvitations } from "./clanEventEmail.service.js";
-
-// import { sendFCMToUser } from "../../config/fcm.service.js";
-
-// const getUserClanMembership = async (userId) => {
-//   return prisma.clanMember.findFirst({
-//     where: {
-//       userId,
-//     },
-//     select: {
-//       id: true,
-//       clanId: true,
-//       role: true,
-//       joinedAt: true,
-
-//       clan: {
-//         select: {
-//           id: true,
-//           name: true,
-//           slug: true,
-//           logo: true,
-//           banner: true,
-//           imageUrl: true,
-//           captainId: true,
-//         },
-//       },
-//     },
-//   });
-// };
-
-// /**
-//  * Check whether the user is allowed to manage a clan.
-//  * Supports both captainId and LEADER/CAPTAIN membership roles.
-//  */
-// const checkClanLeaderAccess = async (userId) => {
-//   const membership = await getUserClanMembership(userId);
-
-//   if (!membership) {
-//     return {
-//       allowed: false,
-//       membership: null,
-//       clan: null,
-//       status: 404,
-//       message: "You are not a member of any clan",
-//     };
-//   }
-
-//   const isCaptain = membership.clan.captainId === userId;
-
-//   const isLeader =
-//     membership.role === "LEADER" || membership.role === "CAPTAIN";
-
-//   return {
-//     allowed: isCaptain || isLeader,
-//     membership,
-//     clan: membership.clan,
-//     status: isCaptain || isLeader ? 200 : 403,
-//     message:
-//       isCaptain || isLeader
-//         ? null
-//         : "Only the clan leader can perform this action",
-//   };
-// };
-
-// /**
-//  * |--------------------------------------------------------------------------
-//  * | RESOLVE STRICT CLUB EVENT RUN LEADER
-//  * |--------------------------------------------------------------------------
-//  *
-//  * This is different from normal event administration.
-//  *
-//  * CAPTAIN:
-//  * - can manage ordinary event details according to your existing system
-//  * - can participate in the event
-//  * - CANNOT stop the entire event
-//  *
-//  * LEADER:
-//  * - controls the official event cutoff
-//  */
-
-// const resolveClanRunLeaderId = async (clanId) => {
-//   /**
-//    * First prefer the actual LEADER membership.
-//    */
-//   const leaderMembership =
-//     await prisma.clanMember.findFirst({
-//       where: {
-//         clanId,
-//         role: "LEADER",
-//       },
-
-//       select: {
-//         userId: true,
-//       },
-//     });
-
-//   if (leaderMembership?.userId) {
-//     return leaderMembership.userId;
-//   }
-
-//   /**
-//    * Fallback for older clan records.
-//    */
-//   const clan =
-//     await prisma.clan.findUnique({
-//       where: {
-//         id: clanId,
-//       },
-
-//       select: {
-//         captainId: true,
-//       },
-//     });
-
-//   return clan?.captainId ?? null;
-// };
-
-// /**
-//  * |--------------------------------------------------------------------------
-//  * | CHECK STRICT RUN LEADER
-//  * |--------------------------------------------------------------------------
-//  */
-
-// const isStrictClanRunLeader = ({
-//   membership,
-//   userId,
-//   runLeaderId,
-// }) => {
-//   if (!membership) {
-//     return false;
-//   }
-
-//   /**
-//    * Once a leader has been snapshotted onto the event,
-//    * that exact user remains the run leader for that event.
-//    */
-//   if (runLeaderId) {
-//     return runLeaderId === userId;
-//   }
-
-//   return (
-//     membership.role === "LEADER" ||
-//     membership.clan?.captainId === userId
-//   );
-// };
-
-// /**
-//  * |--------------------------------------------------------------------------
-//  * | GET CLUB EVENT RUN CONTEXT
-//  * |--------------------------------------------------------------------------
-//  */
-
-// const getEventRunContext = async ({
-//   eventId,
-//   userId,
-// }) => {
-//   const event =
-//     await prisma.clanEvent.findUnique({
-//       where: {
-//         id: eventId,
-//       },
-
-//       include: {
-//         clan: {
-//           select: {
-//             id: true,
-//             name: true,
-//             captainId: true,
-//           },
-//         },
-
-//         runLeader: {
-//           select: {
-//             id: true,
-//             username: true,
-//             fullName: true,
-//           },
-//         },
-//       },
-//     });
-
-//   if (!event) {
-//     return {
-//       event: null,
-//       membership: null,
-//       participant: null,
-//     };
-//   }
-
-//   const [membership, participant] =
-//     await Promise.all([
-//       prisma.clanMember.findUnique({
-//         where: {
-//           clanId_userId: {
-//             clanId: event.clanId,
-//             userId,
-//           },
-//         },
-
-//         select: {
-//           id: true,
-//           clanId: true,
-//           userId: true,
-//           role: true,
-//           joinedAt: true,
-
-//           clan: {
-//             select: {
-//               id: true,
-//               captainId: true,
-//             },
-//           },
-//         },
-//       }),
-
-//       prisma.clanEventParticipant.findUnique({
-//         where: {
-//           eventId_userId: {
-//             eventId,
-//             userId,
-//           },
-//         },
-//       }),
-//     ]);
-
-//   return {
-//     event,
-//     membership,
-//     participant,
-//   };
-// };
-
-// /**
-//  * |--------------------------------------------------------------------------
-//  * | PARSE EVENT STATS
-//  * |--------------------------------------------------------------------------
-//  */
-
-// const parseEventStats = (
-//   body,
-//   { partial = false } = {},
-// ) => {
-//   const floatFields = [
-//     "distanceKm",
-//     "calories",
-//     "elevationGain",
-//     "avgPace",
-//     "avgSpeed",
-//     "topSpeed",
-//   ];
-
-//   const integerFields = [
-//     "elapsedTime",
-//     "movingTime",
-//   ];
-
-//   const data = {};
-
-//   for (const field of floatFields) {
-//     const raw = body?.[field];
-
-//     if (
-//       raw === undefined ||
-//       raw === null ||
-//       raw === ""
-//     ) {
-//       if (
-//         !partial &&
-//         [
-//           "distanceKm",
-//           "calories",
-//           "elevationGain",
-//         ].includes(field)
-//       ) {
-//         data[field] = 0;
-//       }
-
-//       continue;
-//     }
-
-//     const value = Number(raw);
-
-//     if (
-//       !Number.isFinite(value) ||
-//       value < 0
-//     ) {
-//       const error =
-//         new Error(
-//           `${field} must be a non-negative number`,
-//         );
-
-//       error.code =
-//         "INVALID_EVENT_STATS";
-
-//       throw error;
-//     }
-
-//     data[field] = value;
-//   }
-
-//   for (const field of integerFields) {
-//     const raw = body?.[field];
-
-//     if (
-//       raw === undefined ||
-//       raw === null ||
-//       raw === ""
-//     ) {
-//       if (!partial) {
-//         data[field] = 0;
-//       }
-
-//       continue;
-//     }
-
-//     const value = Number(raw);
-
-//     if (
-//       !Number.isFinite(value) ||
-//       value < 0
-//     ) {
-//       const error =
-//         new Error(
-//           `${field} must be a non-negative number`,
-//         );
-
-//       error.code =
-//         "INVALID_EVENT_STATS";
-
-//       throw error;
-//     }
-
-//     data[field] =
-//       Math.round(value);
-//   }
-
-//   return data;
-// };
-
-// /**
-//  * |--------------------------------------------------------------------------
-//  * | BUILD EVENT RESULTS / RANKING
-//  * |--------------------------------------------------------------------------
-//  */
-
-// const buildEventResultsSnapshot =
-//   async (eventId) => {
-//     const participants =
-//       await prisma.clanEventParticipant.findMany({
-//         where: {
-//           eventId,
-
-//           startedAt: {
-//             not: null,
-//           },
-//         },
-
-//         include: {
-//           user: {
-//             select: {
-//               id: true,
-//               username: true,
-//               fullName: true,
-//             },
-//           },
-//         },
-//       });
-
-//     /**
-//      * Ranking:
-//      *
-//      * 1. Greater distance
-//      * 2. Faster avg pace
-//      * 3. Lower moving time
-//      * 4. Earlier start as final deterministic tie-break
-//      */
-
-//     const ranked =
-//       [...participants].sort(
-//         (a, b) => {
-//           const distanceDifference =
-//             Number(
-//               b.distanceKm ?? 0,
-//             ) -
-//             Number(
-//               a.distanceKm ?? 0,
-//             );
-
-//           if (
-//             Math.abs(
-//               distanceDifference,
-//             ) > 1e-9
-//           ) {
-//             return distanceDifference;
-//           }
-
-//           const aPace =
-//             Number(a.avgPace);
-
-//           const bPace =
-//             Number(b.avgPace);
-
-//           const safeAPace =
-//             Number.isFinite(aPace) &&
-//             aPace > 0
-//               ? aPace
-//               : Number.POSITIVE_INFINITY;
-
-//           const safeBPace =
-//             Number.isFinite(bPace) &&
-//             bPace > 0
-//               ? bPace
-//               : Number.POSITIVE_INFINITY;
-
-//           if (
-//             safeAPace !==
-//             safeBPace
-//           ) {
-//             return (
-//               safeAPace -
-//               safeBPace
-//             );
-//           }
-
-//           const movingDifference =
-//             Number(
-//               a.movingTime ?? 0,
-//             ) -
-//             Number(
-//               b.movingTime ?? 0,
-//             );
-
-//           if (
-//             movingDifference !== 0
-//           ) {
-//             return movingDifference;
-//           }
-
-//           return (
-//             new Date(
-//               a.startedAt,
-//             ).getTime() -
-//             new Date(
-//               b.startedAt,
-//             ).getTime()
-//           );
-//         },
-//       );
-
-//     const results =
-//       ranked.map(
-//         (
-//           participant,
-//           index,
-//         ) => ({
-//           rank: index + 1,
-
-//           participantId:
-//             participant.id,
-
-//           userId:
-//             participant.userId,
-
-//           user:
-//             participant.user,
-
-//           role:
-//             participant.roleSnapshot,
-
-//           status:
-//             participant.status,
-
-//           startedAt:
-//             participant.startedAt,
-
-//           stoppedAt:
-//             participant.stoppedAt,
-
-//           eventCutoffAt:
-//             participant.eventCutoffAt,
-
-//           finalizedAt:
-//             participant.finalizedAt,
-
-//           distanceKm:
-//             Number(
-//               participant.distanceKm ??
-//                 0,
-//             ),
-
-//           elapsedTime:
-//             Number(
-//               participant.elapsedTime ??
-//                 0,
-//             ),
-
-//           movingTime:
-//             Number(
-//               participant.movingTime ??
-//                 0,
-//             ),
-
-//           calories:
-//             Number(
-//               participant.calories ??
-//                 0,
-//             ),
-
-//           elevationGain:
-//             Number(
-//               participant.elevationGain ??
-//                 0,
-//             ),
-
-//           avgPace:
-//             participant.avgPace,
-
-//           avgSpeed:
-//             participant.avgSpeed,
-
-//           topSpeed:
-//             participant.topSpeed,
-
-//           isFinalized:
-//             participant.status ===
-//             "FINALIZED",
-//         }),
-//       );
-
-//     /**
-//      * Combined event totals.
-//      */
-
-//     const totals =
-//       results.reduce(
-//         (acc, item) => {
-//           acc.distanceKm +=
-//             item.distanceKm;
-
-//           acc.calories +=
-//             item.calories;
-
-//           acc.movingTimeSec +=
-//             item.movingTime;
-
-//           acc.elevationGain +=
-//             item.elevationGain;
-
-//           return acc;
-//         },
-
-//         {
-//           distanceKm: 0,
-//           calories: 0,
-//           movingTimeSec: 0,
-//           elevationGain: 0,
-//         },
-//       );
-
-//     /**
-//      * Do not average user paces.
-//      *
-//      * Combined pace:
-//      *
-//      * total moving minutes
-//      * --------------------
-//      * total distance
-//      */
-
-//     const avgPace =
-//       totals.distanceKm > 0
-//         ? (
-//             totals.movingTimeSec /
-//             60
-//           ) /
-//           totals.distanceKm
-//         : 0;
-
-//     return {
-//       results,
-
-//       totals: {
-//         ...totals,
-//         avgPace,
-//       },
-
-//       startedParticipants:
-//         results.length,
-
-//       finalizedParticipants:
-//         results.filter(
-//           (item) =>
-//             item.isFinalized,
-//         ).length,
-
-//       pendingFinalizations:
-//         results.filter(
-//           (item) =>
-//             !item.isFinalized,
-//         ).length,
-//     };
-//   };
-
-// /**
-//  * |--------------------------------------------------------------------------
-//  * | SAVE RANKS + EVENT TOTALS
-//  * |--------------------------------------------------------------------------
-//  */
-
-// const persistEventResultsSnapshot =
-//   async (eventId) => {
-//     const snapshot =
-//       await buildEventResultsSnapshot(
-//         eventId,
-//       );
-
-//     const operations =
-//       snapshot.results.map(
-//         (item) =>
-//           prisma.clanEventParticipant.update({
-//             where: {
-//               id: item.participantId,
-//             },
-
-//             data: {
-//               rank: item.rank,
-//             },
-//           }),
-//       );
-
-//     operations.push(
-//       prisma.clanEvent.update({
-//         where: {
-//           id: eventId,
-//         },
-
-//         data: {
-//           totalDistanceKm:
-//             snapshot.totals.distanceKm,
-
-//           totalCalories:
-//             snapshot.totals.calories,
-
-//           totalMovingTimeSec:
-//             snapshot.totals
-//               .movingTimeSec,
-
-//           totalElevationGain:
-//             snapshot.totals
-//               .elevationGain,
-//         },
-//       }),
-//     );
-
-//     if (operations.length > 0) {
-//       await prisma.$transaction(
-//         operations,
-//       );
-//     }
-
-//     return snapshot;
-//   };
-
-// /**
-//  * |--------------------------------------------------------------------------
-//  * | CREATE EVENT FOR CURRENT USER'S CLAN
-//  * |--------------------------------------------------------------------------
-//  * | POST /api/clan-events
-//  * |--------------------------------------------------------------------------
-//  */
-// export const createClanEvent = async (req, res) => {
-//   try {
-//     const userId = req.user.id;
-
-//     const { title, description, location, startsAt, endsAt, maxParticipants } =
-//       req.body;
-
-//     /**
-//      * |--------------------------------------------------------------------------
-//      * | VALIDATION
-//      * |--------------------------------------------------------------------------
-//      */
-
-//     if (!title?.trim()) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "Event title is required",
-//       });
-//     }
-
-//     if (!startsAt || !endsAt) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "Event start time and end time are required",
-//       });
-//     }
-
-//     const startDate = new Date(startsAt);
-//     const endDate = new Date(endsAt);
-
-//     if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "Invalid event date",
-//       });
-//     }
-
-//     if (endDate <= startDate) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "Event end time must be after the start time",
-//       });
-//     }
-
-//     if (startDate <= new Date()) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "Event start time must be in the future",
-//       });
-//     }
-
-//     let parsedMaxParticipants = null;
-
-//     if (
-//       maxParticipants !== undefined &&
-//       maxParticipants !== null &&
-//       maxParticipants !== ""
-//     ) {
-//       parsedMaxParticipants = Number(maxParticipants);
-
-//       if (
-//         !Number.isInteger(parsedMaxParticipants) ||
-//         parsedMaxParticipants < 1
-//       ) {
-//         return res.status(400).json({
-//           success: false,
-//           message: "Maximum participants must be at least 1",
-//         });
-//       }
-//     }
-
-//     /**
-//      * |--------------------------------------------------------------------------
-//      * | CHECK CLAN LEADER ACCESS
-//      * |--------------------------------------------------------------------------
-//      */
-
-//     const access = await checkClanLeaderAccess(userId);
-
-//     if (!access.allowed) {
-//       return res.status(access.status).json({
-//         success: false,
-//         message: access.message,
-//       });
-//     }
-
-//     const clanId = access.membership.clanId;
-
-//     /**
-//      * |--------------------------------------------------------------------------
-//      * | CREATE EVENT
-//      * |--------------------------------------------------------------------------
-//      */
-
-//     const event = await prisma.clanEvent.create({
-//       data: {
-//         clanId,
-//         createdById: userId,
-//         title: title.trim(),
-//         description: description?.trim() || null,
-//         location: location?.trim() || null,
-//         startsAt: startDate,
-//         endsAt: endDate,
-//         maxParticipants: parsedMaxParticipants,
-//       },
-
-//       include: {
-//         clan: {
-//           select: {
-//             id: true,
-//             name: true,
-//             slug: true,
-//             logo: true,
-//             banner: true,
-//             imageUrl: true,
-//           },
-//         },
-
-//         createdBy: {
-//           select: {
-//             id: true,
-//             username: true,
-//             fullName: true,
-//             email: true,
-//           },
-//         },
-
-//         _count: {
-//           select: {
-//             participants: true,
-//           },
-//         },
-//       },
-//     });
-
-//     /**
-//      * Automatically add the real clan leader as an event participant.
-//      *
-//      * This means the leader doesn't need to press Join Event.
-//      */
-
-//     const runLeaderId = await resolveClanRunLeaderId(clanId);
-
-//     if (runLeaderId) {
-//       await prisma.clanEventParticipant.upsert({
-//         where: {
-//           eventId_userId: {
-//             eventId: event.id,
-
-//             userId: runLeaderId,
-//           },
-//         },
-
-//         create: {
-//           eventId: event.id,
-
-//           userId: runLeaderId,
-//         },
-
-//         update: {},
-//       });
-//     }
-
-//     /**
-//      * |--------------------------------------------------------------------------
-//      * | FETCH ALL CLAN MEMBERS
-//      * |--------------------------------------------------------------------------
-//      */
-
-//     const clanMembers = await prisma.clanMember.findMany({
-//       where: {
-//         clanId,
-//       },
-
-//       select: {
-//         id: true,
-//         userId: true,
-//         role: true,
-
-//         user: {
-//           select: {
-//             id: true,
-//             email: true,
-//             username: true,
-//             fullName: true,
-//           },
-//         },
-//       },
-//     });
-
-//     /**
-//      * |--------------------------------------------------------------------------
-//      * | SEND EMAIL INVITATIONS
-//      * |--------------------------------------------------------------------------
-//      *
-//      * Email failure should not undo event creation.
-//      */
-
-//     let emailResult = {
-//       attempted: 0,
-//       sent: 0,
-//       failed: 0,
-//       successful: [],
-//       failures: [],
-//     };
-
-//     try {
-//       emailResult = await sendClanEventInvitations({
-//         event,
-//         clan: event.clan,
-//         creator: event.createdBy,
-//         members: clanMembers,
-//       });
-//     } catch (emailError) {
-//       console.error("CLAN_EVENT_INVITATION_EMAIL_ERROR:", emailError);
-//     }
-
-//     /**
-//      * |--------------------------------------------------------------------------
-//      * | SEND PUSH NOTIFICATIONS TO CLAN MEMBERS ONLY
-//      * |--------------------------------------------------------------------------
-//      *
-//      * Only members belonging to this clan are notified.
-//      * The event creator is excluded.
-//      * Notification failure does not undo event creation.
-//      */
-
-//     /**
-//      * |--------------------------------------------------------------------------
-//      * | SEND PUSH NOTIFICATIONS TO CLAN MEMBERS ONLY
-//      * |--------------------------------------------------------------------------
-//      */
-
-//     const membersToNotify = clanMembers.filter(
-//       (member) => member.userId !== userId,
-//     );
-
-//     let notificationResult = {
-//       attempted: membersToNotify.length,
-//       sent: 0,
-//       failed: 0,
-//     };
-
-//     try {
-//       const pushResults = await Promise.all(
-//         membersToNotify.map(async (member) => {
-//           const result = await sendFCMToUser({
-//             userId: member.userId,
-
-//             title: `New Event in ${event.clan.name}`,
-
-//             message: event.location
-//               ? `${event.title} • ${event.location}`
-//               : event.title,
-
-//             data: {
-//               type: "CLAN_EVENT_CREATED",
-//               eventId: event.id,
-//               clanId: event.clan.id,
-//               title: event.title,
-//             },
-//           });
-
-//           return {
-//             userId: member.userId,
-//             success: Boolean(result),
-//           };
-//         }),
-//       );
-
-//       for (const result of pushResults) {
-//         if (result.success) {
-//           notificationResult.sent++;
-//         } else {
-//           notificationResult.failed++;
-//         }
-//       }
-
-//       console.log(
-//         `Clan event notifications: ${notificationResult.sent} sent, ${notificationResult.failed} failed`,
-//       );
-//     } catch (notificationError) {
-//       console.error("CLAN_EVENT_NOTIFICATION_ERROR:", notificationError);
-//     }
-
-//     /**
-//      * |--------------------------------------------------------------------------
-//      * | RESPONSE
-//      * |--------------------------------------------------------------------------
-//      */
-
-//     return res.status(201).json({
-//       success: true,
-
-//       message: "Clan event created successfully",
-
-//       invitationMessage:
-//         emailResult.sent > 0
-//           ? `Invitations sent to ${emailResult.sent} clan members`
-//           : "Event created successfully, but no email invitations were sent",
-
-//       notificationMessage:
-//         notificationResult.sent > 0
-//           ? `Notifications sent to ${notificationResult.sent} clan members`
-//           : "No push notifications were sent",
-
-//       data: {
-//         ...event,
-
-//         participantsCount: event._count?.participants ?? 0,
-//       },
-
-//       emailInvitations: {
-//         totalClanMembers: clanMembers.length,
-//         attempted: emailResult.attempted,
-//         sent: emailResult.sent,
-//         failed: emailResult.failed,
-//       },
-
-//       pushNotifications: {
-//         eligibleMembers: membersToNotify.length,
-//         attempted: notificationResult.attempted,
-//         sent: notificationResult.sent,
-//         failed: notificationResult.failed,
-//       },
-//     });
-//   } catch (error) {
-//     console.error("CREATE_CLAN_EVENT_ERROR:", error);
-
-//     return res.status(500).json({
-//       success: false,
-//       message: "Failed to create clan event",
-
-//       error: process.env.NODE_ENV === "development" ? error.message : undefined,
-//     });
-//   }
-// };
-
-// /**
-//  * |--------------------------------------------------------------------------
-//  * | JOIN CLAN EVENT
-//  * |--------------------------------------------------------------------------
-//  * | POST /api/clan-events/:eventId/join
-//  * |--------------------------------------------------------------------------
-//  */
-// export const joinClanEvent = async (req, res) => {
-//   try {
-//     const userId = req.user.id;
-//     const { eventId } = req.params;
-
-//     const event = await prisma.clanEvent.findUnique({
-//       where: {
-//         id: eventId,
-//       },
-//       include: {
-//         _count: {
-//           select: {
-//             participants: true,
-//           },
-//         },
-//       },
-//     });
-
-//     if (!event) {
-//       return res.status(404).json({
-//         success: false,
-//         message: "Event not found",
-//       });
-//     }
-
-//     if (event.status === "CANCELLED") {
-//       return res.status(400).json({
-//         success: false,
-//         message: "This event has been cancelled",
-//       });
-//     }
-
-//     if (event.status === "COMPLETED") {
-//       return res.status(400).json({
-//         success: false,
-//         message: "This event has already been completed",
-//       });
-//     }
-
-//     if (new Date() >= event.endsAt) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "This event has already ended",
-//       });
-//     }
-
-//     // Only a member of this specific clan can join
-//     const membership = await prisma.clanMember.findUnique({
-//       where: {
-//         clanId_userId: {
-//           clanId: event.clanId,
-//           userId,
-//         },
-//       },
-//     });
-
-//     if (!membership) {
-//       return res.status(403).json({
-//         success: false,
-//         message: "Only clan members can participate in this event",
-//       });
-//     }
-
-//     const existingParticipant = await prisma.clanEventParticipant.findUnique({
-//       where: {
-//         eventId_userId: {
-//           eventId,
-//           userId,
-//         },
-//       },
-//     });
-
-//     if (existingParticipant) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "You have already joined this event",
-//       });
-//     }
-
-//     if (
-//       event.maxParticipants !== null &&
-//       event._count.participants >= event.maxParticipants
-//     ) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "This event is full",
-//       });
-//     }
-
-//     const participant = await prisma.clanEventParticipant.create({
-//       data: {
-//         eventId,
-//         userId,
-//       },
-//       include: {
-//         user: {
-//           select: {
-//             id: true,
-//             username: true,
-//             fullName: true,
-//           },
-//         },
-//       },
-//     });
-
-//     return res.status(201).json({
-//       success: true,
-//       message: "Event joined successfully",
-//       data: participant,
-//     });
-//   } catch (error) {
-//     console.error("JOIN_CLAN_EVENT_ERROR:", error);
-
-//     return res.status(500).json({
-//       success: false,
-//       message: "Failed to join clan event",
-//       error: process.env.NODE_ENV === "development" ? error.message : undefined,
-//     });
-//   }
-// };
-
-// /**
-//  * |--------------------------------------------------------------------------
-//  * | LEAVE CLAN EVENT
-//  * |--------------------------------------------------------------------------
-//  * | DELETE /api/clan-events/:eventId/leave
-//  * |--------------------------------------------------------------------------
-//  */
-// export const leaveClanEvent = async (req, res) => {
-//   try {
-//     const userId = req.user.id;
-//     const { eventId } = req.params;
-
-//     const participant = await prisma.clanEventParticipant.findUnique({
-//       where: {
-//         eventId_userId: {
-//           eventId,
-//           userId,
-//         },
-//       },
-//     });
-
-//     if (!participant) {
-//       return res.status(404).json({
-//         success: false,
-//         message: "You are not participating in this event",
-//       });
-//     }
-
-//     const event = await prisma.clanEvent.findUnique({
-//       where: {
-//         id: eventId,
-//       },
-//       select: {
-//         startsAt: true,
-//         status: true,
-//       },
-//     });
-
-//     if (!event) {
-//       return res.status(404).json({
-//         success: false,
-//         message: "Event not found",
-//       });
-//     }
-
-//     /**
-//      * Leader is auto-enrolled and should not leave the event.
-//      */
-
-//     if (event.runLeaderId === userId) {
-//       return res.status(400).json({
-//         success: false,
-
-//         message: "The Club Event leader cannot leave this event",
-//       });
-//     }
-
-//     if (
-//         event.status ===
-//           "ACTIVE" ||
-//         event.runStartedAt
-//       ) {
-//         return res
-//           .status(400)
-//           .json({
-//             success: false,
-
-//             message:
-//               "You cannot leave after the Club Event run has started",
-//           });
-//       }
-
-//     await prisma.clanEventParticipant.delete({
-//       where: {
-//         eventId_userId: {
-//           eventId,
-//           userId,
-//         },
-//       },
-//     });
-
-//     return res.status(200).json({
-//       success: true,
-//       message: "You left the event successfully",
-//     });
-//   } catch (error) {
-//     console.error("LEAVE_CLAN_EVENT_ERROR:", error);
-
-//     return res.status(500).json({
-//       success: false,
-//       message: "Failed to leave clan event",
-//       error: process.env.NODE_ENV === "development" ? error.message : undefined,
-//     });
-//   }
-// };
-
-// /**
-//  * |--------------------------------------------------------------------------
-//  * | GET CURRENT USER'S CLAN EVENTS
-//  * |--------------------------------------------------------------------------
-//  * | GET /api/clan-events
-//  * |--------------------------------------------------------------------------
-//  */
-// export const getMyClanEvents = async (req, res) => {
-//   try {
-//     const userId = req.user.id;
-
-//     const membership = await getUserClanMembership(userId);
-
-//     if (!membership) {
-//       return res.status(404).json({
-//         success: false,
-//         message: "You are not a member of any clan",
-//       });
-//     }
-
-//     const clanId = membership.clanId;
-
-//     const events = await prisma.clanEvent.findMany({
-//       where: {
-//         clanId,
-//       },
-//       include: {
-//         clan: {
-//           select: {
-//             id: true,
-//             name: true,
-//             slug: true,
-//             logo: true,
-//             banner: true,
-//             imageUrl: true,
-//           },
-//         },
-
-//         createdBy: {
-//           select: {
-//             id: true,
-//             username: true,
-//             fullName: true,
-//           },
-//         },
-
-//         participants: {
-//           select: {
-//             id: true,
-//             userId: true,
-//             joinedAt: true,
-
-//             user: {
-//               select: {
-//                 id: true,
-//                 username: true,
-//                 fullName: true,
-//               },
-//             },
-//           },
-//           orderBy: {
-//             joinedAt: "asc",
-//           },
-//         },
-
-//         _count: {
-//           select: {
-//             participants: true,
-//           },
-//         },
-//       },
-//       orderBy: {
-//         startsAt: "asc",
-//       },
-//     });
-
-//     const data = events.map((event) => ({
-//       id: event.id,
-//       clanId: event.clanId,
-//       title: event.title,
-//       description: event.description,
-//       location: event.location,
-//       startsAt: event.startsAt,
-//       endsAt: event.endsAt,
-//       maxParticipants: event.maxParticipants,
-//       status: event.status,
-//       createdAt: event.createdAt,
-//       updatedAt: event.updatedAt,
-
-//       clan: event.clan,
-//       createdBy: event.createdBy,
-//       participants: event.participants,
-
-//       participantsCount: event._count.participants,
-
-//       isParticipating: event.participants.some(
-//         (participant) => participant.userId === userId,
-//       ),
-
-//       availableSpots:
-//         event.maxParticipants === null
-//           ? null
-//           : Math.max(event.maxParticipants - event._count.participants, 0),
-//     }));
-
-//     return res.status(200).json({
-//       success: true,
-
-//       clan: {
-//         id: membership.clan.id,
-//         name: membership.clan.name,
-//         slug: membership.clan.slug,
-//         logo: membership.clan.logo,
-//         banner: membership.clan.banner,
-//         imageUrl: membership.clan.imageUrl,
-//       },
-
-//       currentUser: {
-//         role: membership.role,
-//         isLeader:
-//           membership.role === "LEADER" ||
-//           membership.role === "CAPTAIN" ||
-//           membership.clan.captainId === userId,
-//       },
-
-//       count: data.length,
-//       events: data,
-//     });
-//   } catch (error) {
-//     console.error("GET_MY_CLAN_EVENTS_ERROR:", error);
-
-//     return res.status(500).json({
-//       success: false,
-//       message: "Failed to fetch clan events",
-//       error: process.env.NODE_ENV === "development" ? error.message : undefined,
-//     });
-//   }
-// };
-
-// /**
-//  * |--------------------------------------------------------------------------
-//  * | GET EVENT DETAIL
-//  * |--------------------------------------------------------------------------
-//  * | GET /api/clan-events/:eventId
-//  * |--------------------------------------------------------------------------
-//  */
-// export const getClanEventDetail = async (req, res) => {
-//   try {
-//     const userId = req.user.id;
-//     const { eventId } = req.params;
-
-//     const event = await prisma.clanEvent.findUnique({
-//       where: {
-//         id: eventId,
-//       },
-//       include: {
-//         clan: {
-//           select: {
-//             id: true,
-//             name: true,
-//             slug: true,
-//             logo: true,
-//             banner: true,
-//             imageUrl: true,
-//           },
-//         },
-//         createdBy: {
-//           select: {
-//             id: true,
-//             username: true,
-//             fullName: true,
-//           },
-//         },
-//         participants: {
-//           include: {
-//             user: {
-//               select: {
-//                 id: true,
-//                 username: true,
-//                 fullName: true,
-//               },
-//             },
-//           },
-//           orderBy: {
-//             joinedAt: "asc",
-//           },
-//         },
-//       },
-//     });
-
-//     if (!event) {
-//       return res.status(404).json({
-//         success: false,
-//         message: "Event not found",
-//       });
-//     }
-
-//     const membership = await prisma.clanMember.findUnique({
-//       where: {
-//         clanId_userId: {
-//           clanId: event.clanId,
-//           userId,
-//         },
-//       },
-//     });
-
-//     if (!membership) {
-//       return res.status(403).json({
-//         success: false,
-//         message: "Only clan members can view this event",
-//       });
-//     }
-
-//     const isParticipating = event.participants.some(
-//       (participant) => participant.userId === userId,
-//     );
-
-//     return res.status(200).json({
-//       success: true,
-//       data: {
-//         ...event,
-//         participantsCount: event.participants.length,
-//         isParticipating,
-//         currentUserRole: membership.role,
-//       },
-//     });
-//   } catch (error) {
-//     console.error("GET_CLAN_EVENT_DETAIL_ERROR:", error);
-
-//     return res.status(500).json({
-//       success: false,
-//       message: "Failed to fetch event detail",
-//       error: process.env.NODE_ENV === "development" ? error.message : undefined,
-//     });
-//   }
-// };
-
-// /**
-//  * |--------------------------------------------------------------------------
-//  * | CANCEL CLAN EVENT
-//  * |--------------------------------------------------------------------------
-//  * | PATCH /api/clan-events/:eventId/cancel
-//  * |--------------------------------------------------------------------------
-//  */
-// export const cancelClanEvent = async (req, res) => {
-//   try {
-//     const userId = req.user.id;
-//     const { eventId } = req.params;
-
-//     const event = await prisma.clanEvent.findUnique({
-//       where: {
-//         id: eventId,
-//       },
-//     });
-
-//     if (!event) {
-//       return res.status(404).json({
-//         success: false,
-//         message: "Event not found",
-//       });
-//     }
-
-//     const access = await checkClanLeaderAccess(userId);
-
-//     if (!access.allowed) {
-//       return res.status(access.status).json({
-//         success: false,
-//         message: access.message,
-//       });
-//     }
-
-//     if (access.membership.clanId !== event.clanId) {
-//       return res.status(403).json({
-//         success: false,
-//         message: "This event does not belong to your clan",
-//       });
-//     }
-
-//     if (event.status === "CANCELLED") {
-//       return res.status(400).json({
-//         success: false,
-//         message: "Event is already cancelled",
-//       });
-//     }
-
-//     if (event.status === "COMPLETED") {
-//       return res.status(400).json({
-//         success: false,
-//         message: "A completed event cannot be cancelled",
-//       });
-//     }
-
-//     const updatedEvent = await prisma.clanEvent.update({
-//       where: {
-//         id: eventId,
-//       },
-//       data: {
-//         status: "CANCELLED",
-//       },
-//     });
-
-//     return res.status(200).json({
-//       success: true,
-//       message: "Clan event cancelled successfully",
-//       data: updatedEvent,
-//     });
-//   } catch (error) {
-//     console.error("CANCEL_CLAN_EVENT_ERROR:", error);
-
-//     return res.status(500).json({
-//       success: false,
-//       message: "Failed to cancel clan event",
-//       error: process.env.NODE_ENV === "development" ? error.message : undefined,
-//     });
-//   }
-// };
-
-// export const deleteClanEvent = async (req, res) => {
-//   try {
-//     const userId = req.user.id;
-//     const { eventId } = req.params;
-
-//     if (!eventId) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "Event ID is required",
-//       });
-//     }
-
-//     const event = await prisma.clanEvent.findUnique({
-//       where: {
-//         id: eventId,
-//       },
-//       select: {
-//         id: true,
-//         clanId: true,
-//         title: true,
-//         status: true,
-//       },
-//     });
-
-//     if (!event) {
-//       return res.status(404).json({
-//         success: false,
-//         message: "Event not found",
-//       });
-//     }
-
-//     const access = await checkClanLeaderAccess(userId);
-
-//     if (!access.allowed) {
-//       return res.status(access.status).json({
-//         success: false,
-//         message: access.message,
-//       });
-//     }
-
-//     if (access.membership.clanId !== event.clanId) {
-//       return res.status(403).json({
-//         success: false,
-//         message: "This event does not belong to your clan",
-//       });
-//     }
-
-//     await prisma.$transaction([
-//       prisma.clanEventParticipant.deleteMany({
-//         where: {
-//           eventId,
-//         },
-//       }),
-
-//       prisma.clanEvent.delete({
-//         where: {
-//           id: eventId,
-//         },
-//       }),
-//     ]);
-
-//     return res.status(200).json({
-//       success: true,
-//       message: "Club event deleted successfully",
-//       data: {
-//         eventId: event.id,
-//         title: event.title,
-//       },
-//     });
-//   } catch (error) {
-//     console.error("DELETE_CLAN_EVENT_ERROR:", error);
-
-//     if (error?.code === "P2025") {
-//       return res.status(404).json({
-//         success: false,
-//         message: "Event not found or already deleted",
-//       });
-//     }
-
-//     if (error?.code === "P2003") {
-//       return res.status(409).json({
-//         success: false,
-//         message: "The event has related records that prevent deletion",
-//       });
-//     }
-
-//     return res.status(500).json({
-//       success: false,
-//       message: "Failed to delete clan event",
-//       error: process.env.NODE_ENV === "development" ? error.message : undefined,
-//     });
-//   }
-// };
-
-// modules/clan-event/clan-event.controller.js
-
 import prisma from "../../config/prisma.js";
 
 import { sendClanEventInvitations } from "./clanEventEmail.service.js";
@@ -1658,6 +9,21 @@ import { sendFCMToUser } from "../../config/fcm.service.js";
  * | GET CURRENT USER'S CLAN MEMBERSHIP
  * |--------------------------------------------------------------------------
  */
+
+function formatPace(secPerKm) {
+  if (secPerKm == null) return null;
+
+  const totalSeconds = Math.round(Number(secPerKm));
+
+  if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) {
+    return null;
+  }
+
+  const mins = Math.floor(totalSeconds / 60);
+  const secs = totalSeconds % 60;
+
+  return `${mins}:${String(secs).padStart(2, "0")}/km`;
+}
 
 const getUserClanMembership = async (userId) => {
   return prisma.clanMember.findFirst({
@@ -1684,6 +50,43 @@ const getUserClanMembership = async (userId) => {
       },
     },
   });
+};
+
+const checkEventManagementAccess = async ({ event, userId }) => {
+  // ============================================================
+  // PUBLIC / STANDALONE EVENT
+  // ============================================================
+
+  if (!event.clanId) {
+    const allowed =
+      event.createdById === userId || event.runLeaderId === userId;
+
+    return {
+      allowed,
+      status: allowed ? 200 : 403,
+      message: allowed ? null : "Only the event creator can manage this event",
+    };
+  }
+
+  // ============================================================
+  // CLUB EVENT
+  // ============================================================
+
+  const access = await checkClanLeaderAccess(userId);
+
+  if (!access.allowed) {
+    return access;
+  }
+
+  if (access.membership.clanId !== event.clanId) {
+    return {
+      allowed: false,
+      status: 403,
+      message: "This event does not belong to your club",
+    };
+  }
+
+  return access;
 };
 
 /**
@@ -1845,39 +248,44 @@ const getEventRunContext = async ({ eventId, userId }) => {
     };
   }
 
-  const [membership, participant] = await Promise.all([
-    prisma.clanMember.findUnique({
-      where: {
-        clanId_userId: {
-          clanId: event.clanId,
-          userId,
-        },
-      },
-
-      select: {
-        id: true,
-        clanId: true,
-        userId: true,
-        role: true,
-        joinedAt: true,
-
-        clan: {
-          select: {
-            id: true,
-            captainId: true,
+  const membershipPromise = event.clanId
+    ? prisma.clanMember.findUnique({
+        where: {
+          clanId_userId: {
+            clanId: event.clanId,
+            userId,
           },
         },
-      },
-    }),
 
-    prisma.clanEventParticipant.findUnique({
-      where: {
-        eventId_userId: {
-          eventId,
-          userId,
+        select: {
+          id: true,
+          clanId: true,
+          userId: true,
+          role: true,
+          joinedAt: true,
+
+          clan: {
+            select: {
+              id: true,
+              captainId: true,
+            },
+          },
         },
+      })
+    : Promise.resolve(null);
+
+  const participantPromise = prisma.clanEventParticipant.findUnique({
+    where: {
+      eventId_userId: {
+        eventId,
+        userId,
       },
-    }),
+    },
+  });
+
+  const [membership, participant] = await Promise.all([
+    membershipPromise,
+    participantPromise,
   ]);
 
   return {
@@ -1892,7 +300,6 @@ const getEventRunContext = async ({ eventId, userId }) => {
  * | PARSE EVENT STATS
  * |--------------------------------------------------------------------------
  */
-
 const parseEventStats = (body, { partial = false } = {}) => {
   const floatFields = [
     "distanceKm",
@@ -1925,9 +332,7 @@ const parseEventStats = (body, { partial = false } = {}) => {
 
     if (!Number.isFinite(value) || value < 0) {
       const error = new Error(`${field} must be a non-negative number`);
-
       error.code = "INVALID_EVENT_STATS";
-
       throw error;
     }
 
@@ -1949,16 +354,190 @@ const parseEventStats = (body, { partial = false } = {}) => {
 
     if (!Number.isFinite(value) || value < 0) {
       const error = new Error(`${field} must be a non-negative number`);
-
       error.code = "INVALID_EVENT_STATS";
-
       throw error;
     }
 
     data[field] = Math.round(value);
   }
 
+  // ============================================================
+  // KM SPLITS
+  // Same structure used by normal Activity
+  // ============================================================
+
+  if (body?.kmSplits !== undefined) {
+    if (!Array.isArray(body.kmSplits)) {
+      const error = new Error("kmSplits must be an array");
+      error.code = "INVALID_EVENT_STATS";
+      throw error;
+    }
+
+    data.kmSplits = body.kmSplits;
+  } else if (!partial) {
+    data.kmSplits = [];
+  }
+
   return data;
+};
+
+const EVENT_FINALIZATION_GRACE_MS = 20 * 60 * 1000;
+
+const recoverExpiredEventParticipants = async (eventId) => {
+  const event = await prisma.clanEvent.findUnique({
+    where: {
+      id: eventId,
+    },
+
+    select: {
+      id: true,
+      status: true,
+      leaderStoppedAt: true,
+      completedAt: true,
+    },
+  });
+
+  if (!event) {
+    return {
+      recovered: 0,
+    };
+  }
+
+  /**
+   * Only recover results after the whole event
+   * has actually ended.
+   */
+  if (event.status !== "COMPLETED" || !event.leaderStoppedAt) {
+    return {
+      recovered: 0,
+    };
+  }
+
+  const eventEndedAt = event.leaderStoppedAt ?? event.completedAt;
+
+  if (!eventEndedAt) {
+    return {
+      recovered: 0,
+    };
+  }
+
+  const graceDeadline =
+    new Date(eventEndedAt).getTime() + EVENT_FINALIZATION_GRACE_MS;
+
+  /**
+   * Give devices a few minutes to submit their
+   * exact cutoff result.
+   */
+  if (Date.now() < graceDeadline) {
+    return {
+      recovered: 0,
+    };
+  }
+
+  const pendingParticipants = await prisma.clanEventParticipant.findMany({
+    where: {
+      eventId,
+
+      startedAt: {
+        not: null,
+      },
+
+      status: {
+        in: ["STOPPED", "CUTOFF_PENDING", "RUNNING"],
+      },
+    },
+  });
+
+  if (pendingParticipants.length === 0) {
+    return {
+      recovered: 0,
+    };
+  }
+
+  let recovered = 0;
+
+  for (const participant of pendingParticipants) {
+    /**
+     * Determine the official cutoff for this person.
+     *
+     * If they personally stopped earlier, keep that.
+     * Otherwise use the global event cutoff.
+     */
+    const cutoffCandidates = [
+      participant.eventCutoffAt,
+      participant.stoppedAt,
+      event.leaderStoppedAt,
+    ]
+      .filter(Boolean)
+      .map((value) => new Date(value))
+      .filter((date) => !Number.isNaN(date.getTime()));
+
+    const effectiveCutoff =
+      cutoffCandidates.length > 0
+        ? new Date(Math.min(...cutoffCandidates.map((date) => date.getTime())))
+        : event.leaderStoppedAt;
+
+    if (!effectiveCutoff) {
+      continue;
+    }
+
+    /**
+     * Try to link the normal activity if it
+     * has already been saved.
+     */
+    let linkedActivityId = participant.activityId;
+
+    if (!linkedActivityId && participant.clientActivityId) {
+      const activity = await prisma.activity.findFirst({
+        where: {
+          userId: participant.userId,
+          clientActivityId: participant.clientActivityId,
+        },
+
+        select: {
+          id: true,
+        },
+      });
+
+      linkedActivityId = activity?.id ?? null;
+    }
+
+    /**
+     * IMPORTANT:
+     *
+     * We keep the latest stats already stored in
+     * ClanEventParticipant.
+     *
+     * We are NOT inventing new stats here.
+     */
+    const result = await prisma.clanEventParticipant.updateMany({
+      where: {
+        id: participant.id,
+
+        status: {
+          not: "FINALIZED",
+        },
+      },
+
+      data: {
+        status: "FINALIZED",
+
+        finalizedAt: new Date(),
+
+        eventCutoffAt: effectiveCutoff,
+
+        activityId: linkedActivityId,
+
+        lastProgressAt: participant.lastProgressAt ?? new Date(),
+      },
+    });
+
+    recovered += result.count;
+  }
+
+  return {
+    recovered,
+  };
 };
 
 /**
@@ -2066,6 +645,8 @@ const buildEventResultsSnapshot = async (eventId) => {
 
     topSpeed: participant.topSpeed,
 
+    kmSplits: Array.isArray(participant.kmSplits) ? participant.kmSplits : [],
+
     activityId: participant.activityId ?? null,
 
     clientActivityId: participant.clientActivityId ?? null,
@@ -2074,43 +655,82 @@ const buildEventResultsSnapshot = async (eventId) => {
   }));
 
   // ============================================================
-  // BEST SPLIT ACROSS ALL CLUB EVENT PARTICIPANTS
+  // PUT YOUR BEST SPLIT CODE HERE
   // ============================================================
-  //
-  // In Flutter, topSpeed is derived from the participant's
-  // fastest kilometre split:
-  //
-  // speed km/h = 60 / pace min/km
-  //
-  // Therefore:
-  // pace min/km = 60 / speed km/h
-  //
 
-  let bestSplitPace = 0;
+  let bestSplit = null;
   let bestSplitParticipant = null;
 
   for (const item of results) {
-    const topSpeed = Number(item.topSpeed ?? 0);
+    const kmSplits = Array.isArray(item.kmSplits) ? item.kmSplits : [];
 
-    if (!Number.isFinite(topSpeed) || topSpeed <= 0) {
+    const participantDistanceKm = Number(item.distanceKm ?? 0);
+
+    if (!Number.isFinite(participantDistanceKm) || participantDistanceKm < 1) {
       continue;
     }
 
-    const splitPace = 60 / topSpeed;
+    const completedKm = Math.floor(participantDistanceKm + 0.000001);
 
-    if (!Number.isFinite(splitPace) || splitPace <= 0) {
-      continue;
-    }
+    for (const split of kmSplits) {
+      if (!split || typeof split !== "object") {
+        continue;
+      }
 
-    if (bestSplitPace === 0 || splitPace < bestSplitPace) {
-      bestSplitPace = splitPace;
+      const km = Number(split.km);
 
-      bestSplitParticipant = {
-        userId: item.userId,
-        participantId: item.participantId,
-        user: item.user,
-        pace: splitPace,
-      };
+      const timeSec = Number(split.timeSec ?? split.pace);
+
+      if (!Number.isFinite(km) || !Number.isInteger(km) || km < 1) {
+        continue;
+      }
+
+      if (km > completedKm) {
+        continue;
+      }
+
+      if (!Number.isFinite(timeSec) || timeSec <= 0) {
+        continue;
+      }
+
+      const splitDistanceKm =
+        split.distanceKm != null
+          ? Number(split.distanceKm)
+          : split.splitDistanceKm != null
+            ? Number(split.splitDistanceKm)
+            : split.distanceMeters != null
+              ? Number(split.distanceMeters) / 1000
+              : split.distanceM != null
+                ? Number(split.distanceM) / 1000
+                : split.meters != null
+                  ? Number(split.meters) / 1000
+                  : null;
+
+      if (splitDistanceKm !== null) {
+        if (
+          !Number.isFinite(splitDistanceKm) ||
+          splitDistanceKm < 0.95 ||
+          splitDistanceKm > 1.05
+        ) {
+          continue;
+        }
+      }
+
+      if (bestSplit === null || timeSec < bestSplit.timeSec) {
+        bestSplit = {
+          km,
+          timeSec,
+          pace: timeSec,
+
+          paceFormatted: split.paceFormatted ?? formatPace(timeSec),
+        };
+
+        bestSplitParticipant = {
+          userId: item.userId,
+          participantId: item.participantId,
+          user: item.user,
+        };
+      }
     }
   }
 
@@ -2160,7 +780,11 @@ const buildEventResultsSnapshot = async (eventId) => {
       avgPace,
     },
 
-    bestSplitPace,
+    bestSplit,
+
+    bestSplitPace: bestSplit !== null ? bestSplit.timeSec / 60 : 0,
+
+    bestSplitPaceSec: bestSplit?.timeSec ?? null,
 
     bestSplitParticipant,
 
@@ -2320,24 +944,48 @@ export const createClanEvent = async (req, res) => {
       }
     }
 
-    const access = await checkClanLeaderAccess(userId);
+    const membership = await getUserClanMembership(userId);
 
-    if (!access.allowed) {
-      return res.status(access.status).json({
-        success: false,
-        message: access.message,
-      });
+    let clanId = null;
+    let runLeaderId = userId;
+
+    // ============================================================
+    // USER IS NOT IN A CLUB
+    // -> allow standalone/public event
+    // ============================================================
+
+    if (!membership) {
+      clanId = null;
+      runLeaderId = userId;
     }
 
-    const clanId = access.membership.clanId;
+    // ============================================================
+    // USER IS IN A CLUB
+    // -> only leader/captain can create
+    // ============================================================
+    else {
+      const isCaptain = membership.clan.captainId === userId;
 
-    const runLeaderId = await resolveClanRunLeaderId(clanId);
+      const isLeader =
+        membership.role === "LEADER" || membership.role === "CAPTAIN";
 
-    if (!runLeaderId) {
-      return res.status(409).json({
-        success: false,
-        message: "This clan does not currently have a valid event leader",
-      });
+      if (!isCaptain && !isLeader) {
+        return res.status(403).json({
+          success: false,
+          message: "Only the club leader or captain can create a club event",
+        });
+      }
+
+      clanId = membership.clanId;
+
+      runLeaderId = await resolveClanRunLeaderId(clanId);
+
+      if (!runLeaderId) {
+        return res.status(409).json({
+          success: false,
+          message: "This club does not currently have a valid event leader",
+        });
+      }
     }
 
     const event = await prisma.clanEvent.create({
@@ -2418,26 +1066,30 @@ export const createClanEvent = async (req, res) => {
      * Fetch all clan members.
      */
 
-    const clanMembers = await prisma.clanMember.findMany({
-      where: {
-        clanId,
-      },
+    let clanMembers = [];
 
-      select: {
-        id: true,
-        userId: true,
-        role: true,
+    if (clanId) {
+      clanMembers = await prisma.clanMember.findMany({
+        where: {
+          clanId,
+        },
 
-        user: {
-          select: {
-            id: true,
-            email: true,
-            username: true,
-            fullName: true,
+        select: {
+          id: true,
+          userId: true,
+          role: true,
+
+          user: {
+            select: {
+              id: true,
+              email: true,
+              username: true,
+              fullName: true,
+            },
           },
         },
-      },
-    });
+      });
+    }
 
     /**
      * EMAIL INVITATIONS
@@ -2451,18 +1103,17 @@ export const createClanEvent = async (req, res) => {
       failures: [],
     };
 
-    try {
-      emailResult = await sendClanEventInvitations({
-        event,
-
-        clan: event.clan,
-
-        creator: event.createdBy,
-
-        members: clanMembers,
-      });
-    } catch (emailError) {
-      console.error("CLAN_EVENT_INVITATION_EMAIL_ERROR:", emailError);
+    if (event.clan && clanMembers.length > 0) {
+      try {
+        emailResult = await sendClanEventInvitations({
+          event,
+          clan: event.clan,
+          creator: event.createdBy,
+          members: clanMembers,
+        });
+      } catch (emailError) {
+        console.error("CLAN_EVENT_INVITATION_EMAIL_ERROR:", emailError);
+      }
     }
 
     /**
@@ -2487,7 +1138,9 @@ export const createClanEvent = async (req, res) => {
           const result = await sendFCMToUser({
             userId: member.userId,
 
-            title: `New Event in ${event.clan.name}`,
+            title: event.clan
+              ? `New Event in ${event.clan.name}`
+              : "New Event on DURO",
 
             message: event.location
               ? `${event.title} • ${event.location}`
@@ -2498,7 +1151,7 @@ export const createClanEvent = async (req, res) => {
 
               eventId: event.id,
 
-              clanId: event.clan.id,
+              clanId: event.clan?.id ?? "",
 
               title: event.title,
             },
@@ -2554,7 +1207,7 @@ export const createClanEvent = async (req, res) => {
 
       data: {
         ...event,
-
+        eventType: event.clanId ? "CLUB" : "PUBLIC",
         participantsCount: participantCount,
       },
 
@@ -2934,6 +1587,8 @@ export const getMyClanEvents = async (req, res) => {
     const data = events.map((event) => ({
       id: event.id,
 
+      eventType: event.clanId ? "CLUB" : "PUBLIC",
+
       clanId: event.clanId,
 
       title: event.title,
@@ -3092,6 +1747,18 @@ export const getClanEventDetail = async (req, res) => {
             id: true,
             username: true,
             fullName: true,
+            skinIndex: true,
+
+            avatars: {
+              where: {
+                isEquipped: true,
+                status: "UNLOCKED",
+              },
+
+              include: {
+                avatar: true,
+              },
+            },
           },
         },
 
@@ -3134,15 +1801,16 @@ export const getClanEventDetail = async (req, res) => {
       });
     }
 
-    const membership = await prisma.clanMember.findUnique({
-      where: {
-        clanId_userId: {
-          clanId: event.clanId,
-
-          userId,
-        },
-      },
-    });
+    const membership = event.clanId
+      ? await prisma.clanMember.findUnique({
+          where: {
+            clanId_userId: {
+              clanId: event.clanId,
+              userId,
+            },
+          },
+        })
+      : null;
 
     // if (!membership) {
     //   return res.status(403).json({
@@ -3156,11 +1824,46 @@ export const getClanEventDetail = async (req, res) => {
       (item) => item.userId === userId,
     );
 
+    // ============================================================
+    // FORMAT EVENT CREATOR AVATAR
+    // ============================================================
+
+    const creatorAvatar = {};
+
+    for (const item of event.createdBy?.avatars ?? []) {
+      if (!item.avatar) continue;
+
+      creatorAvatar[item.avatar.type] = {
+        id: item.avatar.id,
+        file: item.avatar.file,
+        type: item.avatar.type,
+      };
+    }
+
+    const createdBy = event.createdBy
+      ? {
+          id: event.createdBy.id,
+          username: event.createdBy.username,
+          fullName: event.createdBy.fullName,
+          skinIndex: event.createdBy.skinIndex ?? 2,
+          avatar: creatorAvatar,
+        }
+      : null;
+
+    // ============================================================
+    // RESPONSE
+    // ============================================================
+
     return res.status(200).json({
       success: true,
 
       data: {
         ...event,
+
+        // Replace raw Prisma createdBy with formatted creator
+        createdBy,
+
+        eventType: event.clanId ? "CLUB" : "PUBLIC",
 
         participantsCount: event.participants.length,
 
@@ -3276,7 +1979,10 @@ export const startClanEventRun = async (req, res) => {
     }
 
     const resolvedRunLeaderId =
-      event.runLeaderId ?? (await resolveClanRunLeaderId(event.clanId));
+      event.runLeaderId ??
+      (event.clanId
+        ? await resolveClanRunLeaderId(event.clanId)
+        : event.createdById);
 
     if (!resolvedRunLeaderId) {
       return res.status(409).json({
@@ -3286,6 +1992,18 @@ export const startClanEventRun = async (req, res) => {
     }
 
     const currentUserIsRunLeader = resolvedRunLeaderId === userId;
+
+    // ============================================================
+    // EVENT MUST BE STARTED BY THE OFFICIAL RUN LEADER FIRST
+    // ============================================================
+
+    if (!event.runStartedAt && !currentUserIsRunLeader) {
+      return res.status(409).json({
+        success: false,
+        message: "The event leader has not started this event yet",
+        waitingForLeader: true,
+      });
+    }
 
     /**
      * Backwards compatibility:
@@ -3322,6 +2040,48 @@ export const startClanEventRun = async (req, res) => {
         runLeaderId: event.runLeaderId ?? resolvedRunLeaderId,
 
         isRunLeader: currentUserIsRunLeader,
+      });
+    }
+
+    /**
+     * Prevent the same user from having
+     * two Club Event activities running at once.
+     *
+     * The user may JOIN multiple overlapping events,
+     * but can only START one of them.
+     */
+    const anotherRunningEvent = await prisma.clanEventParticipant.findFirst({
+      where: {
+        userId,
+
+        eventId: {
+          not: eventId,
+        },
+
+        status: "RUNNING",
+      },
+
+      include: {
+        event: {
+          select: {
+            id: true,
+            title: true,
+            startsAt: true,
+            endsAt: true,
+            status: true,
+          },
+        },
+      },
+    });
+
+    if (anotherRunningEvent) {
+      return res.status(409).json({
+        success: false,
+
+        message:
+          "You already have another Club Event activity running. Stop that event activity before starting this one.",
+
+        conflictingEvent: anotherRunningEvent.event,
       });
     }
 
@@ -3371,22 +2131,58 @@ export const startClanEventRun = async (req, res) => {
      * UPCOMING -> ACTIVE
      */
 
-    const [updatedEvent, updatedParticipant] = await prisma.$transaction([
-      prisma.clanEvent.update({
-        where: {
-          id: eventId,
-        },
+    let updatedEvent = event;
 
-        data: {
-          status: "ACTIVE",
+    let updatedParticipant;
 
-          runStartedAt: event.runStartedAt ?? now,
+    // ============================================================
+    // LEADER STARTS THE WHOLE EVENT
+    // ============================================================
 
-          runLeaderId: event.runLeaderId ?? resolvedRunLeaderId,
-        },
-      }),
+    if (currentUserIsRunLeader && !event.runStartedAt) {
+      [updatedEvent, updatedParticipant] = await prisma.$transaction([
+        prisma.clanEvent.update({
+          where: {
+            id: eventId,
+          },
 
-      prisma.clanEventParticipant.update({
+          data: {
+            status: "ACTIVE",
+
+            runStartedAt: now,
+
+            runLeaderId: resolvedRunLeaderId,
+          },
+        }),
+
+        prisma.clanEventParticipant.update({
+          where: {
+            eventId_userId: {
+              eventId,
+              userId,
+            },
+          },
+
+          data: {
+            roleSnapshot: "LEADER",
+
+            status: "RUNNING",
+
+            clientActivityId,
+
+            startedAt: participant.startedAt ?? now,
+
+            lastProgressAt: now,
+          },
+        }),
+      ]);
+    }
+
+    // ============================================================
+    // EVENT ALREADY STARTED -> PARTICIPANT STARTS ONLY THEMSELVES
+    // ============================================================
+    else {
+      updatedParticipant = await prisma.clanEventParticipant.update({
         where: {
           eventId_userId: {
             eventId,
@@ -3407,8 +2203,8 @@ export const startClanEventRun = async (req, res) => {
 
           lastProgressAt: now,
         },
-      }),
-    ]);
+      });
+    }
 
     return res.status(200).json({
       success: true,
@@ -3627,7 +2423,10 @@ export const stopClanEventRun = async (req, res) => {
     }
 
     const resolvedRunLeaderId =
-      event.runLeaderId ?? (await resolveClanRunLeaderId(event.clanId));
+      event.runLeaderId ??
+      (event.clanId
+        ? await resolveClanRunLeaderId(event.clanId)
+        : event.createdById);
 
     if (!resolvedRunLeaderId) {
       return res.status(409).json({
@@ -3794,7 +2593,10 @@ export const endClanEventRun = async (req, res) => {
     }
 
     const resolvedRunLeaderId =
-      event.runLeaderId ?? (await resolveClanRunLeaderId(event.clanId));
+      event.runLeaderId ??
+      (event.clanId
+        ? await resolveClanRunLeaderId(event.clanId)
+        : event.createdById);
 
     if (!resolvedRunLeaderId) {
       return res.status(409).json({
@@ -4083,9 +2885,13 @@ export const finalizeClanEventRun = async (req, res) => {
       });
     }
 
+    console.log("FINALIZE CLUB EVENT BODY:", JSON.stringify(req.body, null, 2));
+
     const stats = parseEventStats(req.body, {
       partial: false,
     });
+
+    console.log("PARSED FINALIZE STATS:", JSON.stringify(stats, null, 2));
 
     /**
      * Try to connect normal Activity.
@@ -4229,6 +3035,13 @@ export const finalizeClanEventRun = async (req, res) => {
       leaderboard: snapshot.results,
 
       pendingFinalizations: snapshot.pendingFinalizations,
+      bestSplit: snapshot.bestSplit,
+
+      bestSplitPace: snapshot.bestSplitPace,
+
+      bestSplitPaceSec: snapshot.bestSplitPaceSec,
+
+      bestSplitParticipant: snapshot.bestSplitParticipant,
 
       resultsFinal:
         Boolean(event.leaderStoppedAt) && snapshot.pendingFinalizations === 0,
@@ -4291,7 +3104,10 @@ export const getClanEventRunStatus = async (req, res) => {
     }
 
     const runLeaderId =
-      event.runLeaderId ?? (await resolveClanRunLeaderId(event.clanId));
+      event.runLeaderId ??
+      (event.clanId
+        ? await resolveClanRunLeaderId(event.clanId)
+        : event.createdById);
 
     const currentUserIsRunLeader = runLeaderId === userId;
 
@@ -4368,6 +3184,7 @@ export const getClanEventRunResults = async (req, res) => {
     const userId = req.user.id;
 
     const { eventId } = req.params;
+    // await recoverExpiredEventParticipants(eventId);
 
     const event = await prisma.clanEvent.findUnique({
       where: {
@@ -4407,34 +3224,37 @@ export const getClanEventRunResults = async (req, res) => {
       });
     }
 
-    const [membership, participant] = await Promise.all([
-      prisma.clanMember.findUnique({
-        where: {
-          clanId_userId: {
-            clanId: event.clanId,
-            userId,
-          },
-        },
-      }),
+    const recovery = await recoverExpiredEventParticipants(eventId);
 
-      prisma.clanEventParticipant.findUnique({
-        where: {
-          eventId_userId: {
-            eventId,
-            userId,
-          },
-        },
-      }),
-    ]);
+    const snapshot =
+      recovery.recovered > 0
+        ? await persistEventResultsSnapshot(eventId)
+        : await buildEventResultsSnapshot(eventId);
 
-    if (!membership && !participant) {
-      return res.status(403).json({
-        success: false,
-        message: "You must participate in this event to view its results",
+    let resolvedCompletedAt = event.completedAt;
+
+    if (
+      event.status === "COMPLETED" &&
+      event.leaderStoppedAt &&
+      snapshot.pendingFinalizations === 0 &&
+      !event.completedAt
+    ) {
+      const completedEvent = await prisma.clanEvent.update({
+        where: {
+          id: eventId,
+        },
+
+        data: {
+          completedAt: new Date(),
+        },
+
+        select: {
+          completedAt: true,
+        },
       });
-    }
 
-    const snapshot = await buildEventResultsSnapshot(eventId);
+      resolvedCompletedAt = completedEvent.completedAt;
+    }
     // ============================================================
     // ATTACH EQUIPPED DURO AVATARS TO EVENT RESULTS
     // ============================================================
@@ -4607,9 +3427,17 @@ export const getClanEventRunResults = async (req, res) => {
 
         leaderStoppedAt: event.leaderStoppedAt,
 
-        completedAt: event.completedAt,
+        completedAt: resolvedCompletedAt,
 
         runLeader: event.runLeader,
+
+        bestSplit: snapshot.bestSplit,
+
+        bestSplitPace: snapshot.bestSplitPace,
+
+        bestSplitPaceSec: snapshot.bestSplitPaceSec,
+
+        bestSplitParticipant: snapshot.bestSplitParticipant,
 
         joinedParticipants: event._count.participants,
       },
@@ -4698,23 +3526,15 @@ export const cancelClanEvent = async (req, res) => {
     // CHECK LEADER ACCESS
     // =========================================================
 
-    const access = await checkClanLeaderAccess(userId);
+    const access = await checkEventManagementAccess({
+      event,
+      userId,
+    });
 
     if (!access.allowed) {
       return res.status(access.status).json({
         success: false,
         message: access.message,
-      });
-    }
-
-    // =========================================================
-    // MAKE SURE EVENT BELONGS TO USER'S CLAN
-    // =========================================================
-
-    if (access.membership.clanId !== event.clanId) {
-      return res.status(403).json({
-        success: false,
-        message: "This event does not belong to your clan",
       });
     }
 
@@ -4887,23 +3707,15 @@ export const updateClanEvent = async (req, res) => {
     // CHECK LEADER / CAPTAIN ACCESS
     // =========================================================
 
-    const access = await checkClanLeaderAccess(userId);
+    const access = await checkEventManagementAccess({
+      event,
+      userId,
+    });
 
     if (!access.allowed) {
       return res.status(access.status).json({
         success: false,
         message: access.message,
-      });
-    }
-
-    // =========================================================
-    // MAKE SURE EVENT BELONGS TO THEIR CLAN
-    // =========================================================
-
-    if (access.membership.clanId !== event.clanId) {
-      return res.status(403).json({
-        success: false,
-        message: "This event does not belong to your clan",
       });
     }
 
@@ -5160,6 +3972,8 @@ export const deleteClanEvent = async (req, res) => {
       select: {
         id: true,
         clanId: true,
+        createdById: true,
+        runLeaderId: true,
         title: true,
         status: true,
         runStartedAt: true,
@@ -5175,21 +3989,15 @@ export const deleteClanEvent = async (req, res) => {
       });
     }
 
-    const access = await checkClanLeaderAccess(userId);
+    const access = await checkEventManagementAccess({
+      event,
+      userId,
+    });
 
     if (!access.allowed) {
       return res.status(access.status).json({
         success: false,
-
         message: access.message,
-      });
-    }
-
-    if (access.membership.clanId !== event.clanId) {
-      return res.status(403).json({
-        success: false,
-
-        message: "This event does not belong to your clan",
       });
     }
 
@@ -5273,26 +4081,8 @@ export const discoverClanEvents = async (req, res) => {
     const events = await prisma.clanEvent.findMany({
       where: {
         status: {
-          notIn: ["CANCELLED", "COMPLETED"],
+          not: "CANCELLED",
         },
-
-        leaderStoppedAt: null,
-
-        /**
-         * Keep scheduled events visible until their scheduled end.
-         * ACTIVE is included explicitly in case a live event runs
-         * beyond its scheduled end time.
-         */
-        OR: [
-          {
-            endsAt: {
-              gt: now,
-            },
-          },
-          {
-            status: "ACTIVE",
-          },
-        ],
       },
 
       include: {
@@ -5373,6 +4163,8 @@ export const discoverClanEvents = async (req, res) => {
 
       return {
         id: event.id,
+
+        eventType: event.clanId ? "CLUB" : "PUBLIC",
 
         clanId: event.clanId,
 

@@ -1,5 +1,10 @@
 import { Router } from "express";
 import authMiddleware from "../../middlewares/auth.js";
+import {
+  likeActivity,
+  unlikeActivity,
+  getActivityLikes,
+} from "./activityLike.controller.js";
 
 import {
   finishActivity,
@@ -16,7 +21,8 @@ import {
   getFriendActivityDetails,
   updateActivityVisibility,
   getVisibleActivityDetail,
-  deleteActivity
+  deleteActivity,
+  getFriendsLeaderboardStats,
 } from "./activity.controller.js";
 
 const router = Router();
@@ -36,6 +42,12 @@ router.get("/stats/today", authMiddleware, getTodayStats);
 router.get("/friends", authMiddleware, getMyFriendsActivities);
 
 router.get(
+  "/friends/leaderboard-stats",
+  authMiddleware,
+  getFriendsLeaderboardStats,
+);
+
+router.get(
   "/activities/friends/:activityId",
   authMiddleware,
   getFriendActivityDetails,
@@ -44,6 +56,19 @@ router.get(
 router.patch("/:id/visibility", authMiddleware, updateActivityVisibility);
 
 router.get("/view/:activityId", authMiddleware, getVisibleActivityDetail);
+
+// ======================================================
+// ACTIVITY LIKES — DURO BOOST FEATURE
+// ======================================================
+
+// Boost an activity
+router.post("/:activityId/like", authMiddleware, likeActivity);
+
+// Remove boost from an activity
+router.delete("/:activityId/like", authMiddleware, unlikeActivity);
+
+// Get activity likes and total boost count
+router.get("/:activityId/likes", authMiddleware, getActivityLikes);
 
 // dynamic route always last
 router.get("/:id", authMiddleware, getActivityDetail);

@@ -48,14 +48,26 @@ router.get("/requests/pending", authMiddleware, getPendingRequests);
 router.get("/requests/sent", authMiddleware, getSentFriendRequests);
 
 // accept request
-router.patch("/requests/:requestId/accept", authMiddleware, acceptFriendRequest);
+router.patch(
+  "/requests/:requestId/accept",
+  authMiddleware,
+  acceptFriendRequest,
+);
 
 // reject request
-router.patch("/requests/:requestId/reject", authMiddleware, rejectFriendRequest);
+router.patch(
+  "/requests/:requestId/reject",
+  authMiddleware,
+  rejectFriendRequest,
+);
 
 // cancel request
 // cancel sent request
-router.delete("/requests/:requestId/cancel", authMiddleware, cancelFriendRequest);
+router.delete(
+  "/requests/:requestId/cancel",
+  authMiddleware,
+  cancelFriendRequest,
+);
 
 /**
  * ============================================================================

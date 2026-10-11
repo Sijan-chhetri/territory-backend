@@ -875,6 +875,55 @@ export const getUserDetailById = async (req, res) => {
       });
     }
 
+    // =========================================================
+    // CURRENT CLAN
+    // =========================================================
+
+    const clanMembership = await prisma.clanMember.findFirst({
+      where: {
+        userId,
+      },
+
+      orderBy: {
+        joinedAt: "desc",
+      },
+
+      select: {
+        role: true,
+        joinedAt: true,
+
+        clan: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            logo: true,
+            imageUrl: true,
+            banner: true,
+            country: true,
+          },
+        },
+      },
+    });
+
+    const currentClan = clanMembership
+      ? {
+          id: clanMembership.clan.id,
+          name: clanMembership.clan.name,
+          slug: clanMembership.clan.slug,
+
+          logo:
+            clanMembership.clan.logo ?? clanMembership.clan.imageUrl ?? null,
+
+          imageUrl: clanMembership.clan.imageUrl,
+          banner: clanMembership.clan.banner,
+          country: clanMembership.clan.country,
+
+          role: clanMembership.role,
+          joinedAt: clanMembership.joinedAt,
+        }
+      : null;
+
     const isOwner = viewerId === userId;
 
     let isFriend = false;
@@ -1137,6 +1186,8 @@ export const getUserDetailById = async (req, res) => {
 
         avatar,
 
+        clan: currentClan,
+
         // =====================================================
         // USER TOTAL STATS
         // =====================================================
@@ -1144,7 +1195,7 @@ export const getUserDetailById = async (req, res) => {
         stats: {
           totalDistanceKm: Number(totalDistanceKm.toFixed(2)),
 
-          totalActivities,
+          totalActivities, 
 
           totalDurationSec,
 
