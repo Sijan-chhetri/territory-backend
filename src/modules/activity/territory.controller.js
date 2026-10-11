@@ -1791,290 +1791,290 @@ const TERRITORY_COLORS = [
 //old one to use if anything is wrong
 //------------------------------------------------
 
-// export const getAllTerritories = async (req, res) => {
-//   try {
-//     const territoryRows = await prisma.$queryRaw`
-//       WITH base AS (
-//         SELECT
-//           t.id,
-//           t."userId",
-//           t."activityId",
-//           t.name,
-//           t."areaKm2",
-//           t."capturedAt",
-//           t."createdAt",
-//           t."updatedAt",
-
-//           -- Validate once here instead of repeatedly below.
-//           ST_MakeValid(t.boundary) AS boundary,
-
-//           t.center,
-
-//           u.username,
-//           u.full_name AS "fullName",
-
-//           t."routeEncoded",
-//           t."routeSegmentsEncoded"
-
-//         FROM territories t
-
-//         JOIN users u
-//           ON u.id = t."userId"
-
-//         LEFT JOIN activities a
-//           ON a.id = t."activityId"
-
-//         WHERE
-//           t.boundary IS NOT NULL
-
-//           AND NOT ST_IsEmpty(t.boundary)
-
-//           AND (
-//             a."include_in_clan" IS NULL
-//             OR a."include_in_clan" = false
-//           )
-//       ),
-
-//       ranked AS (
-//         SELECT
-//           b.*,
-
-//           ROW_NUMBER() OVER (
-//             ORDER BY
-//               b."updatedAt" DESC,
-//               b.id DESC
-//           ) AS rn
-
-//         FROM base b
-//       ),
-
-//       /*
-//        * Build one cumulative union.
-//        *
-//        * For each territory, previous_union contains every territory
-//        * newer than the current territory.
-//        *
-//        * This avoids the expensive correlated:
-//        *
-//        * SELECT ST_UnaryUnion(ST_Collect(...))
-//        * FROM ranked newer
-//        * WHERE newer.rn < r.rn
-//        *
-//        * being executed independently for every territory.
-//        */
-//       cumulative AS (
-//         SELECT
-//           r.*,
-
-//           ST_Union(r.boundary) OVER (
-//             ORDER BY
-//               r."updatedAt" DESC,
-//               r.id DESC
-
-//             ROWS BETWEEN
-//               UNBOUNDED PRECEDING
-//               AND 1 PRECEDING
-//           ) AS previous_union
-
-//         FROM ranked r
-//       ),
-
-//       clipped AS (
-//         SELECT
-//           c.id,
-//           c."userId",
-//           c."activityId",
-//           c.name,
-//           c."areaKm2",
-//           c."capturedAt",
-//           c."createdAt",
-//           c."updatedAt",
-
-//           c.username,
-//           c."fullName",
-
-//           c."routeEncoded",
-//           c."routeSegmentsEncoded",
-
-//           ST_AsGeoJSON(c.center)::json AS center,
-
-//           /*
-//            * First territory has no newer territory,
-//            * therefore return its original boundary.
-//            */
-//           CASE
-//             WHEN c.previous_union IS NULL THEN
-//               ST_Multi(
-//                 ST_CollectionExtract(
-//                   c.boundary,
-//                   3
-//                 )
-//               )
-
-//             /*
-//              * Avoid ST_Difference entirely when there
-//              * is no intersection.
-//              */
-//             WHEN NOT ST_Intersects(
-//               c.boundary,
-//               c.previous_union
-//             ) THEN
-//               ST_Multi(
-//                 ST_CollectionExtract(
-//                   c.boundary,
-//                   3
-//                 )
-//               )
-
-//             ELSE
-//               ST_Multi(
-//                 ST_CollectionExtract(
-//                   ST_MakeValid(
-//                     ST_Difference(
-//                       c.boundary,
-//                       c.previous_union
-//                     )
-//                   ),
-//                   3
-//                 )
-//               )
-//           END AS clipped_boundary
+export const getAllTerritories = async (req, res) => {
+  try {
+    const territoryRows = await prisma.$queryRaw`
+      WITH base AS (
+        SELECT
+          t.id,
+          t."userId",
+          t."activityId",
+          t.name,
+          t."areaKm2",
+          t."capturedAt",
+          t."createdAt",
+          t."updatedAt",
+
+          -- Validate once here instead of repeatedly below.
+          ST_MakeValid(t.boundary) AS boundary,
+
+          t.center,
+
+          u.username,
+          u.full_name AS "fullName",
+
+          t."routeEncoded",
+          t."routeSegmentsEncoded"
+
+        FROM territories t
+
+        JOIN users u
+          ON u.id = t."userId"
+
+        LEFT JOIN activities a
+          ON a.id = t."activityId"
+
+        WHERE
+          t.boundary IS NOT NULL
+
+          AND NOT ST_IsEmpty(t.boundary)
+
+          AND (
+            a."include_in_clan" IS NULL
+            OR a."include_in_clan" = false
+          )
+      ),
+
+      ranked AS (
+        SELECT
+          b.*,
+
+          ROW_NUMBER() OVER (
+            ORDER BY
+              b."updatedAt" DESC,
+              b.id DESC
+          ) AS rn
+
+        FROM base b
+      ),
+
+      /*
+       * Build one cumulative union.
+       *
+       * For each territory, previous_union contains every territory
+       * newer than the current territory.
+       *
+       * This avoids the expensive correlated:
+       *
+       * SELECT ST_UnaryUnion(ST_Collect(...))
+       * FROM ranked newer
+       * WHERE newer.rn < r.rn
+       *
+       * being executed independently for every territory.
+       */
+      cumulative AS (
+        SELECT
+          r.*,
+
+          ST_Union(r.boundary) OVER (
+            ORDER BY
+              r."updatedAt" DESC,
+              r.id DESC
+
+            ROWS BETWEEN
+              UNBOUNDED PRECEDING
+              AND 1 PRECEDING
+          ) AS previous_union
+
+        FROM ranked r
+      ),
+
+      clipped AS (
+        SELECT
+          c.id,
+          c."userId",
+          c."activityId",
+          c.name,
+          c."areaKm2",
+          c."capturedAt",
+          c."createdAt",
+          c."updatedAt",
+
+          c.username,
+          c."fullName",
+
+          c."routeEncoded",
+          c."routeSegmentsEncoded",
+
+          ST_AsGeoJSON(c.center)::json AS center,
+
+          /*
+           * First territory has no newer territory,
+           * therefore return its original boundary.
+           */
+          CASE
+            WHEN c.previous_union IS NULL THEN
+              ST_Multi(
+                ST_CollectionExtract(
+                  c.boundary,
+                  3
+                )
+              )
+
+            /*
+             * Avoid ST_Difference entirely when there
+             * is no intersection.
+             */
+            WHEN NOT ST_Intersects(
+              c.boundary,
+              c.previous_union
+            ) THEN
+              ST_Multi(
+                ST_CollectionExtract(
+                  c.boundary,
+                  3
+                )
+              )
+
+            ELSE
+              ST_Multi(
+                ST_CollectionExtract(
+                  ST_MakeValid(
+                    ST_Difference(
+                      c.boundary,
+                      c.previous_union
+                    )
+                  ),
+                  3
+                )
+              )
+          END AS clipped_boundary
 
-//         FROM cumulative c
-//       )
+        FROM cumulative c
+      )
 
-//       SELECT
-//         id,
-//         "userId",
-//         "activityId",
-//         name,
-//         "areaKm2",
-//         "capturedAt",
-//         "createdAt",
-//         "updatedAt",
-
-//         username,
-//         "fullName",
+      SELECT
+        id,
+        "userId",
+        "activityId",
+        name,
+        "areaKm2",
+        "capturedAt",
+        "createdAt",
+        "updatedAt",
+
+        username,
+        "fullName",
 
-//         "routeEncoded",
-//         "routeSegmentsEncoded",
+        "routeEncoded",
+        "routeSegmentsEncoded",
 
-//         center,
-
-//         ST_AsGeoJSON(clipped_boundary)::json AS boundary
-
-//       FROM clipped
-
-//       WHERE
-//         clipped_boundary IS NOT NULL
+        center,
+
+        ST_AsGeoJSON(clipped_boundary)::json AS boundary
+
+      FROM clipped
+
+      WHERE
+        clipped_boundary IS NOT NULL
 
-//         AND NOT ST_IsEmpty(clipped_boundary)
+        AND NOT ST_IsEmpty(clipped_boundary)
 
-//         AND GeometryType(clipped_boundary)
-//           IN ('POLYGON', 'MULTIPOLYGON')
-
-//       ORDER BY
-//         "updatedAt" DESC,
-//         id DESC;
-//     `;
-
-//     // =========================================================
-//     // ASSIGN COLORS TO USERS
-//     // =========================================================
-
-//     const seenUsers = new Set();
-
-//     for (const territory of territoryRows) {
-//       seenUsers.add(territory.userId);
-//     }
-
-//     const userColorMap = {};
-
-//     let colorIndex = 0;
-
-//     for (const userId of seenUsers) {
-//       userColorMap[userId] =
-//         TERRITORY_COLORS[
-//           Math.min(
-//             colorIndex,
-//             TERRITORY_COLORS.length - 1
-//           )
-//         ];
-
-//       colorIndex++;
-//     }
-
-//     // =========================================================
-//     // FORMAT RESPONSE
-//     // =========================================================
-
-//     const territories = territoryRows.map((t) => ({
-//       id: t.id,
-
-//       userId: t.userId,
-
-//       activityId: t.activityId,
-
-//       name: t.name,
-
-//       owner: {
-//         username: t.username,
-//         fullName: t.fullName,
-//       },
-
-//       areaKm2: Number(t.areaKm2),
-
-//       capturedAt: t.capturedAt,
-
-//       createdAt: t.createdAt,
-
-//       updatedAt: t.updatedAt,
-
-//       geojson: t.boundary,
-
-//       center: t.center,
-
-//       routeEncoded: t.routeEncoded,
-
-//       routeSegmentsEncoded:
-//         t.routeSegmentsEncoded ?? [],
-
-//       color:
-//         userColorMap[t.userId] ??
-//         TERRITORY_COLORS[
-//           TERRITORY_COLORS.length - 1
-//         ],
-//     }));
-
-//     // =========================================================
-//     // RESPONSE
-//     // =========================================================
-
-//     return res.status(200).json({
-//       success: true,
-
-//       count: territories.length,
-
-//       territories,
-//     });
-//   } catch (error) {
-//     console.error(
-//       'GET_ALL_TERRITORIES ERROR:',
-//       error
-//     );
-
-//     return res.status(500).json({
-//       success: false,
-
-//       message: 'Failed to fetch territories',
-
-//       error:
-//         process.env.NODE_ENV === 'development'
-//           ? error.message
-//           : undefined,
-//     });
-//   }
-// };
+        AND GeometryType(clipped_boundary)
+          IN ('POLYGON', 'MULTIPOLYGON')
+
+      ORDER BY
+        "updatedAt" DESC,
+        id DESC;
+    `;
+
+    // =========================================================
+    // ASSIGN COLORS TO USERS
+    // =========================================================
+
+    const seenUsers = new Set();
+
+    for (const territory of territoryRows) {
+      seenUsers.add(territory.userId);
+    }
+
+    const userColorMap = {};
+
+    let colorIndex = 0;
+
+    for (const userId of seenUsers) {
+      userColorMap[userId] =
+        TERRITORY_COLORS[
+          Math.min(
+            colorIndex,
+            TERRITORY_COLORS.length - 1
+          )
+        ];
+
+      colorIndex++;
+    }
+
+    // =========================================================
+    // FORMAT RESPONSE
+    // =========================================================
+
+    const territories = territoryRows.map((t) => ({
+      id: t.id,
+
+      userId: t.userId,
+
+      activityId: t.activityId,
+
+      name: t.name,
+
+      owner: {
+        username: t.username,
+        fullName: t.fullName,
+      },
+
+      areaKm2: Number(t.areaKm2),
+
+      capturedAt: t.capturedAt,
+
+      createdAt: t.createdAt,
+
+      updatedAt: t.updatedAt,
+
+      geojson: t.boundary,
+
+      center: t.center,
+
+      routeEncoded: t.routeEncoded,
+
+      routeSegmentsEncoded:
+        t.routeSegmentsEncoded ?? [],
+
+      color:
+        userColorMap[t.userId] ??
+        TERRITORY_COLORS[
+          TERRITORY_COLORS.length - 1
+        ],
+    }));
+
+    // =========================================================
+    // RESPONSE
+    // =========================================================
+
+    return res.status(200).json({
+      success: true,
+
+      count: territories.length,
+
+      territories,
+    });
+  } catch (error) {
+    console.error(
+      'GET_ALL_TERRITORIES ERROR:',
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+
+      message: 'Failed to fetch territories',
+
+      error:
+        process.env.NODE_ENV === 'development'
+          ? error.message
+          : undefined,
+    });
+  }
+};
 
 
 
@@ -2293,489 +2293,491 @@ const TERRITORY_COLORS = [
 
 
 
-export const getAllTerritories = async (req, res) => {
-  const startTime = Date.now();
-
-  try {
-    // ============================================================
-    // STEP 1: PAGINATION LIMIT
-    // ============================================================
-
-    const requestedLimit = Number.parseInt(
-      req.query.limit,
-      10
-    );
-
-    const limit =
-      Number.isInteger(requestedLimit) &&
-      requestedLimit > 0
-        ? Math.min(requestedLimit, 300)
-        : 100;
-
-    // ============================================================
-    // STEP 2: FETCH AND RESOLVE VISIBLE TERRITORIES
-    // ============================================================
-    //
-    // DURO TERRITORY DISPLAY RULES
-    //
-    // 1. Newer territory takes priority over older territory.
-    //
-    // 2. If a newer territory overlaps an older territory,
-    //    remove that overlapping area from the older
-    //    territory's visible polygon.
-    //
-    // 3. If a territory is completely covered, hide it.
-    //
-    // 4. If partially covered, show only its remaining area.
-    //
-    // 5. No 24-hour restriction.
-    //
-    // 6. Same rules apply across different users.
-    //
-    // 7. Older territories belonging to the same user
-    //    also lose overlapping visible portions.
-    //
-    // 8. Only personal territories are returned.
-    //    Club territories remain separate.
-    //
-    // 9. Existing database boundaries are not modified.
-    //
-    // 10. Preserve Polygon and MultiPolygon holes.
-    //
-    // IMPORTANT:
-    // capturedAt / createdAt determine precedence.
-    // updatedAt is NOT used because an old territory
-    // can be modified by a newer capture.
-
-    const territoryRows = await prisma.$queryRaw`
-      WITH selected_territories AS MATERIALIZED (
-        SELECT
-          t.id,
-          t."userId",
-          t."activityId",
-          t.name,
-          t."capturedAt",
-          t."createdAt",
-          t."updatedAt",
-          t.boundary,
-          t."routeEncoded",
-          t."routeSegmentsEncoded",
-
-          u.username,
-          u.full_name AS "fullName",
-
-          COALESCE(
-            a."include_in_clan",
-            false
-          ) AS in_clan
-
-        FROM territories t
-
-        JOIN users u
-          ON u.id = t."userId"
-
-        LEFT JOIN activities a
-          ON a.id = t."activityId"
-
-        WHERE
-          t.boundary IS NOT NULL
-
-          AND NOT ST_IsEmpty(t.boundary)
-
-          AND COALESCE(
-            a."include_in_clan",
-            false
-          ) = false
-
-        ORDER BY
-          t."createdAt" DESC,
-          t.id::text DESC
-
-        LIMIT ${limit}
-      ),
-
-      -- ==========================================================
-      -- STEP 3: PREPARE POLYGON GEOMETRIES
-      -- ==========================================================
-      --
-      -- Fix invalid geometry and keep only polygonal components.
-      -- This supports both Polygon and MultiPolygon boundaries.
-      --
-      -- This does not update the stored geometry.
-
-      prepared_territories AS (
-        SELECT
-          t.*,
-
-          ST_Multi(
-            ST_CollectionExtract(
-              ST_MakeValid(t.boundary),
-              3
-            )
-          ) AS valid_boundary
-
-        FROM selected_territories t
-      ),
-
-      -- ==========================================================
-      -- STEP 4: FIND NEWER OVERLAPPING TERRITORIES
-      -- ==========================================================
-      --
-      -- For each selected territory:
-      --
-      -- Find ALL newer territories that overlap it.
-      --
-      -- These newer territories may belong to:
-      -- - The same user
-      -- - Different users
-      --
-      -- Only territories from the same capture mode
-      -- are considered.
-      --
-      -- Use the raw stored polygon of newer territories
-      -- when calculating overlap.
-      --
-      -- The newer territories are not restricted to the
-      -- selected result limit.
-
-      clipped_territories AS (
-        SELECT
-          t.*,
-
-          ST_Multi(
-            ST_CollectionExtract(
-              ST_MakeValid(
-                CASE
-                  WHEN newer.newer_union IS NULL
-                  THEN t.valid_boundary
-
-                  ELSE ST_Difference(
-                    t.valid_boundary,
-                    newer.newer_union
-                  )
-                END
-              ),
-              3
-            )
-          ) AS visible_boundary
-
-        FROM prepared_territories t
-
-        LEFT JOIN LATERAL (
-          SELECT
-            ST_UnaryUnion(
-              ST_Collect(
-                ST_CollectionExtract(
-                  ST_MakeValid(n.boundary),
-                  3
-                )
-              )
-            ) AS newer_union
-
-          FROM territories n
-
-          LEFT JOIN activities na
-            ON na.id = n."activityId"
-
-          WHERE
-            n.id <> t.id
-
-            AND n.boundary IS NOT NULL
-
-            AND NOT ST_IsEmpty(n.boundary)
-
-            AND COALESCE(
-              na."include_in_clan",
-              false
-            ) = t.in_clan
-
-            -- Newer territory has priority.
-            AND (
-              n."createdAt" > t."createdAt"
-
-              OR (
-                n."createdAt" = t."createdAt"
-
-                AND n.id::text > t.id::text
-              )
-            )
-
-            -- Bounding box check for spatial index.
-            AND n.boundary && t.boundary
-
-            -- Exact geometry intersection check.
-            AND ST_Intersects(
-              n.boundary,
-              t.boundary
-            )
-
-        ) newer ON TRUE
-      ),
-
-      -- ==========================================================
-      -- STEP 5: REMOVE EMPTY TERRITORIES
-      -- ==========================================================
-      --
-      -- A fully captured territory will have no visible area.
-      --
-      -- Do not send empty polygons to Flutter.
-
-      visible_territories AS (
-        SELECT
-          t.*
-
-        FROM clipped_territories t
-
-        WHERE
-          t.visible_boundary IS NOT NULL
-
-          AND NOT ST_IsEmpty(
-            t.visible_boundary
-          )
-      ),
-
-      -- ==========================================================
-      -- STEP 6: CALCULATE FINAL VISIBLE AREAS
-      -- ==========================================================
-      --
-      -- Calculate area based on the visible polygon,
-      -- not the original stored territory area.
-      --
-      -- This ensures the API reflects only visible land.
-
-      measured_territories AS (
-        SELECT
-          t.*,
-
-          ST_Area(
-            t.visible_boundary::geography
-          ) AS visible_area_m2
-
-        FROM visible_territories t
-      )
-
-      -- ==========================================================
-      -- STEP 7: RETURN FINAL TERRITORY GEOMETRIES
-      -- ==========================================================
-      --
-      -- IMPORTANT:
-      --
-      -- Do not simplify each polygon independently.
-      --
-      -- Simplification may reintroduce small overlaps
-      -- or gaps between neighboring boundaries.
-      --
-      -- The returned GeoJSON may contain interior rings
-      -- representing holes.
-      --
-      -- Flutter must render those holes correctly.
-
-      SELECT
-        t.id,
-
-        t."userId",
-
-        t."activityId",
-
-        t.name,
-
-        t.visible_area_m2 / 1000000.0
-          AS "areaKm2",
-
-        t."capturedAt",
-
-        t."createdAt",
-
-        t."updatedAt",
-
-        t.username,
-
-        t."fullName",
-
-        t."routeEncoded",
-
-        t."routeSegmentsEncoded",
-
-        ST_AsGeoJSON(
-          ST_PointOnSurface(
-            t.visible_boundary
-          )
-        )::json AS center,
-
-        ST_AsGeoJSON(
-          t.visible_boundary
-        )::json AS boundary
-
-      FROM measured_territories t
-
-      WHERE t.visible_area_m2 > 0
-
-      ORDER BY
-        t."createdAt" DESC,
-        t.id::text DESC
-    `;
-
-    const sqlTime =
-      (Date.now() - startTime) / 1000;
-
-    console.log(
-      `Territory SQL finished in ${sqlTime}s`
-    );
-
-    // ============================================================
-    // STEP 8: ASSIGN USER COLORS
-    // ============================================================
-    //
-    // Retain existing DURO color behavior.
-    //
-    // Each user receives the same color for all
-    // returned territories belonging to that user.
-
-    const seenUsers = new Set();
-
-    for (const territory of territoryRows) {
-      seenUsers.add(String(territory.userId));
-    }
-
-    const userColorMap = {};
-
-    let colorIndex = 0;
-
-    for (const id of seenUsers) {
-      userColorMap[id] =
-        TERRITORY_COLORS[
-          Math.min(
-            colorIndex,
-            TERRITORY_COLORS.length - 1
-          )
-        ];
-
-      colorIndex++;
-    }
-
-    // ============================================================
-    // STEP 9: FORMAT TERRITORIES
-    // ============================================================
-    //
-    // Keep response structure compatible with the
-    // current DURO Flutter application.
-
-    const territories = territoryRows.map((t) => {
-      const ownerId = String(t.userId);
-
-      return {
-        id: t.id,
-
-        userId: t.userId,
-
-        activityId: t.activityId,
-
-        name: t.name,
-
-        owner: {
-          username: t.username,
-          fullName: t.fullName,
-        },
-
-        // Visible territory area after clipping.
-        areaKm2: Number(t.areaKm2 || 0),
-
-        capturedAt: t.capturedAt,
-
-        createdAt: t.createdAt,
-
-        updatedAt: t.updatedAt,
-
-        // Clipped visible Polygon/MultiPolygon.
-        geojson: t.boundary,
-
-        // Center of visible owned area.
-        center: t.center,
-
-        routeEncoded: t.routeEncoded,
-
-        routeSegmentsEncoded:
-          t.routeSegmentsEncoded ?? [],
-
-        color:
-          userColorMap[ownerId] ??
-          TERRITORY_COLORS[
-            TERRITORY_COLORS.length - 1
-          ],
-      };
-    });
-
-    // ============================================================
-    // STEP 10: DEBUG LOGGING
-    // ============================================================
-
-    console.log(
-      "GET_ALL_TERRITORIES:",
-      {
-        count: territories.length,
-
-        polygons: territories.filter(
-          (t) => t.geojson?.type === "Polygon"
-        ).length,
-
-        multiPolygons: territories.filter(
-          (t) => t.geojson?.type === "MultiPolygon"
-        ).length,
-
-        durationSeconds:
-          (Date.now() - startTime) / 1000,
-      }
-    );
-
-    // ============================================================
-    // STEP 11: SEND RESPONSE
-    // ============================================================
-
-    const totalTime =
-      (Date.now() - startTime) / 1000;
-
-    console.log(
-      `GET ALL TERRITORIES completed in ${totalTime}s`
-    );
-
-    return res.status(200).json({
-      success: true,
-
-      count: territories.length,
-
-      territories,
-
-      processingTime: `${totalTime}s`,
-    });
-
-  } catch (error) {
-    // ============================================================
-    // ERROR HANDLING
-    // ============================================================
-
-    console.error(
-      "GET_ALL_TERRITORIES ERROR:",
-      error
-    );
-
-    console.error(
-      `Failed after ${
-        (Date.now() - startTime) / 1000
-      } seconds`
-    );
-
-    return res.status(500).json({
-      success: false,
-
-      message: "Failed to fetch territories",
-
-      error:
-        process.env.NODE_ENV === "development"
-          ? error.message
-          : undefined,
-    });
-  }
-};
+
+
+// export const getAllTerritories = async (req, res) => {
+//   const startTime = Date.now();
+
+//   try {
+//     // ============================================================
+//     // STEP 1: PAGINATION LIMIT
+//     // ============================================================
+
+//     const requestedLimit = Number.parseInt(
+//       req.query.limit,
+//       10
+//     );
+
+//     const limit =
+//       Number.isInteger(requestedLimit) &&
+//       requestedLimit > 0
+//         ? Math.min(requestedLimit, 300)
+//         : 100;
+
+//     // ============================================================
+//     // STEP 2: FETCH AND RESOLVE VISIBLE TERRITORIES
+//     // ============================================================
+//     //
+//     // DURO TERRITORY DISPLAY RULES
+//     //
+//     // 1. Newer territory takes priority over older territory.
+//     //
+//     // 2. If a newer territory overlaps an older territory,
+//     //    remove that overlapping area from the older
+//     //    territory's visible polygon.
+//     //
+//     // 3. If a territory is completely covered, hide it.
+//     //
+//     // 4. If partially covered, show only its remaining area.
+//     //
+//     // 5. No 24-hour restriction.
+//     //
+//     // 6. Same rules apply across different users.
+//     //
+//     // 7. Older territories belonging to the same user
+//     //    also lose overlapping visible portions.
+//     //
+//     // 8. Only personal territories are returned.
+//     //    Club territories remain separate.
+//     //
+//     // 9. Existing database boundaries are not modified.
+//     //
+//     // 10. Preserve Polygon and MultiPolygon holes.
+//     //
+//     // IMPORTANT:
+//     // capturedAt / createdAt determine precedence.
+//     // updatedAt is NOT used because an old territory
+//     // can be modified by a newer capture.
+
+//     const territoryRows = await prisma.$queryRaw`
+//       WITH selected_territories AS MATERIALIZED (
+//         SELECT
+//           t.id,
+//           t."userId",
+//           t."activityId",
+//           t.name,
+//           t."capturedAt",
+//           t."createdAt",
+//           t."updatedAt",
+//           t.boundary,
+//           t."routeEncoded",
+//           t."routeSegmentsEncoded",
+
+//           u.username,
+//           u.full_name AS "fullName",
+
+//           COALESCE(
+//             a."include_in_clan",
+//             false
+//           ) AS in_clan
+
+//         FROM territories t
+
+//         JOIN users u
+//           ON u.id = t."userId"
+
+//         LEFT JOIN activities a
+//           ON a.id = t."activityId"
+
+//         WHERE
+//           t.boundary IS NOT NULL
+
+//           AND NOT ST_IsEmpty(t.boundary)
+
+//           AND COALESCE(
+//             a."include_in_clan",
+//             false
+//           ) = false
+
+//         ORDER BY
+//           t."createdAt" DESC,
+//           t.id::text DESC
+
+//         LIMIT ${limit}
+//       ),
+
+//       -- ==========================================================
+//       -- STEP 3: PREPARE POLYGON GEOMETRIES
+//       -- ==========================================================
+//       --
+//       -- Fix invalid geometry and keep only polygonal components.
+//       -- This supports both Polygon and MultiPolygon boundaries.
+//       --
+//       -- This does not update the stored geometry.
+
+//       prepared_territories AS (
+//         SELECT
+//           t.*,
+
+//           ST_Multi(
+//             ST_CollectionExtract(
+//               ST_MakeValid(t.boundary),
+//               3
+//             )
+//           ) AS valid_boundary
+
+//         FROM selected_territories t
+//       ),
+
+//       -- ==========================================================
+//       -- STEP 4: FIND NEWER OVERLAPPING TERRITORIES
+//       -- ==========================================================
+//       --
+//       -- For each selected territory:
+//       --
+//       -- Find ALL newer territories that overlap it.
+//       --
+//       -- These newer territories may belong to:
+//       -- - The same user
+//       -- - Different users
+//       --
+//       -- Only territories from the same capture mode
+//       -- are considered.
+//       --
+//       -- Use the raw stored polygon of newer territories
+//       -- when calculating overlap.
+//       --
+//       -- The newer territories are not restricted to the
+//       -- selected result limit.
+
+//       clipped_territories AS (
+//         SELECT
+//           t.*,
+
+//           ST_Multi(
+//             ST_CollectionExtract(
+//               ST_MakeValid(
+//                 CASE
+//                   WHEN newer.newer_union IS NULL
+//                   THEN t.valid_boundary
+
+//                   ELSE ST_Difference(
+//                     t.valid_boundary,
+//                     newer.newer_union
+//                   )
+//                 END
+//               ),
+//               3
+//             )
+//           ) AS visible_boundary
+
+//         FROM prepared_territories t
+
+//         LEFT JOIN LATERAL (
+//           SELECT
+//             ST_UnaryUnion(
+//               ST_Collect(
+//                 ST_CollectionExtract(
+//                   ST_MakeValid(n.boundary),
+//                   3
+//                 )
+//               )
+//             ) AS newer_union
+
+//           FROM territories n
+
+//           LEFT JOIN activities na
+//             ON na.id = n."activityId"
+
+//           WHERE
+//             n.id <> t.id
+
+//             AND n.boundary IS NOT NULL
+
+//             AND NOT ST_IsEmpty(n.boundary)
+
+//             AND COALESCE(
+//               na."include_in_clan",
+//               false
+//             ) = t.in_clan
+
+//             -- Newer territory has priority.
+//             AND (
+//               n."createdAt" > t."createdAt"
+
+//               OR (
+//                 n."createdAt" = t."createdAt"
+
+//                 AND n.id::text > t.id::text
+//               )
+//             )
+
+//             -- Bounding box check for spatial index.
+//             AND n.boundary && t.boundary
+
+//             -- Exact geometry intersection check.
+//             AND ST_Intersects(
+//               n.boundary,
+//               t.boundary
+//             )
+
+//         ) newer ON TRUE
+//       ),
+
+//       -- ==========================================================
+//       -- STEP 5: REMOVE EMPTY TERRITORIES
+//       -- ==========================================================
+//       --
+//       -- A fully captured territory will have no visible area.
+//       --
+//       -- Do not send empty polygons to Flutter.
+
+//       visible_territories AS (
+//         SELECT
+//           t.*
+
+//         FROM clipped_territories t
+
+//         WHERE
+//           t.visible_boundary IS NOT NULL
+
+//           AND NOT ST_IsEmpty(
+//             t.visible_boundary
+//           )
+//       ),
+
+//       -- ==========================================================
+//       -- STEP 6: CALCULATE FINAL VISIBLE AREAS
+//       -- ==========================================================
+//       --
+//       -- Calculate area based on the visible polygon,
+//       -- not the original stored territory area.
+//       --
+//       -- This ensures the API reflects only visible land.
+
+//       measured_territories AS (
+//         SELECT
+//           t.*,
+
+//           ST_Area(
+//             t.visible_boundary::geography
+//           ) AS visible_area_m2
+
+//         FROM visible_territories t
+//       )
+
+//       -- ==========================================================
+//       -- STEP 7: RETURN FINAL TERRITORY GEOMETRIES
+//       -- ==========================================================
+//       --
+//       -- IMPORTANT:
+//       --
+//       -- Do not simplify each polygon independently.
+//       --
+//       -- Simplification may reintroduce small overlaps
+//       -- or gaps between neighboring boundaries.
+//       --
+//       -- The returned GeoJSON may contain interior rings
+//       -- representing holes.
+//       --
+//       -- Flutter must render those holes correctly.
+
+//       SELECT
+//         t.id,
+
+//         t."userId",
+
+//         t."activityId",
+
+//         t.name,
+
+//         t.visible_area_m2 / 1000000.0
+//           AS "areaKm2",
+
+//         t."capturedAt",
+
+//         t."createdAt",
+
+//         t."updatedAt",
+
+//         t.username,
+
+//         t."fullName",
+
+//         t."routeEncoded",
+
+//         t."routeSegmentsEncoded",
+
+//         ST_AsGeoJSON(
+//           ST_PointOnSurface(
+//             t.visible_boundary
+//           )
+//         )::json AS center,
+
+//         ST_AsGeoJSON(
+//           t.visible_boundary
+//         )::json AS boundary
+
+//       FROM measured_territories t
+
+//       WHERE t.visible_area_m2 > 0
+
+//       ORDER BY
+//         t."createdAt" DESC,
+//         t.id::text DESC
+//     `;
+
+//     const sqlTime =
+//       (Date.now() - startTime) / 1000;
+
+//     console.log(
+//       `Territory SQL finished in ${sqlTime}s`
+//     );
+
+//     // ============================================================
+//     // STEP 8: ASSIGN USER COLORS
+//     // ============================================================
+//     //
+//     // Retain existing DURO color behavior.
+//     //
+//     // Each user receives the same color for all
+//     // returned territories belonging to that user.
+
+//     const seenUsers = new Set();
+
+//     for (const territory of territoryRows) {
+//       seenUsers.add(String(territory.userId));
+//     }
+
+//     const userColorMap = {};
+
+//     let colorIndex = 0;
+
+//     for (const id of seenUsers) {
+//       userColorMap[id] =
+//         TERRITORY_COLORS[
+//           Math.min(
+//             colorIndex,
+//             TERRITORY_COLORS.length - 1
+//           )
+//         ];
+
+//       colorIndex++;
+//     }
+
+//     // ============================================================
+//     // STEP 9: FORMAT TERRITORIES
+//     // ============================================================
+//     //
+//     // Keep response structure compatible with the
+//     // current DURO Flutter application.
+
+//     const territories = territoryRows.map((t) => {
+//       const ownerId = String(t.userId);
+
+//       return {
+//         id: t.id,
+
+//         userId: t.userId,
+
+//         activityId: t.activityId,
+
+//         name: t.name,
+
+//         owner: {
+//           username: t.username,
+//           fullName: t.fullName,
+//         },
+
+//         // Visible territory area after clipping.
+//         areaKm2: Number(t.areaKm2 || 0),
+
+//         capturedAt: t.capturedAt,
+
+//         createdAt: t.createdAt,
+
+//         updatedAt: t.updatedAt,
+
+//         // Clipped visible Polygon/MultiPolygon.
+//         geojson: t.boundary,
+
+//         // Center of visible owned area.
+//         center: t.center,
+
+//         routeEncoded: t.routeEncoded,
+
+//         routeSegmentsEncoded:
+//           t.routeSegmentsEncoded ?? [],
+
+//         color:
+//           userColorMap[ownerId] ??
+//           TERRITORY_COLORS[
+//             TERRITORY_COLORS.length - 1
+//           ],
+//       };
+//     });
+
+//     // ============================================================
+//     // STEP 10: DEBUG LOGGING
+//     // ============================================================
+
+//     console.log(
+//       "GET_ALL_TERRITORIES:",
+//       {
+//         count: territories.length,
+
+//         polygons: territories.filter(
+//           (t) => t.geojson?.type === "Polygon"
+//         ).length,
+
+//         multiPolygons: territories.filter(
+//           (t) => t.geojson?.type === "MultiPolygon"
+//         ).length,
+
+//         durationSeconds:
+//           (Date.now() - startTime) / 1000,
+//       }
+//     );
+
+//     // ============================================================
+//     // STEP 11: SEND RESPONSE
+//     // ============================================================
+
+//     const totalTime =
+//       (Date.now() - startTime) / 1000;
+
+//     console.log(
+//       `GET ALL TERRITORIES completed in ${totalTime}s`
+//     );
+
+//     return res.status(200).json({
+//       success: true,
+
+//       count: territories.length,
+
+//       territories,
+
+//       processingTime: `${totalTime}s`,
+//     });
+
+//   } catch (error) {
+//     // ============================================================
+//     // ERROR HANDLING
+//     // ============================================================
+
+//     console.error(
+//       "GET_ALL_TERRITORIES ERROR:",
+//       error
+//     );
+
+//     console.error(
+//       `Failed after ${
+//         (Date.now() - startTime) / 1000
+//       } seconds`
+//     );
+
+//     return res.status(500).json({
+//       success: false,
+
+//       message: "Failed to fetch territories",
+
+//       error:
+//         process.env.NODE_ENV === "development"
+//           ? error.message
+//           : undefined,
+//     });
+//   }
+// };
 
 
 
