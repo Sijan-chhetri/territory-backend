@@ -381,6 +381,189 @@ const parseEventStats = (body, { partial = false } = {}) => {
   return data;
 };
 
+const EVENT_AUTO_END_GRACE_MS = 30 * 60 * 1000;
+
+/**
+ * Automatically ends a Club Event if:
+ *
+ * - the event run was actually started
+ * - the leader has NOT ended it
+ * - it is not already completed/cancelled
+ * - scheduled endsAt + 30 minutes has passed
+ *
+ * The automatic global cutoff is:
+ *
+ * endsAt + 30 minutes
+ *
+ * NOT the time this function happens to run.
+ */
+const autoEndExpiredClanEvent = async (eventId) => {
+  const event = await prisma.clanEvent.findUnique({
+    where: {
+      id: eventId,
+    },
+
+    select: {
+      id: true,
+      status: true,
+      startsAt: true,
+      endsAt: true,
+      runStartedAt: true,
+      leaderStoppedAt: true,
+      completedAt: true,
+    },
+  });
+
+  if (!event) {
+    return {
+      ended: false,
+      event: null,
+    };
+  }
+
+  // Already finished or cancelled.
+  if (
+    event.status === "COMPLETED" ||
+    event.status === "CANCELLED" ||
+    event.leaderStoppedAt
+  ) {
+    return {
+      ended: false,
+      event,
+    };
+  }
+
+  // Do not auto-complete an event that never actually started.
+  if (!event.runStartedAt) {
+    return {
+      ended: false,
+      event,
+    };
+  }
+
+  if (!event.endsAt) {
+    return {
+      ended: false,
+      event,
+    };
+  }
+
+  const scheduledEndMs = new Date(event.endsAt).getTime();
+
+  if (!Number.isFinite(scheduledEndMs)) {
+    return {
+      ended: false,
+      event,
+    };
+  }
+
+  const automaticCutoffAt = new Date(scheduledEndMs + EVENT_AUTO_END_GRACE_MS);
+
+  // Still inside the 30-minute grace period.
+  if (Date.now() < automaticCutoffAt.getTime()) {
+    return {
+      ended: false,
+      event,
+    };
+  }
+
+  /**
+   * Use updateMany for duplicate/race protection.
+   *
+   * If two requests arrive at the same moment,
+   * only one should perform the automatic close.
+   */
+  const eventUpdate = await prisma.clanEvent.updateMany({
+    where: {
+      id: eventId,
+
+      status: {
+        notIn: ["COMPLETED", "CANCELLED"],
+      },
+
+      leaderStoppedAt: null,
+
+      runStartedAt: {
+        not: null,
+      },
+    },
+
+    data: {
+      status: "COMPLETED",
+
+      // This is now the authoritative automatic event cutoff.
+      leaderStoppedAt: automaticCutoffAt,
+    },
+  });
+
+  if (eventUpdate.count === 0) {
+    const latestEvent = await prisma.clanEvent.findUnique({
+      where: {
+        id: eventId,
+      },
+    });
+
+    return {
+      ended: false,
+      event: latestEvent,
+    };
+  }
+
+  /**
+   * Everybody still running is cut off at the
+   * same automatic event cutoff.
+   *
+   * People who stopped earlier are NOT touched.
+   */
+  await prisma.clanEventParticipant.updateMany({
+    where: {
+      eventId,
+
+      status: "RUNNING",
+    },
+
+    data: {
+      status: "CUTOFF_PENDING",
+
+      eventCutoffAt: automaticCutoffAt,
+    },
+  });
+
+  /**
+   * Save latest provisional totals/ranks.
+   */
+  const snapshot = await persistEventResultsSnapshot(eventId);
+
+  /**
+   * If everybody had already finalized,
+   * results are immediately completely final.
+   */
+  if (snapshot.pendingFinalizations === 0) {
+    await prisma.clanEvent.update({
+      where: {
+        id: eventId,
+      },
+
+      data: {
+        completedAt: automaticCutoffAt,
+      },
+    });
+  }
+
+  const latestEvent = await prisma.clanEvent.findUnique({
+    where: {
+      id: eventId,
+    },
+  });
+
+  return {
+    ended: true,
+    event: latestEvent,
+    cutoffAt: automaticCutoffAt,
+    snapshot,
+  };
+};
+
 const EVENT_FINALIZATION_GRACE_MS = 20 * 60 * 1000;
 
 const recoverExpiredEventParticipants = async (eventId) => {
@@ -1477,6 +1660,44 @@ export const leaveClanEvent = async (req, res) => {
   }
 };
 
+const autoEndAllExpiredClanEvents = async () => {
+  const now = new Date();
+
+  const candidates = await prisma.clanEvent.findMany({
+    where: {
+      runStartedAt: {
+        not: null,
+      },
+
+      leaderStoppedAt: null,
+
+      status: {
+        notIn: ["COMPLETED", "CANCELLED"],
+      },
+
+      // First narrow down events whose scheduled end has passed.
+      endsAt: {
+        lt: now,
+      },
+    },
+
+    select: {
+      id: true,
+      endsAt: true,
+    },
+  });
+
+  for (const event of candidates) {
+    const automaticCutoffAt = new Date(
+      new Date(event.endsAt).getTime() + EVENT_AUTO_END_GRACE_MS,
+    );
+
+    if (now >= automaticCutoffAt) {
+      await autoEndExpiredClanEvent(event.id);
+    }
+  }
+};
+
 /**
  * |--------------------------------------------------------------------------
  * | GET CURRENT USER'S CLAN EVENTS
@@ -1486,6 +1707,8 @@ export const leaveClanEvent = async (req, res) => {
 export const getMyClanEvents = async (req, res) => {
   try {
     const userId = req.user.id;
+
+    await autoEndAllExpiredClanEvents();
 
     const membership = await getUserClanMembership(userId);
 
@@ -1723,6 +1946,10 @@ export const getClanEventDetail = async (req, res) => {
     const userId = req.user.id;
 
     const { eventId } = req.params;
+
+    // Automatically close forgotten live events after
+    // scheduled end + 30 minutes.
+    await autoEndExpiredClanEvent(eventId);
 
     const event = await prisma.clanEvent.findUnique({
       where: {
@@ -2273,6 +2500,8 @@ export const updateClanEventRunProgress = async (req, res) => {
 
     const { eventId } = req.params;
 
+    await autoEndExpiredClanEvent(eventId);
+
     const { event, membership, participant } = await getEventRunContext({
       eventId,
       userId,
@@ -2392,6 +2621,7 @@ export const stopClanEventRun = async (req, res) => {
     const userId = req.user.id;
 
     const { eventId } = req.params;
+    await autoEndExpiredClanEvent(eventId);
 
     const { event, membership, participant } = await getEventRunContext({
       eventId,
@@ -2579,6 +2809,7 @@ export const endClanEventRun = async (req, res) => {
   try {
     const userId = req.user.id;
     const { eventId } = req.params;
+    await autoEndExpiredClanEvent(eventId);
 
     const { event, participant } = await getEventRunContext({
       eventId,
@@ -2804,6 +3035,7 @@ export const finalizeClanEventRun = async (req, res) => {
     const userId = req.user.id;
 
     const { eventId } = req.params;
+    await autoEndExpiredClanEvent(eventId);
 
     const { event, membership, participant } = await getEventRunContext({
       eventId,
@@ -3083,6 +3315,8 @@ export const getClanEventRunStatus = async (req, res) => {
 
     const { eventId } = req.params;
 
+    await autoEndExpiredClanEvent(eventId);
+
     const { event, membership, participant } = await getEventRunContext({
       eventId,
       userId,
@@ -3184,7 +3418,8 @@ export const getClanEventRunResults = async (req, res) => {
     const userId = req.user.id;
 
     const { eventId } = req.params;
-    // await recoverExpiredEventParticipants(eventId);
+
+    await autoEndExpiredClanEvent(eventId);
 
     const event = await prisma.clanEvent.findUnique({
       where: {
@@ -4074,6 +4309,7 @@ export const deleteClanEvent = async (req, res) => {
 export const discoverClanEvents = async (req, res) => {
   try {
     const userId = req.user.id;
+    await autoEndAllExpiredClanEvents();
     const now = new Date();
 
     const membership = await getUserClanMembership(userId);

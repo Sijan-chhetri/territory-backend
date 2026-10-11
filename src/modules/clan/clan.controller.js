@@ -747,6 +747,17 @@ export const getClanDetailsbyId = async (req, res) => {
             id: true,
             username: true,
             fullName: true,
+            skinIndex: true,
+
+            avatars: {
+              where: {
+                isEquipped: true,
+                status: "UNLOCKED",
+              },
+              include: {
+                avatar: true,
+              },
+            },
           },
         },
 
@@ -757,6 +768,18 @@ export const getClanDetailsbyId = async (req, res) => {
                 id: true,
                 username: true,
                 fullName: true,
+
+                skinIndex: true,
+
+                avatars: {
+                  where: {
+                    isEquipped: true,
+                    status: "UNLOCKED",
+                  },
+                  include: {
+                    avatar: true,
+                  },
+                },
               },
             },
           },
@@ -890,6 +913,18 @@ export const getClanDetailsbyId = async (req, res) => {
         const activityStats =
           activityStatsByUser.get(String(member.userId)) ?? {};
 
+        const avatar = {};
+
+        for (const item of member.user.avatars ?? []) {
+          if (!item.avatar) continue;
+
+          avatar[item.avatar.type] = {
+            id: item.avatar.id,
+            file: item.avatar.file,
+            type: item.avatar.type,
+          };
+        }
+
         return {
           membershipId: member.id,
           userId: member.userId,
@@ -900,6 +935,9 @@ export const getClanDetailsbyId = async (req, res) => {
             id: member.user.id,
             username: member.user.username,
             fullName: member.user.fullName,
+
+            skinIndex: member.user.skinIndex ?? 2,
+            avatar,
           },
 
           contribution: {
@@ -1141,6 +1179,28 @@ export const getClanDetailsbyId = async (req, res) => {
       };
     }
 
+    const captainAvatar = {};
+
+    for (const item of clan.captain?.avatars ?? []) {
+      if (!item.avatar) continue;
+
+      captainAvatar[item.avatar.type] = {
+        id: item.avatar.id,
+        file: item.avatar.file,
+        type: item.avatar.type,
+      };
+    }
+
+    const formattedCaptain = clan.captain
+      ? {
+          id: clan.captain.id,
+          username: clan.captain.username,
+          fullName: clan.captain.fullName,
+          skinIndex: clan.captain.skinIndex ?? 2,
+          avatar: captainAvatar,
+        }
+      : null;
+
     return res.status(200).json({
       success: true,
       message: "Clan details fetched successfully",
@@ -1160,7 +1220,7 @@ export const getClanDetailsbyId = async (req, res) => {
           joinMethod: clan.isPrivate ? "REQUEST" : "DIRECT",
 
           captainId: clan.captainId,
-          captain: clan.captain,
+          captain: formattedCaptain,
 
           totalXp: toNumber(clan.totalXp),
           storedTerritoryCount: toNumber(clan.territoryCount),

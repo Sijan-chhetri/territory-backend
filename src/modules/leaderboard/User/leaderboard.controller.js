@@ -86,12 +86,14 @@ export const getDistanceLeaderboard = async (req, res) => {
         COALESCE(up."territoriesCaptured", 0)::int AS "territoriesCaptured"
 
       FROM activities a
-      JOIN users u
-        ON u.id = a."userId"
-      LEFT JOIN user_progress up
-        ON up."userId" = u.id
+JOIN users u
+  ON u.id = a."userId"
+LEFT JOIN user_progress up
+  ON up."userId" = u.id
 
-      GROUP BY
+WHERE a.visibility = 'PUBLIC'
+
+GROUP BY
         u.id,
         u.username,
         u."full_name",
@@ -275,6 +277,7 @@ export const getLocalDistanceLeaderboard = async (req, res) => {
         ON up."userId" = u.id
 
       WHERE LOWER(u.country) = LOWER(${currentUser.country})
+  AND a.visibility = 'PUBLIC'
 
       GROUP BY
         u.id,
