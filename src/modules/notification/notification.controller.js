@@ -114,7 +114,6 @@ export const createNotification = async ({
  * GET MY NOTIFICATIONS
  * ============================================================================
  */
-
 const USER_UUID_REGEX =
   /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
 
