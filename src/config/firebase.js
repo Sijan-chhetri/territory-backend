@@ -85,4 +85,8 @@ if (!admin.apps.length) {
   console.log("✅ Firebase Admin initialized successfully");
 }
 
+<<<<<<< HEAD
 export default admin;
+=======
+export default admin;
+>>>>>>> 6402043e58f5b3d55270fe3d1dc7f26286828e90
