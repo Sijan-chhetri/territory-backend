@@ -9,9 +9,7 @@ import dns from "node:dns";
 
 import { startClanMessageCleanupJob } from "./src/jobs/clanMessageCleanup.job.js";
 import { initSocket } from "./src/config/socket.js";
-import {
-  verifyEmailTransporter,
-} from "./src/config/emailTransporter.js";
+import { verifyEmailTransporter } from "./src/config/emailTransporter.js";
 import emailTransporter from "./src/config/emailTransporter.js";
 
 import authRoutes from "./src/modules/auth/auth.routes.js";
@@ -63,6 +61,8 @@ app.use(
     limit: "50mb",
   }),
 );
+
+app.use(express.static("public"));
 
 // ============================================================================
 // SOCKET.IO
@@ -148,10 +148,7 @@ app.use("/api/clan/leaderboard", clanLeaderboardRoutes);
 app.use("/api/clan-chat", clanChatRoutes);
 app.use("/api/clan-event", clanEventRoutes);
 app.use("/api/club-wars", clubWarRoutes);
-app.use(
-  "/api/avatars",
-  avatarRoutes
-);
+app.use("/api/avatars", avatarRoutes);
 
 // ============================================================================
 // 404 HANDLER

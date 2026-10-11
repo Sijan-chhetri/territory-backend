@@ -56,6 +56,7 @@ model User {
   createdClubWars         ClubWar[]              @relation("CreatedClubWars")
   passwordResetOtps       PasswordResetOtp[]
   avatars                 UserAvatar[]
+  activityLikes ActivityLike[]
 
   @@index([email])
   @@index([username])
@@ -387,11 +388,31 @@ model Activity {
   territories    Territory[]
   xptransactions XPTransaction[]
 
+  likes ActivityLike[]
+
   clanEventParticipant ClanEventParticipant?
 
   @@unique([userId, clientActivityId])
   @@index([userId])
   @@map("activities")
+}
+
+// ==========================================
+// ACTIVITY LIKES (DURO BOOST FEATURE)
+// ==========================================
+
+model ActivityLike {
+  id         String   @id @default(uuid())
+  userId     String
+  activityId String
+  createdAt  DateTime @default(now())
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  activity Activity @relation(fields: [activityId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, activityId])
+  @@index([activityId, createdAt])
+  @@map("activity_likes")
 }
 
 model Territory {
@@ -620,8 +641,8 @@ model ClubWarParticipant {
 }
 
 model ClanEvent {
-  id          String @id @default(uuid())
-  clanId      String
+  id          String  @id @default(uuid())
+  clanId      String?
   createdById String
 
   title       String
@@ -632,26 +653,26 @@ model ClanEvent {
   startsAt DateTime
   endsAt   DateTime
 
-  maxParticipants Int?
+  maxParticipants  Int?
   targetDistanceKm Float?
-  status          ClanEventStatus @default(UPCOMING)
+  status           ClanEventStatus @default(UPCOMING)
 
   // ============================================================
-  // ACTUAL CLUB EVENT RUN
+  // ACTUAL EVENT RUN
   // ============================================================
 
-  // The real leader who controls this particular event run.
-  // This is snapshotted when the event run begins.
+  // Club event:
+  // runLeaderId = actual club leader
+  //
+  // Public standalone event:
+  // runLeaderId = event creator
   runLeaderId String?
 
-  // Actual time the club event activity begins.
   runStartedAt DateTime?
 
-  // AUTHORITATIVE event cutoff.
-  // When leader stops, no participant event stats count after this.
+  // Authoritative event cutoff
   leaderStoppedAt DateTime?
 
-  // When final event calculations/rankings are completed.
   completedAt DateTime?
 
   // ============================================================
@@ -666,7 +687,11 @@ model ClanEvent {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  clan Clan @relation(fields: [clanId], references: [id], onDelete: Cascade)
+  // ============================================================
+  // RELATIONS
+  // ============================================================
+
+  clan Clan? @relation(fields: [clanId], references: [id], onDelete: Cascade)
 
   createdBy User @relation("CreatedClanEvents", fields: [createdById], references: [id], onDelete: Cascade)
 
@@ -747,6 +772,7 @@ model ClanEventParticipant {
   avgPace  Float?
   avgSpeed Float?
   topSpeed Float?
+  kmSplits Json?
 
   // Final event ranking
   rank Int?

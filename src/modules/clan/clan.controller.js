@@ -2023,7 +2023,7 @@ export const requestToJoinClan = async (req, res) => {
     if (existingMember) {
       return res.status(400).json({
         success: false,
-        message: "Already a clan member",
+        message: "Already a club member",
       });
     }
 
@@ -2051,7 +2051,7 @@ export const requestToJoinClan = async (req, res) => {
 
     return res.status(201).json({
       success: true,
-      message: "Join request sent",
+      message: "Club join request sent",
       data: request,
     });
   } catch (error) {
@@ -3163,7 +3163,7 @@ export const joinClanDirectly = async (req, res) => {
     return res.status(200).json({
       success: true,
 
-      message: "Joined clan successfully",
+      message: "Joined club successfully",
 
       eventInvitationMessage,
 
@@ -3204,7 +3204,7 @@ export const joinClanDirectly = async (req, res) => {
     return res.status(500).json({
       success: false,
 
-      message: "Failed to join clan",
+      message: "Failed to join club",
 
       error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });

@@ -1597,6 +1597,30 @@ export const getAllTerritories = async (req, res) => {
             a."include_in_clan" IS NULL
             OR a."include_in_clan" = false
           )
+
+          /*
+ * Event runs never belong to My Territory.
+ *
+ * Check both activityId and clientActivityId so this also works
+ * before/after event finalization.
+ */
+AND NOT EXISTS (
+  SELECT 1
+
+  FROM clan_event_participants cep
+
+  WHERE
+    cep."activityId" = t."activityId"
+
+    OR (
+      cep."userId" = t."userId"
+
+      AND a."clientActivityId" IS NOT NULL
+
+      AND cep."clientActivityId" =
+          a."clientActivityId"
+    )
+)
       ),
 
       ranked AS (

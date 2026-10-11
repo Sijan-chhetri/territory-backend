@@ -91,8 +91,6 @@ export const getDistanceLeaderboard = async (req, res) => {
       LEFT JOIN user_progress up
         ON up."userId" = u.id
 
-      WHERE COALESCE(a."include_in_clan", false) = false
-
       GROUP BY
         u.id,
         u.username,
@@ -107,6 +105,17 @@ export const getDistanceLeaderboard = async (req, res) => {
       ORDER BY "totalDistanceKm" DESC
       LIMIT 50;
     `;
+
+    console.log(
+      "DISTANCE LEADERBOARD DEBUG:",
+      leaderboard.map((item) => ({
+        userId: item.userId,
+        username: item.username,
+        fullName: item.fullName,
+        activitiesCount: Number(item.activitiesCount ?? 0),
+        totalDistanceKm: Number(item.totalDistanceKm ?? 0),
+      })),
+    );
 
     const basicData = leaderboard.map((item, index) => ({
       rank: index + 1,
@@ -265,8 +274,7 @@ export const getLocalDistanceLeaderboard = async (req, res) => {
       LEFT JOIN user_progress up
         ON up."userId" = u.id
 
-      WHERE COALESCE(a."include_in_clan", false) = false
-        AND LOWER(u.country) = LOWER(${currentUser.country})
+      WHERE LOWER(u.country) = LOWER(${currentUser.country})
 
       GROUP BY
         u.id,
