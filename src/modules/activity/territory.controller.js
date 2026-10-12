@@ -1011,236 +1011,292 @@ async function updateRouteEncodedFromGeometry(territoryId) {
 
 
 
-export const captureTerritory = async ({ userId, activityId, newTerritoryId }) => {
+export const captureTerritory = async ({
+  userId,
+  activityId,
+  newTerritoryId,
+}) => {
   const result = await prisma.$transaction(
     async (tx) => {
-      /**
-       * 10m capture zone from the actual walked route.
-       * This avoids using the whole polygon too aggressively.
-       */
-      const capturedParts = await tx.$queryRaw`
-        WITH current_territory AS (
+      // Serialize territory capture operations.
+      await tx.$executeRaw`
+        SELECT pg_advisory_xact_lock(847291, 1);
+      `;
+
+      const currentRows = await tx.$queryRaw`
+        SELECT
+          t.id,
+          t."userId",
+          ST_Area(t.boundary::geography) / 1000000.0
+            AS "areaKm2",
+          ct."clanId"
+        FROM territories t
+        LEFT JOIN clan_territories ct
+          ON ct."territoryId" = t.id
+        WHERE t.id = ${newTerritoryId}
+          AND t."userId" = ${userId}
+          AND t."activityId" = ${activityId}
+          AND t.boundary IS NOT NULL
+          AND NOT ST_IsEmpty(t.boundary)
+        LIMIT 1;
+      `;
+
+      if (!currentRows.length) {
+        return {
+          captured: false,
+          capturedCount: 0,
+          areaKm2: 0,
+          notifications: [],
+        };
+      }
+
+      const current = currentRows[0];
+      const currentClanId = current.clanId;
+
+      // Determine opposing ownership:
+      // Personal -> other personal users.
+      // Club -> other clubs.
+      const affected = await tx.$queryRaw`
+        WITH current_area AS (
           SELECT
-            t.id,
-            t.boundary,
-            t."routeGeometry",
-            COALESCE(a."include_in_clan", false) AS "currentIncludeInClan",
-            ST_Buffer(
-              t."routeGeometry"::geography,
-              10,
-              'endcap=round join=round quad_segs=4'
-            )::geometry AS capture_zone
-          FROM territories t
-          JOIN activities a ON a.id = t."activityId"
-          WHERE t.id = ${newTerritoryId}
-          LIMIT 1
+            ST_Multi(
+              ST_CollectionExtract(
+                ST_MakeValid(boundary),
+                3
+              )
+            ) AS boundary
+          FROM territories
+          WHERE id = ${newTerritoryId}
         ),
 
-        captured_parts AS (
+        opponents AS (
           SELECT
-            enemy.id AS "enemyTerritoryId",
-            enemy."userId" AS "enemyUserId",
+            enemy.id,
+            enemy."userId",
+            ect."clanId",
+            enemy.boundary,
             ST_Multi(
               ST_CollectionExtract(
                 ST_MakeValid(
-                  ST_Intersection(enemy.boundary, ct.capture_zone)
+                  ST_Intersection(
+                    enemy.boundary,
+                    current_area.boundary
+                  )
                 ),
                 3
               )
-            ) AS captured_part
+            ) AS overlap
           FROM territories enemy
-          JOIN activities enemy_activity ON enemy_activity.id = enemy."activityId"
-          CROSS JOIN current_territory ct
-          WHERE enemy."userId" != ${userId}
-            AND enemy.id != ${newTerritoryId}
-            AND COALESCE(enemy_activity."include_in_clan", false)
-                = ct."currentIncludeInClan"
+          LEFT JOIN clan_territories ect
+            ON ect."territoryId" = enemy.id
+          CROSS JOIN current_area
+          WHERE enemy.id != ${newTerritoryId}
             AND enemy.boundary IS NOT NULL
             AND NOT ST_IsEmpty(enemy.boundary)
-            AND ST_Intersects(enemy.boundary, ct.capture_zone)
+            AND (
+              (
+                ${currentClanId}::text IS NULL
+                AND ect."clanId" IS NULL
+                AND enemy."userId" != ${userId}
+              )
+              OR
+              (
+                ${currentClanId}::text IS NOT NULL
+                AND ect."clanId" IS NOT NULL
+                AND ect."clanId"::text
+                    != ${currentClanId}::text
+              )
+            )
+            AND ST_Intersects(
+              enemy.boundary,
+              current_area.boundary
+            )
         )
 
         SELECT
-          "enemyTerritoryId",
-          "enemyUserId",
-          ST_Area(captured_part::geography) / 1000000 AS "capturedAreaKm2"
-        FROM captured_parts
-        WHERE captured_part IS NOT NULL
-          AND NOT ST_IsEmpty(captured_part)
-          AND ST_Area(captured_part::geography) > 1;
+          id,
+          "userId",
+          "clanId",
+          ST_Area(overlap::geography)
+            AS "overlapM2"
+        FROM opponents
+        WHERE overlap IS NOT NULL
+          AND NOT ST_IsEmpty(overlap)
+          AND ST_Area(overlap::geography) > 1;
       `;
 
-      for (const part of capturedParts) {
-        const affectedAreaKm2 = Number(part.capturedAreaKm2 || 0);
-        if (affectedAreaKm2 <= 0.000001) continue;
+      const notifications = [];
+      const affectedClans = new Set();
+      let capturedCount = 0;
+
+      for (const opponent of affected) {
+        // Re-read and lock the opponent row.
+        const changed = await tx.$queryRaw`
+          WITH current_area AS (
+            SELECT boundary
+            FROM territories
+            WHERE id = ${newTerritoryId}
+          ),
+          remaining AS (
+            SELECT
+              ST_Multi(
+                ST_CollectionExtract(
+                  ST_MakeValid(
+                    ST_Difference(
+                      enemy.boundary,
+                      current_area.boundary
+                    )
+                  ),
+                  3
+                )
+              ) AS boundary
+            FROM territories enemy
+            CROSS JOIN current_area
+            WHERE enemy.id = ${opponent.id}
+            FOR UPDATE OF enemy
+          )
+          UPDATE territories t
+          SET
+            boundary = remaining.boundary,
+            center = CASE
+              WHEN ST_IsEmpty(remaining.boundary)
+                THEN NULL
+              ELSE ST_PointOnSurface(remaining.boundary)
+            END,
+            "areaKm2" =
+              ST_Area(remaining.boundary::geography)
+              / 1000000.0,
+            "updatedAt" = NOW()
+          FROM remaining
+          WHERE t.id = ${opponent.id}
+          RETURNING t.id, t."areaKm2";
+        `;
+
+        if (!changed.length) continue;
+
+        const affectedAreaKm2 =
+          Number(opponent.overlapM2) / 1000000;
+
+        if (affectedAreaKm2 <= 0) continue;
+
+        capturedCount++;
 
         await tx.territoryEvent.create({
           data: {
             territoryId: newTerritoryId,
             userId,
-            opponentUserId: part.enemyUserId,
+            opponentUserId: opponent.userId,
             activityId,
             type: "CAPTURE",
             affectedAreaKm2,
           },
         });
 
-        await createNotification({
-          userId: part.enemyUserId,
-          title: "Territory Captured",
-          message: "Another player captured part of your territory.",
-          type: "TERRITORY_CAPTURED",
-          territoryId: part.enemyTerritoryId,
-          activityId,
+        notifications.push({
+          userId: opponent.userId,
+          territoryId: opponent.id,
+        });
+
+        if (opponent.clanId) {
+          affectedClans.add(opponent.clanId);
+        }
+      }
+
+      // Remove fully captured opponent territories.
+      // Keep tiny but valid remaining polygons.
+      const emptyRows = await tx.$queryRaw`
+        SELECT id
+        FROM territories
+        WHERE boundary IS NULL
+          OR ST_IsEmpty(boundary)
+          OR ST_Area(boundary::geography) <= 1;
+      `;
+
+      if (emptyRows.length) {
+        const emptyIds = emptyRows.map((r) => r.id);
+
+        // Delete dependents before territory rows if
+        // the schema does not use ON DELETE CASCADE.
+        await tx.clanTerritory.deleteMany({
+          where: {
+            territoryId: { in: emptyIds },
+          },
+        });
+
+        // Retain capture-event history by avoiding
+        // deletion of referenced territories unless
+        // your schema supports it.
+        // An empty territory can instead remain
+        // with areaKm2 = 0.
+      }
+
+      // Synchronize area on surviving clan ownership rows.
+      await tx.$executeRaw`
+        UPDATE clan_territories ct
+        SET "areaKm2" = t."areaKm2"
+        FROM territories t
+        WHERE ct."territoryId" = t.id
+          AND t.id != ${newTerritoryId};
+      `;
+
+      // Refresh affected clan totals.
+      for (const clanId of affectedClans) {
+        const stats = await tx.clanTerritory.aggregate({
+          where: { clanId },
+          _count: { _all: true },
+          _sum: { areaKm2: true },
+        });
+
+        await tx.clan.update({
+          where: { id: clanId },
+          data: {
+            territoryCount: stats._count._all,
+            totalAreaKm2: stats._sum.areaKm2 ?? 0,
+          },
         });
       }
 
-      /**
-       * 1. Remove captured 10m route-zone from enemies.
-       */
-      await tx.$executeRaw`
-        WITH current_territory AS (
-          SELECT
-            t."routeGeometry",
-            COALESCE(a."include_in_clan", false) AS "currentIncludeInClan",
-            ST_Buffer(
-              t."routeGeometry"::geography,
-              10,
-              'endcap=round join=round quad_segs=4'
-            )::geometry AS capture_zone
-          FROM territories t
-          JOIN activities a ON a.id = t."activityId"
-          WHERE t.id = ${newTerritoryId}
-          LIMIT 1
-        ),
-
-        enemy_diff AS (
-          SELECT
-            enemy.id,
-            ST_Multi(
-              ST_CollectionExtract(
-                ST_MakeValid(
-                  ST_Difference(enemy.boundary, ct.capture_zone)
-                ),
-                3
-              )
-            ) AS new_boundary
-          FROM territories enemy
-          JOIN activities enemy_activity ON enemy_activity.id = enemy."activityId"
-          CROSS JOIN current_territory ct
-          WHERE enemy."userId" != ${userId}
-            AND enemy.id != ${newTerritoryId}
-            AND COALESCE(enemy_activity."include_in_clan", false)
-                = ct."currentIncludeInClan"
-            AND enemy.boundary IS NOT NULL
-            AND NOT ST_IsEmpty(enemy.boundary)
-            AND ST_Intersects(enemy.boundary, ct.capture_zone)
-        )
-
-        UPDATE territories enemy
-        SET
-          boundary = enemy_diff.new_boundary,
-          center = ST_PointOnSurface(enemy_diff.new_boundary),
-          "areaKm2" = ST_Area(enemy_diff.new_boundary::geography) / 1000000,
-          "updatedAt" = NOW()
-        FROM enemy_diff
-        WHERE enemy.id = enemy_diff.id
-          AND enemy_diff.new_boundary IS NOT NULL
-          AND NOT ST_IsEmpty(enemy_diff.new_boundary);
-      `;
-
-      /**
-       * 2. New user's territory should only be remaining part,
-       * after subtracting enemy territories that overlap the new route polygon.
-       */
-      await tx.$executeRaw`
-        WITH current_territory AS (
-          SELECT
-            t.id,
-            t.boundary,
-            COALESCE(a."include_in_clan", false) AS "currentIncludeInClan"
-          FROM territories t
-          JOIN activities a ON a.id = t."activityId"
-          WHERE t.id = ${newTerritoryId}
-          LIMIT 1
-        ),
-
-        enemy_union AS (
-          SELECT
-            ST_UnaryUnion(ST_Collect(enemy.boundary)) AS enemy_boundary
-          FROM territories enemy
-          JOIN activities enemy_activity ON enemy_activity.id = enemy."activityId"
-          CROSS JOIN current_territory ct
-          WHERE enemy."userId" != ${userId}
-            AND enemy.id != ${newTerritoryId}
-            AND COALESCE(enemy_activity."include_in_clan", false)
-                = ct."currentIncludeInClan"
-            AND enemy.boundary IS NOT NULL
-            AND NOT ST_IsEmpty(enemy.boundary)
-            AND ST_Intersects(enemy.boundary, ct.boundary)
-        ),
-
-        final_new AS (
-          SELECT
-            ST_Multi(
-              ST_CollectionExtract(
-                ST_MakeValid(
-                  ST_Difference(
-                    ct.boundary,
-                    COALESCE(
-                      eu.enemy_boundary,
-                      ST_GeomFromText('POLYGON EMPTY', 4326)
-                    )
-                  )
-                ),
-                3
-              )
-            ) AS new_boundary
-          FROM current_territory ct
-          LEFT JOIN enemy_union eu ON true
-        )
-
-        UPDATE territories t
-        SET
-          boundary = final_new.new_boundary,
-          center = ST_PointOnSurface(final_new.new_boundary),
-          "areaKm2" = ST_Area(final_new.new_boundary::geography) / 1000000,
-          "updatedAt" = NOW()
-        FROM final_new
-        WHERE t.id = ${newTerritoryId}
-          AND final_new.new_boundary IS NOT NULL
-          AND NOT ST_IsEmpty(final_new.new_boundary);
-      `;
-
-      await tx.$executeRaw`
-        DELETE FROM territories
-        WHERE boundary IS NULL
-           OR ST_IsEmpty(boundary)
-           OR GeometryType(boundary) NOT IN ('POLYGON', 'MULTIPOLYGON')
-           OR ST_Area(boundary::geography) <= 1;
-      `;
-
-      const updatedNewTerritory = await tx.$queryRaw`
-        SELECT id, "areaKm2"
-        FROM territories
-        WHERE id = ${newTerritoryId}
-        LIMIT 1;
-      `;
-
       return {
-        captured: capturedParts.length > 0,
-        areaKm2: Number(updatedNewTerritory?.[0]?.areaKm2 || 0),
-        capturedCount: capturedParts.length,
+        captured: capturedCount > 0,
+        capturedCount,
+        areaKm2: Number(current.areaKm2) || 0,
+        notifications,
       };
     },
     {
       maxWait: 10000,
-      timeout: 30000,
+      timeout: 60000,
     }
   );
 
-  return result;
+  // Send notifications only after the transaction commits.
+  for (const item of result.notifications) {
+    try {
+      await createNotification({
+        userId: item.userId,
+        title: "Territory Captured",
+        message:
+          "Another player captured part of your territory.",
+        type: "TERRITORY_CAPTURED",
+        territoryId: item.territoryId,
+        activityId,
+      });
+    } catch (error) {
+      console.error(
+        "TERRITORY_CAPTURE_NOTIFICATION_ERROR:",
+        error
+      );
+    }
+  }
+
+  return {
+    captured: result.captured,
+    capturedCount: result.capturedCount,
+    areaKm2: result.areaKm2,
+  };
 };
+
+
 
 // ─────────────────────────────────────────────
 // Color palette
