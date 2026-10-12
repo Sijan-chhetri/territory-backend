@@ -1,4 +1,5 @@
 import prisma from "../../config/prisma.js";
+import { createNotification } from "../notification/notification.controller.js";
 
 // ======================================================
 // HELPER: CHECK ACTIVITY ACCESS
@@ -125,6 +126,8 @@ export const likeActivity = async (req, res) => {
       });
     }
 
+    let newlyLiked = false;
+
     try {
       await prisma.activityLike.create({
         data: {
@@ -132,9 +135,9 @@ export const likeActivity = async (req, res) => {
           activityId,
         },
       });
+
+      newlyLiked = true;
     } catch (error) {
-      // Unique constraint prevents duplicate likes.
-      // Treat repeated requests as successful.
       if (error.code !== "P2002") {
         if (error.code === "P2003" || error.code === "P2025") {
           return res.status(404).json({
@@ -142,7 +145,34 @@ export const likeActivity = async (req, res) => {
             message: "Activity not found",
           });
         }
+
         throw error;
+      }
+    }
+
+    // Notify the activity owner only for a newly created like.
+    if (newlyLiked && access.activity.userId !== userId) {
+      try {
+        const liker = await prisma.user.findUnique({
+          where: { id: userId },
+          select: {
+            fullName: true,
+            username: true,
+          },
+        });
+
+        const likerName =
+          liker?.fullName?.trim() || liker?.username?.trim() || "Someone";
+
+        await createNotification({
+          userId: access.activity.userId,
+          title: "New Like",
+          message: `${likerName} liked your activity.`,
+          type: "ACTIVITY_LIKE",
+          activityId,
+        });
+      } catch (notificationError) {
+        console.error("ACTIVITY_LIKE_NOTIFICATION_ERROR:", notificationError);
       }
     }
 

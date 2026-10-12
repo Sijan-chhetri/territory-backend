@@ -10,8 +10,6 @@ if (!admin.apps.length) {
 
 export default admin;
 
-
-
 // import "dotenv/config";
 // import admin from "firebase-admin";
 // import crypto from "crypto";
@@ -87,3 +85,4 @@ export default admin;
 
 // export default admin;
 
+// export default admin;

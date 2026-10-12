@@ -136,8 +136,14 @@ export const getMyActivities = async (req, res) => {
       },
 
       include: {
-        territories: true,
-      },
+  territories: true,
+
+  _count: {
+    select: {
+      likes: true,
+    },
+  },
+},
     });
 
     // Add captured area + territory count to every activity
@@ -150,6 +156,7 @@ export const getMyActivities = async (req, res) => {
 
       return {
         ...activity,
+        likeCount: activity._count.likes,
 
         // Used by ActivityDetailScreen
         totalAreaKm2,

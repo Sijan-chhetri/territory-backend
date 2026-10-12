@@ -279,6 +279,15 @@ export const getMe = async (req, res) => {
       },
     });
 
+    // Count all likes received on this user's activities
+    const totalLikesReceived = await prisma.activityLike.count({
+      where: {
+        activity: {
+          userId: req.user.id,
+        },
+      },
+    });
+
     const { password: _, ...safeUser } = user;
 
     return res.status(200).json({
@@ -290,6 +299,7 @@ export const getMe = async (req, res) => {
         stats: {
           totalTerritories: territoryStats._count.id,
           totalAreaKm2: Number(territoryStats._sum.areaKm2 ?? 0),
+          totalLikesReceived,
         },
       },
     });
@@ -525,6 +535,17 @@ export const getUsersWhoAreNotMyFriends = async (req, res) => {
         city: true,
         country: true,
         createdAt: true,
+        skinIndex: true,
+
+        avatars: {
+          where: {
+            isEquipped: true,
+            status: "UNLOCKED",
+          },
+          include: {
+            avatar: true,
+          },
+        },
       },
     });
 
@@ -574,19 +595,34 @@ export const getUsersWhoAreNotMyFriends = async (req, res) => {
     // ---------------------------------------------------------
     // 7. BUILD RESULT
     // ---------------------------------------------------------
-    const result = users.map((user) => ({
-      id: user.id,
-      username: user.username,
-      fullName: user.fullName,
-      city: user.city,
-      country: user.country,
+    const result = users.map((user) => {
+      const avatar = {};
 
-      mutualFriends: mutualCountByUser.get(user.id) || 0,
+      for (const item of user.avatars ?? []) {
+        if (!item.avatar) continue;
 
-      isPending: pendingUserIds.includes(user.id),
+        avatar[item.avatar.type] = {
+          id: item.avatar.id,
+          file: item.avatar.file,
+          type: item.avatar.type,
+        };
+      }
 
-      createdAt: user.createdAt,
-    }));
+      return {
+        id: user.id,
+        username: user.username,
+        fullName: user.fullName,
+        city: user.city,
+        country: user.country,
+
+        skinIndex: user.skinIndex ?? 2,
+        avatar,
+
+        mutualFriends: mutualCountByUser.get(user.id) || 0,
+        isPending: pendingUserIds.includes(user.id),
+        createdAt: user.createdAt,
+      };
+    });
 
     // ---------------------------------------------------------
     // 8. SORT
@@ -1019,6 +1055,22 @@ export const getUserDetailById = async (req, res) => {
 
       include: {
         territories: true,
+
+        _count: {
+          select: {
+            likes: true,
+          },
+        },
+
+        likes: {
+          where: {
+            userId: viewerId,
+          },
+          select: {
+            id: true,
+          },
+          take: 1,
+        },
       },
     });
 
@@ -1052,6 +1104,15 @@ export const getUserDetailById = async (req, res) => {
     const totalDistanceKm = Number(userActivityStats._sum.distanceKm ?? 0);
 
     const totalActivities = Number(userActivityStats._count.id ?? 0);
+
+    // Count likes received across all activities of this user
+    const totalLikesReceived = await prisma.activityLike.count({
+      where: {
+        activity: {
+          userId,
+        },
+      },
+    });
 
     // =========================================================
     // OPTIONAL EXTRA TOTALS
@@ -1142,36 +1203,58 @@ export const getUserDetailById = async (req, res) => {
     // We only normalize common numeric values afterward.
     // =========================================================
 
-    const formattedActivities = activities.map((activity) => ({
-      // KEEP EVERYTHING
-      ...activity,
+    const formattedActivities = activities.map((activity) => {
+      // Separate Prisma relations from activity data
+      const { likes, _count, ...activityData } = activity;
 
-      // Normalize known numeric fields
-      // without removing anything else.
+      return {
+        // KEEP ALL ACTIVITY FIELDS
+        ...activityData,
 
-      distanceKm: activity.distanceKm != null ? Number(activity.distanceKm) : 0,
+        // =====================================
+        // LIKE INFORMATION
+        // =====================================
 
-      durationSec:
-        activity.durationSec != null ? Number(activity.durationSec) : 0,
+        // Total likes received on this activity
+        likeCount: _count?.likes ?? 0,
 
-      movingTime: activity.movingTime != null ? Number(activity.movingTime) : 0,
+        // Whether the logged-in user liked it
+        likedByMe: (likes ?? []).length > 0,
 
-      avgPace: activity.avgPace != null ? Number(activity.avgPace) : 0,
+        // =====================================
+        // NORMALIZE NUMERIC FIELDS
+        // =====================================
 
-      avgSpeed: activity.avgSpeed != null ? Number(activity.avgSpeed) : 0,
+        distanceKm:
+          activity.distanceKm != null ? Number(activity.distanceKm) : 0,
 
-      topSpeed: activity.topSpeed != null ? Number(activity.topSpeed) : 0,
+        durationSec:
+          activity.durationSec != null ? Number(activity.durationSec) : 0,
 
-      calories: activity.calories != null ? Number(activity.calories) : 0,
+        movingTime:
+          activity.movingTime != null ? Number(activity.movingTime) : 0,
 
-      // kmSplits is NOT changed.
-      // It stays exactly as stored by Prisma.
+        avgPace: activity.avgPace != null ? Number(activity.avgPace) : 0,
 
-      kmSplits: activity.kmSplits ?? [],
+        avgSpeed: activity.avgSpeed != null ? Number(activity.avgSpeed) : 0,
 
-      // Territory relation also stays.
-      territories: activity.territories ?? [],
-    }));
+        topSpeed: activity.topSpeed != null ? Number(activity.topSpeed) : 0,
+
+        calories: activity.calories != null ? Number(activity.calories) : 0,
+
+        // =====================================
+        // SPLITS
+        // =====================================
+
+        kmSplits: activity.kmSplits ?? [],
+
+        // =====================================
+        // TERRITORIES
+        // =====================================
+
+        territories: activity.territories ?? [],
+      };
+    });
 
     // =========================================================
     // RESPONSE
@@ -1195,7 +1278,7 @@ export const getUserDetailById = async (req, res) => {
         stats: {
           totalDistanceKm: Number(totalDistanceKm.toFixed(2)),
 
-          totalActivities, 
+          totalActivities,
 
           totalDurationSec,
 
@@ -1210,6 +1293,7 @@ export const getUserDetailById = async (req, res) => {
           totalXp: Number(progress?.totalXp ?? 0),
 
           level: Number(progress?.level ?? 0),
+          totalLikesReceived,
         },
 
         // =====================================================
