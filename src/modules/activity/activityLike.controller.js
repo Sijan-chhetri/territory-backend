@@ -1,5 +1,6 @@
 import prisma from "../../config/prisma.js";
 import { createNotification } from "../notification/notification.controller.js";
+import admin from "firebase-admin";
 
 // ======================================================
 // HELPER: CHECK ACTIVITY ACCESS

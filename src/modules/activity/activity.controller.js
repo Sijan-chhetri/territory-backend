@@ -5,6 +5,10 @@ import { checkLevelUp } from "../level/level.service.js";
 import { checkBadges } from "../badge/badge.service.js";
 import polyline from "@mapbox/polyline";
 import { getHydrationRecommendation } from "../hydration/hydration_service.js";
+import {
+  resolveActivityShoe,
+  refreshShoeStats,
+} from "../shoes/shoe.service.js";
 
 // ─────────────────────────────────────────────
 // Helpers
@@ -136,14 +140,24 @@ export const getMyActivities = async (req, res) => {
       },
 
       include: {
-  territories: true,
+        territories: true,
 
-  _count: {
-    select: {
-      likes: true,
-    },
-  },
-},
+        shoe: {
+          select: {
+            id: true,
+            brand: true,
+            model: true,
+            photoUrl: true,
+            status: true,
+          },
+        },
+
+        _count: {
+          select: {
+            likes: true,
+          },
+        },
+      },
     });
 
     // Add captured area + territory count to every activity
@@ -207,6 +221,7 @@ export const finishActivity = async (req, res) => {
     const {
       clientActivityId,
       mode,
+      shoeId,
       distanceKm,
       durationSec,
       stopTime,
@@ -618,6 +633,17 @@ export const finishActivity = async (req, res) => {
       });
     }
 
+    // ============================================================
+    // RESOLVE RUNNING SHOE
+    // ============================================================
+
+    // RUN with shoeId: use the selected active shoe.
+    // RUN without shoeId: use the user's default active shoe.
+    // RUN with shoeId: null: explicitly save without a shoe.
+    // WALK and other activities: no running shoe assigned.
+
+    const resolvedShoeId = await resolveActivityShoe(userId, shoeId, mode);
+
     /*
      * ============================================================
      * CREATE ACTIVITY
@@ -628,6 +654,8 @@ export const finishActivity = async (req, res) => {
         clientActivityId: clientActivityId ?? null,
 
         userId,
+
+        shoeId: resolvedShoeId,
 
         mode,
 
@@ -705,6 +733,33 @@ export const finishActivity = async (req, res) => {
         id =
           ${activity.id};
     `;
+
+    // ============================================================
+    // UPDATE RUNNING SHOE STATISTICS
+    // ============================================================
+
+    if (activity.shoeId) {
+      try {
+        await refreshShoeStats(activity.shoeId);
+
+        console.log("SHOE_STATS_UPDATED:", {
+          activityId: activity.id,
+          shoeId: activity.shoeId,
+          distanceKm: activity.distanceKm,
+          durationSec: activity.durationSec,
+        });
+      } catch (shoeError) {
+        console.error("SHOE_STATS_UPDATE_ERROR:", {
+          activityId: activity.id,
+          shoeId: activity.shoeId,
+          error: shoeError.message,
+        });
+
+        // Activity is already saved.
+        // Don't make territory, XP or event processing fail.
+        // Cached shoe statistics can be repaired with /api/shoes/reconcile.
+      }
+    }
 
     /*
      * ============================================================
@@ -2656,6 +2711,13 @@ export const finishActivity = async (req, res) => {
     });
   } catch (error) {
     console.error("FINISH_ACTIVITY ERROR:", error);
+
+    if (error?.status === 400) {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+      });
+    }
 
     if (error?.name === "PrismaClientValidationError") {
       return res.status(500).json({
@@ -9956,6 +10018,210 @@ export const getVisibleActivityDetail = async (req, res) => {
   }
 };
 
+// ============================================================
+// ASSIGN / CHANGE / REMOVE SHOE FROM EXISTING ACTIVITY
+// PATCH /api/activities/:id/shoe
+// ============================================================
+
+export const updateActivityShoe = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    const activityId = req.params.id;
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized",
+      });
+    }
+
+    // Require an explicit choice.
+    // null = remove shoe.
+    if (
+      !req.body ||
+      !Object.prototype.hasOwnProperty.call(req.body, "shoeId")
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "shoeId is required. Send null to remove the shoe.",
+      });
+    }
+
+    const requestedShoeId = req.body.shoeId;
+
+    if (
+      requestedShoeId !== null &&
+      (typeof requestedShoeId !== "string" || !requestedShoeId.trim())
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "shoeId must be a valid shoe ID or null.",
+      });
+    }
+
+    // Check ownership and activity type first.
+    const existingActivity = await prisma.activity.findFirst({
+      where: {
+        id: activityId,
+        userId,
+      },
+      select: {
+        id: true,
+        mode: true,
+        shoeId: true,
+      },
+    });
+
+    if (!existingActivity) {
+      return res.status(404).json({
+        success: false,
+        message: "Activity not found",
+      });
+    }
+
+    if (
+      !["RUN", "WALK"].includes(String(existingActivity.mode).toUpperCase())
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Shoes can only be assigned to running or walking activities.",
+      });
+    }
+
+    // Explicit shoe ID is always required when updating history.
+    // This must not silently choose the current default shoe.
+    const resolvedShoeId =
+      requestedShoeId === null
+        ? null
+        : await resolveActivityShoe(
+            userId,
+            requestedShoeId.trim(),
+            existingActivity.mode,
+          );
+
+    // Update the activity in a transaction.
+    // The conditional update prevents a concurrent request from
+    // silently overwriting another shoe assignment.
+    const result = await prisma.$transaction(async (tx) => {
+      const current = await tx.activity.findFirst({
+        where: {
+          id: activityId,
+          userId,
+        },
+        select: {
+          shoeId: true,
+        },
+      });
+
+      if (!current) {
+        const error = new Error("Activity not found");
+        error.status = 404;
+        throw error;
+      }
+
+      const previousShoeId = current.shoeId;
+
+      if (previousShoeId === resolvedShoeId) {
+        const unchangedActivity = await tx.activity.findUnique({
+          where: { id: activityId },
+          select: {
+            id: true,
+            mode: true,
+            shoeId: true,
+            distanceKm: true,
+            durationSec: true,
+            startedAt: true,
+          },
+        });
+
+        return {
+          activity: unchangedActivity,
+          previousShoeId,
+          changed: false,
+        };
+      }
+
+      const updated = await tx.activity.updateMany({
+        where: {
+          id: activityId,
+          userId,
+          shoeId: previousShoeId,
+        },
+        data: {
+          shoeId: resolvedShoeId,
+        },
+      });
+
+      if (updated.count !== 1) {
+        const error = new Error(
+          "Activity shoe was changed by another request. Please retry.",
+        );
+        error.status = 409;
+        throw error;
+      }
+
+      const activity = await tx.activity.findUnique({
+        where: { id: activityId },
+        select: {
+          id: true,
+          mode: true,
+          shoeId: true,
+          distanceKm: true,
+          durationSec: true,
+          startedAt: true,
+        },
+      });
+
+      return {
+        activity,
+        previousShoeId,
+        changed: true,
+      };
+    });
+
+    // Recalculate both affected shoes.
+    // For an initial assignment, previousShoeId is null.
+    // For removal, resolvedShoeId is null.
+    // For reassignment, both IDs are recalculated.
+    const affectedShoeIds = [
+      ...new Set([result.previousShoeId, resolvedShoeId].filter(Boolean)),
+    ];
+
+    let statsSynced = true;
+
+    for (const shoeId of affectedShoeIds) {
+      try {
+        await refreshShoeStats(shoeId);
+      } catch (error) {
+        statsSynced = false;
+
+        console.error("ACTIVITY_SHOE_STATS_REFRESH_ERROR:", {
+          activityId,
+          shoeId,
+          error: error.message,
+        });
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: result.changed
+        ? "Activity shoe updated successfully"
+        : "Activity already uses the selected shoe",
+      activity: result.activity,
+      previousShoeId: result.previousShoeId,
+      statsSynced,
+    });
+  } catch (error) {
+    console.error("UPDATE_ACTIVITY_SHOE_ERROR:", error);
+
+    return res.status(error.status || 500).json({
+      success: false,
+      message: error.status ? error.message : "Unable to update activity shoe",
+    });
+  }
+};
+
 // ─────────────────────────────────────────────
 // Delete My Activity
 // DELETE /api/activities/:id
@@ -10016,6 +10282,7 @@ export const deleteActivity = async (req, res) => {
       select: {
         id: true,
         userId: true,
+        shoeId: true,
       },
     });
 
@@ -10050,6 +10317,31 @@ export const deleteActivity = async (req, res) => {
         id,
       },
     });
+
+    // ============================================================
+    // REFRESH SHOE STATISTICS AFTER ACTIVITY DELETION
+    // ============================================================
+
+    if (activity.shoeId) {
+      try {
+        await refreshShoeStats(activity.shoeId);
+
+        console.log("SHOE_STATS_REFRESHED_AFTER_DELETE:", {
+          shoeId: activity.shoeId,
+          deletedActivityId: id,
+        });
+      } catch (shoeError) {
+        console.error("SHOE_STATS_DELETE_REFRESH_ERROR:", {
+          shoeId: activity.shoeId,
+          activityId: id,
+          error: shoeError.message,
+        });
+
+        // Activity has already been deleted.
+        // Do not report deletion as failed because cached shoe totals
+        // could not be refreshed.
+      }
+    }
 
     // =========================================================
     // SUCCESS LOG

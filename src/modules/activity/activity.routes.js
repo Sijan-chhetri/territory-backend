@@ -20,6 +20,7 @@ import {
   getActivityGraphStats,
   getFriendActivityDetails,
   updateActivityVisibility,
+  updateActivityShoe,
   getVisibleActivityDetail,
   deleteActivity,
   getFriendsLeaderboardStats,
@@ -55,6 +56,9 @@ router.get(
 );
 
 router.patch("/:id/visibility", authMiddleware, updateActivityVisibility);
+
+// Assign, change, or remove shoe from an existing activity
+router.patch("/:id/shoe", authMiddleware, updateActivityShoe);
 
 router.get("/view/:activityId", authMiddleware, getVisibleActivityDetail);
 
