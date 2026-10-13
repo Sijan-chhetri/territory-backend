@@ -37,6 +37,7 @@ router.get("/my/today", authMiddleware, getMyTodayActivities);
 router.get("/stats/graph", authMiddleware, getActivityGraphStats);
 
 router.get("/stats/total", authMiddleware, getMyTotalStats);
+
 router.get("/stats/today", authMiddleware, getTodayStats);
 
 // IMPORTANT: keep this before /:id

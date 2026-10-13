@@ -483,6 +483,7 @@ model Territory {
   @@map("territories")
 }
 
+
 model XPTransaction {
   id          String    @id @default(uuid())
   userId      String
