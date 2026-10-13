@@ -217,3 +217,87 @@ export const deleteClanImageFromS3 = async (key) => {
     console.error("DELETE_CLAN_IMAGE_ERROR:", error);
   }
 };
+
+
+// ======================================================
+// UPLOAD SHOE IMAGE
+// ======================================================
+
+export const uploadShoeImageToS3 = async (file) => {
+  if (!file) return null;
+
+  const extension = getExtension(file);
+  const contentType = getContentType(file, extension);
+
+  const key = `shoes/images/${Date.now()}-${crypto.randomUUID()}.${extension}`;
+
+  await s3.send(
+    new PutObjectCommand({
+      Bucket: bucketName,
+      Key: key,
+      Body: file.buffer,
+      ContentType: contentType,
+      ACL: "public-read",
+    })
+  );
+
+  const cleanEndpoint = endpoint.replace(/\/$/, "");
+
+  return {
+    key,
+    url: `${cleanEndpoint}/${bucketName}/${key}`,
+  };
+};
+
+// ======================================================
+// DELETE SHOE IMAGE
+// ======================================================
+
+export const deleteShoeImageFromS3 = async (key) => {
+  if (!key) return;
+
+  await s3.send(
+    new DeleteObjectCommand({
+      Bucket: bucketName,
+      Key: key,
+    })
+  );
+};
+
+// ======================================================
+// EXTRACT SHOE IMAGE KEY FROM URL
+// ======================================================
+
+export const getShoeImageKeyFromUrl = (url) => {
+  if (!url) return null;
+
+  try {
+    const base = new URL(endpoint);
+    const parsed = new URL(url);
+
+    if (parsed.origin !== base.origin) return null;
+
+    const basePath = base.pathname.replace(/\/$/, "");
+    const bucketPrefix = `${basePath}/${bucketName}/`;
+    const shoePrefix = `${bucketPrefix}shoes/images/`;
+
+    if (!parsed.pathname.startsWith(shoePrefix)) {
+      return null;
+    }
+
+    const key = decodeURIComponent(
+      parsed.pathname.slice(bucketPrefix.length)
+    );
+
+    if (
+      !/^shoes\/images\/[a-zA-Z0-9._-]+$/.test(key) ||
+      key.includes("..")
+    ) {
+      return null;
+    }
+
+    return key;
+  } catch {
+    return null;
+  }
+};

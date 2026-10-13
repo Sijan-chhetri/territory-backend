@@ -1,4 +1,5 @@
 import prisma from "../../config/prisma.js";
+import admin from "firebase-admin";
 import { emitToUser } from "../../config/socket.js";
 
 /**
@@ -39,10 +40,7 @@ const sendFcmToUser = async ({
     };
 
     const safeData = Object.fromEntries(
-      Object.entries(fcmData).map(([key, value]) => [
-        key,
-        String(value ?? ""),
-      ])
+      Object.entries(fcmData).map(([key, value]) => [key, String(value ?? "")]),
     );
 
     const response = await admin.messaging().send({
@@ -68,6 +66,47 @@ const sendFcmToUser = async ({
  * ============================================================================
  */
 
+// export const createNotification = async ({
+//   tx = prisma,
+//   userId,
+//   title,
+//   message,
+//   type,
+//   territoryId = null,
+//   activityId = null,
+//   data = null,
+// }) => {
+//   try {
+//     const notification = await tx.notification.create({
+//       data: {
+//         userId,
+//         title,
+//         message,
+//         type,
+//         territoryId,
+//         activityId,
+//       },
+//     });
+
+//     emitToUser(userId, "notification:new", {
+//       id: notification.id,
+//       title: notification.title,
+//       message: notification.message,
+//       type: notification.type,
+//       territoryId: notification.territoryId,
+//       activityId: notification.activityId,
+//       isRead: notification.isRead,
+//       createdAt: notification.createdAt,
+//       data,
+//     });
+
+//     return notification;
+//   } catch (error) {
+//     console.error("CREATE_NOTIFICATION_ERROR:", error);
+//     return null;
+//   }
+// };
+
 export const createNotification = async ({
   tx = prisma,
   userId,
@@ -79,6 +118,10 @@ export const createNotification = async ({
   data = null,
 }) => {
   try {
+    // ============================================================
+    // 1. SAVE NOTIFICATION TO DATABASE
+    // ============================================================
+
     const notification = await tx.notification.create({
       data: {
         userId,
@@ -90,17 +133,63 @@ export const createNotification = async ({
       },
     });
 
-    emitToUser(userId, "notification:new", {
-      id: notification.id,
-      title: notification.title,
-      message: notification.message,
-      type: notification.type,
-      territoryId: notification.territoryId,
-      activityId: notification.activityId,
-      isRead: notification.isRead,
-      createdAt: notification.createdAt,
-      data,
-    });
+    // ============================================================
+    // 2. SEND REAL-TIME SOCKET NOTIFICATION
+    // ============================================================
+
+    // Only emit immediately when using the default Prisma client.
+    // External transactions must finish committing first.
+    if (tx === prisma) {
+      try {
+        emitToUser(userId, "notification:new", {
+          id: notification.id,
+          title: notification.title,
+          message: notification.message,
+          type: notification.type,
+          territoryId: notification.territoryId,
+          activityId: notification.activityId,
+          isRead: notification.isRead,
+          createdAt: notification.createdAt,
+          data,
+        });
+      } catch (socketError) {
+        console.error("NOTIFICATION_SOCKET_ERROR:", socketError);
+      }
+    }
+
+    // ============================================================
+    // 3. SEND FIREBASE PUSH FOR ACTIVITY LIKES
+    // ============================================================
+
+    if (type === "ACTIVITY_LIKE" && tx === prisma) {
+      try {
+        const fcmResponse = await sendFcmToUser({
+          userId,
+          title: notification.title,
+          message: notification.message,
+          type: notification.type,
+          territoryId: notification.territoryId,
+          activityId: notification.activityId,
+          notificationId: notification.id,
+          data,
+        });
+
+        if (fcmResponse) {
+          console.log("ACTIVITY_LIKE_FCM_SUCCESS:", {
+            userId,
+            notificationId: notification.id,
+            activityId,
+          });
+        } else {
+          console.log("ACTIVITY_LIKE_FCM_SKIPPED_OR_FAILED:", {
+            userId,
+            notificationId: notification.id,
+          });
+        }
+      } catch (fcmError) {
+        console.error("ACTIVITY_LIKE_FCM_ERROR:", fcmError);
+      }
+    }
 
     return notification;
   } catch (error) {
@@ -151,9 +240,7 @@ export const getMyNotifications = async (req, res) => {
     for (const notification of notifications) {
       if (!notification.message) continue;
 
-      const matches = notification.message.match(
-        USER_UUID_REGEX
-      );
+      const matches = notification.message.match(USER_UUID_REGEX);
 
       if (!matches) continue;
 
@@ -182,10 +269,7 @@ export const getMyNotifications = async (req, res) => {
       });
 
       for (const user of users) {
-        usernameMap.set(
-          user.id.toLowerCase(),
-          user.username
-        );
+        usernameMap.set(user.id.toLowerCase(), user.username);
       }
     }
 
@@ -193,31 +277,24 @@ export const getMyNotifications = async (req, res) => {
     // 4. REPLACE USER IDS WITH USERNAMES
     // =========================================================
 
-    const formattedNotifications = notifications.map(
-      (notification) => {
-        const message = notification.message;
+    const formattedNotifications = notifications.map((notification) => {
+      const message = notification.message;
 
-        if (!message || uniqueUserIds.size === 0) {
-          return notification;
-        }
-
-        const formattedMessage = message.replace(
-          USER_UUID_REGEX,
-          (id) => {
-            const username = usernameMap.get(
-              id.toLowerCase()
-            );
-
-            return username ? `@${username}` : id;
-          }
-        );
-
-        return {
-          ...notification,
-          message: formattedMessage,
-        };
+      if (!message || uniqueUserIds.size === 0) {
+        return notification;
       }
-    );
+
+      const formattedMessage = message.replace(USER_UUID_REGEX, (id) => {
+        const username = usernameMap.get(id.toLowerCase());
+
+        return username ? `@${username}` : id;
+      });
+
+      return {
+        ...notification,
+        message: formattedMessage,
+      };
+    });
 
     // =========================================================
     // 5. RESPONSE
@@ -228,7 +305,6 @@ export const getMyNotifications = async (req, res) => {
       count: formattedNotifications.length,
       notifications: formattedNotifications,
     });
-
   } catch (error) {
     console.error("GET_NOTIFICATIONS_ERROR:", error);
 
@@ -280,10 +356,6 @@ export const markAsRead = async (req, res) => {
   }
 };
 
-
-
-
-
 /**
  * ============================================================================
  * MARK ALL NOTIFICATIONS AS READ
@@ -318,7 +390,6 @@ export const markAllAsRead = async (req, res) => {
     });
   }
 };
-
 
 /**
  * ============================================================================

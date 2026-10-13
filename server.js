@@ -29,6 +29,8 @@ import clubWarRoutes from "./src/modules/clubWar/clubWarRoutes.js";
 import clanEventRoutes from "./src/modules/clanEvent/clanEvent.routes.js";
 import deepLinkRoutes from "./src/modules/integration_examples/deepLink.routes.js";
 import avatarRoutes from "./src/modules/avatar/avatar.routes.js";
+import { createShoeRoutes } from "./src/modules/shoes/shoe.routes.js";
+import authMiddleware from "./src/middlewares/auth.js";
 
 dns.setDefaultResultOrder("ipv4first");
 
@@ -149,6 +151,7 @@ app.use("/api/clan-chat", clanChatRoutes);
 app.use("/api/clan-event", clanEventRoutes);
 app.use("/api/club-wars", clubWarRoutes);
 app.use("/api/avatars", avatarRoutes);
+app.use("/api/shoes", createShoeRoutes(authMiddleware));
 
 // ============================================================================
 // 404 HANDLER
