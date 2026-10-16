@@ -27,6 +27,7 @@ import clanLeaderboardRoutes from "./src/modules/leaderboard/Clan/clanLeaderboar
 import clanChatRoutes from "./src/modules/clanChat/clanChatRoutes.js";
 import clubWarRoutes from "./src/modules/clubWar/clubWarRoutes.js";
 import clanEventRoutes from "./src/modules/clanEvent/clanEvent.routes.js";
+import { sendIndependentEventStartReminders } from "./src/modules/clanEvent/clanEvent.controller.js";
 import deepLinkRoutes from "./src/modules/integration_examples/deepLink.routes.js";
 import avatarRoutes from "./src/modules/avatar/avatar.routes.js";
 import { createShoeRoutes } from "./src/modules/shoes/shoe.routes.js";
@@ -185,7 +186,22 @@ app.use((error, _req, res, _next) => {
 
 const PORT = process.env.PORT || 3000;
 
+const EVENT_REMINDER_CHECK_INTERVAL_MS = 60 * 1000;
+
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+
   startClanMessageCleanupJob();
+
+  // Check once immediately when the backend starts.
+  sendIndependentEventStartReminders().catch((error) => {
+    console.error("INITIAL_EVENT_REMINDER_CHECK_ERROR:", error);
+  });
+
+  // Then check every 1 minute.
+  setInterval(() => {
+    sendIndependentEventStartReminders().catch((error) => {
+      console.error("EVENT_REMINDER_SCHEDULER_ERROR:", error);
+    });
+  }, EVENT_REMINDER_CHECK_INTERVAL_MS);
 });

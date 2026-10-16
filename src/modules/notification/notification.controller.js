@@ -115,6 +115,7 @@ export const createNotification = async ({
   type,
   territoryId = null,
   activityId = null,
+  eventId = null,
   data = null,
 }) => {
   try {
@@ -130,6 +131,7 @@ export const createNotification = async ({
         type,
         territoryId,
         activityId,
+        eventId,
       },
     });
 
@@ -148,6 +150,7 @@ export const createNotification = async ({
           type: notification.type,
           territoryId: notification.territoryId,
           activityId: notification.activityId,
+          eventId: notification.eventId,
           isRead: notification.isRead,
           createdAt: notification.createdAt,
           data,

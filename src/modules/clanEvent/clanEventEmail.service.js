@@ -32,7 +32,8 @@ export const sendClanEventInvitations = async ({
     const user = member.user;
 
     // This URL opens DURO directly when installed.
-    // Otherwise, the backend deep-link page handles the store fallback.
+    // Otherwise, the backend deep-link page handles
+    // the store fallback.
     const joinUrl = buildClanEventDeepLink({
       clanId: clan.id,
       eventId: event.id,
@@ -40,9 +41,7 @@ export const sendClanEventInvitations = async ({
 
     const template = clanEventInvitationTemplate({
       memberName:
-        user.fullName?.trim() ||
-        user.username?.trim() ||
-        "Duro Athlete",
+        user.fullName?.trim() || user.username?.trim() || "Duro Athlete",
 
       clanName: clan.name,
       eventTitle: event.title,
@@ -59,6 +58,9 @@ export const sendClanEventInvitations = async ({
         "Your club leader",
 
       joinUrl,
+
+      // Keep the new DURO logo support.
+      duroLogoUrl: process.env.DURO_MAIL_LOGO_URL,
     });
 
     const info = await emailTransporter.sendMail({
@@ -68,19 +70,18 @@ export const sendClanEventInvitations = async ({
       },
 
       to: user.email.trim(),
+
       subject: template.subject,
       text: template.text,
       html: template.html,
 
-      replyTo:
-        process.env.DURO_SUPPORT_EMAIL ||
-        process.env.GMAIL_USER,
+      replyTo: process.env.DURO_SUPPORT_EMAIL || process.env.GMAIL_USER,
 
       headers: {
-        "X-Duro-Notification-Type":
-          "CLAN_EVENT_INVITATION",
+        "X-Duro-Notification-Type": "CLAN_EVENT_INVITATION",
 
         "X-Duro-Event-Id": String(event.id),
+
         "X-Duro-Clan-Id": String(clan.id),
       },
     });
@@ -108,7 +109,9 @@ export const sendClanEventInvitations = async ({
 
     failures.push({
       userId: member.userId || user?.id,
+
       email: user?.email || null,
+
       error:
         result.reason?.message ||
         String(result.reason || "Unknown email error"),
