@@ -31,6 +31,7 @@ export const clanEventInvitationTemplate = ({
   endsAt,
   createdByName,
   joinUrl,
+  duroLogoUrl,
 }) => {
   const safeMemberName = escapeHtml(memberName || "Duro Athlete");
   const safeClanName = escapeHtml(clanName);
@@ -140,16 +141,36 @@ The Duro Team
               >
                 <tr>
   <td>
-    <div
-      style="
-        color: #ffffff;
-        font-size: 30px;
-        font-weight: 900;
-        letter-spacing: 3px;
-      "
-    >
-      DURO
-    </div>
+    ${
+      duroLogoUrl
+        ? `
+      <img
+        src="${duroLogoUrl}"
+        alt="DURO"
+        width="120"
+        style="
+          display:block;
+          width:120px;
+          max-width:120px;
+          height:auto;
+          border:0;
+          outline:none;
+          text-decoration:none;
+        "
+      />
+    `
+        : `
+      <div style="
+        font-size:48px;
+        font-weight:800;
+        letter-spacing:2px;
+        color:#ffffff;
+        line-height:1;
+      ">
+        DURO
+      </div>
+    `
+    }
   </td>
 
   <td align="right">

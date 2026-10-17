@@ -3,6 +3,7 @@ import prisma from "../../config/prisma.js";
 import { sendClanEventInvitations } from "./clanEventEmail.service.js";
 
 import { sendFCMToUser } from "../../config/fcm.service.js";
+import { createNotification } from "../notification/notification.controller.js";
 
 /**
  * |--------------------------------------------------------------------------
@@ -381,7 +382,224 @@ const parseEventStats = (body, { partial = false } = {}) => {
   return data;
 };
 
-const EVENT_AUTO_END_GRACE_MS = 30 * 60 * 1000;
+const EVENT_AUTO_END_GRACE_MS = 4 * 60 * 1000;
+const INDEPENDENT_EVENT_REMINDER_MINUTES = 25;
+
+export const sendIndependentEventStartReminders = async () => {
+  const now = new Date();
+
+  // Scheduler runs every minute.
+  //
+  // Find events starting roughly 25 minutes from now.
+  // This one-minute window prevents missed reminders caused by
+  // small scheduler timing differences.
+  const reminderWindowStart = new Date(
+    now.getTime() + (INDEPENDENT_EVENT_REMINDER_MINUTES - 1) * 60 * 1000,
+  );
+
+  const reminderWindowEnd = new Date(
+    now.getTime() + INDEPENDENT_EVENT_REMINDER_MINUTES * 60 * 1000,
+  );
+
+  try {
+    const events = await prisma.clanEvent.findMany({
+      where: {
+        // INDEPENDENT / PUBLIC EVENTS ONLY
+        clanId: null,
+
+        status: "UPCOMING",
+
+        runStartedAt: null,
+
+        startReminderSentAt: null,
+
+        startsAt: {
+          gte: reminderWindowStart,
+          lte: reminderWindowEnd,
+        },
+      },
+
+      select: {
+        id: true,
+        title: true,
+        location: true,
+        startsAt: true,
+
+        participants: {
+          select: {
+            userId: true,
+          },
+        },
+      },
+    });
+
+    if (events.length === 0) {
+      return;
+    }
+
+    for (const event of events) {
+      /**
+       * Claim the reminder atomically.
+       *
+       * This protects against:
+       * - two cron executions overlapping
+       * - multiple Render instances
+       * - accidental duplicate scheduler calls
+       */
+      const claim = await prisma.clanEvent.updateMany({
+        where: {
+          id: event.id,
+          startReminderSentAt: null,
+          status: "UPCOMING",
+          clanId: null,
+        },
+
+        data: {
+          startReminderSentAt: now,
+        },
+      });
+
+      if (claim.count === 0) {
+        continue;
+      }
+
+      const uniqueParticipantIds = [
+        ...new Set(
+          event.participants
+            .map((participant) => participant.userId)
+            .filter(Boolean),
+        ),
+      ];
+
+      if (uniqueParticipantIds.length === 0) {
+        continue;
+      }
+
+      const participantUsers = await prisma.user.findMany({
+        where: {
+          id: {
+            in: uniqueParticipantIds,
+          },
+        },
+
+        select: {
+          id: true,
+          fcmToken: true,
+        },
+      });
+
+      const seenTokens = new Set();
+
+      const usersWithUniqueTokens = [];
+
+      for (const user of participantUsers) {
+        const token = user.fcmToken?.trim();
+
+        if (!token) {
+          continue;
+        }
+
+        if (seenTokens.has(token)) {
+          continue;
+        }
+
+        seenTokens.add(token);
+
+        usersWithUniqueTokens.push(user);
+      }
+
+      // if (usersWithUniqueTokens.length === 0) {
+      //   continue;
+      // }
+
+      const title = "Your event starts in 25 minutes";
+
+      const message = event.location
+        ? `${event.title} starts soon at ${event.location}. Get ready and open DURO before the start.`
+        : `${event.title} starts soon. Get ready and open DURO before the start.`;
+
+      // ============================================================
+      // SAVE IN-APP NOTIFICATION FOR EVERY PARTICIPANT
+      // ============================================================
+
+      const savedNotifications = await Promise.all(
+        uniqueParticipantIds.map((userId) =>
+          createNotification({
+            userId,
+
+            title,
+
+            message,
+
+            type: "SYSTEM",
+
+            // Save event ID directly in Notification table
+            eventId: event.id,
+
+            data: {
+              type: "INDEPENDENT_EVENT_START_REMINDER",
+              eventId: event.id,
+              eventType: "PUBLIC",
+              title: event.title,
+              startsAt: event.startsAt.toISOString(),
+            },
+          }),
+        ),
+      );
+
+      // Map notification ID by user
+      const notificationIdByUser = new Map();
+
+      uniqueParticipantIds.forEach((userId, index) => {
+        notificationIdByUser.set(userId, savedNotifications[index]?.id ?? "");
+      });
+
+      // ============================================================
+      // SEND ONLY ONE PUSH PER UNIQUE DEVICE
+      // ============================================================
+
+      const results = await Promise.allSettled(
+        usersWithUniqueTokens.map((user) =>
+          sendFCMToUser({
+            userId: user.id,
+
+            title,
+
+            message,
+
+            data: {
+              type: "INDEPENDENT_EVENT_START_REMINDER",
+              eventId: event.id,
+              eventType: "PUBLIC",
+              title: event.title,
+              startsAt: event.startsAt.toISOString(),
+
+              notificationId: notificationIdByUser.get(user.id) ?? "",
+            },
+          }),
+        ),
+      );
+
+      const sent = results.filter(
+        (result) => result.status === "fulfilled" && Boolean(result.value),
+      ).length;
+
+      const failed = usersWithUniqueTokens.length - sent;
+
+      // console.log("INDEPENDENT_EVENT_START_REMINDER:", {
+      //   eventId: event.id,
+      //   title: event.title,
+      //   participants: uniqueParticipantIds.length,
+      //   uniqueDevices: usersWithUniqueTokens.length,
+      //   sent,
+      //   failed,
+      //   startsAt: event.startsAt,
+      // });
+    }
+  } catch (error) {
+    console.error("INDEPENDENT_EVENT_REMINDER_ERROR:", error);
+  }
+};
 
 /**
  * Automatically ends a Club Event if:
@@ -1045,6 +1263,7 @@ export const createClanEvent = async (req, res) => {
       endsAt,
       maxParticipants,
       targetDistanceKm,
+      standalone = false,
     } = req.body;
 
     if (!title?.trim()) {
@@ -1133,18 +1352,37 @@ export const createClanEvent = async (req, res) => {
     let runLeaderId = userId;
 
     // ============================================================
-    // USER IS NOT IN A CLUB
-    // -> allow standalone/public event
+    // STANDALONE / PUBLIC EVENT
+    //
+    // Created through Social > Events.
+    //
+    // IMPORTANT:
+    // Even if the creator belongs to a club,
+    // this event does NOT belong to that club.
     // ============================================================
 
-    if (!membership) {
+    if (standalone === true) {
       clanId = null;
       runLeaderId = userId;
     }
 
     // ============================================================
-    // USER IS IN A CLUB
-    // -> only leader/captain can create
+    // USER IS NOT IN A CLUB
+    //
+    // Normal creation also becomes standalone.
+    // ============================================================
+    else if (!membership) {
+      clanId = null;
+      runLeaderId = userId;
+    }
+
+    // ============================================================
+    // CLUB EVENT
+    //
+    // Requests coming from the Clubs tab do not send
+    // standalone=true.
+    //
+    // Only leader/captain can create a Club Event.
     // ============================================================
     else {
       const isCaptain = membership.clan.captainId === userId;
@@ -1376,7 +1614,7 @@ export const createClanEvent = async (req, res) => {
     return res.status(201).json({
       success: true,
 
-      message: "Clan event created successfully",
+      message: "Club event created successfully",
 
       invitationMessage:
         emailResult.sent > 0
@@ -1385,7 +1623,7 @@ export const createClanEvent = async (req, res) => {
 
       notificationMessage:
         notificationResult.sent > 0
-          ? `Notifications sent to ${notificationResult.sent} clan members`
+          ? `Notifications sent to ${notificationResult.sent} club members`
           : "No push notifications were sent",
 
       data: {
@@ -1420,7 +1658,7 @@ export const createClanEvent = async (req, res) => {
     return res.status(500).json({
       success: false,
 
-      message: "Failed to create clan event",
+      message: "Failed to create club event",
 
       error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
@@ -2224,13 +2462,23 @@ export const startClanEventRun = async (req, res) => {
     // EVENT MUST BE STARTED BY THE OFFICIAL RUN LEADER FIRST
     // ============================================================
 
-    if (!event.runStartedAt && !currentUserIsRunLeader) {
-      return res.status(409).json({
-        success: false,
-        message: "The event leader has not started this event yet",
-        waitingForLeader: true,
-      });
-    }
+    // if (!event.runStartedAt && !currentUserIsRunLeader) {
+    //   return res.status(409).json({
+    //     success: false,
+    //     message: "The event leader has not started this event yet",
+    //     waitingForLeader: true,
+    //   });
+    // }
+
+    // const isStandaloneEvent = event.clanId == null;
+
+    // if (!event.runStartedAt && !currentUserIsRunLeader && !isStandaloneEvent) {
+    //   return res.status(409).json({
+    //     success: false,
+    //     message: "The event leader has not started this event yet",
+    //     waitingForLeader: true,
+    //   });
+    // }
 
     /**
      * Backwards compatibility:
@@ -2362,11 +2610,21 @@ export const startClanEventRun = async (req, res) => {
 
     let updatedParticipant;
 
-    // ============================================================
-    // LEADER STARTS THE WHOLE EVENT
+    /// ============================================================
+    // FIRST JOINED PARTICIPANT STARTS THE EVENT
+    //
+    // Applies to BOTH:
+    // - Club Event
+    // - Independent / Standalone Event
+    //
+    // Once scheduled startsAt has arrived, the first joined
+    // participant who presses Start Run activates the whole event.
+    //
+    // IMPORTANT:
+    // This does NOT change the official runLeaderId.
     // ============================================================
 
-    if (currentUserIsRunLeader && !event.runStartedAt) {
+    if (!event.runStartedAt) {
       [updatedEvent, updatedParticipant] = await prisma.$transaction([
         prisma.clanEvent.update({
           where: {
@@ -2375,9 +2633,9 @@ export const startClanEventRun = async (req, res) => {
 
           data: {
             status: "ACTIVE",
-
             runStartedAt: now,
 
+            // Keep the original official leader.
             runLeaderId: resolvedRunLeaderId,
           },
         }),
@@ -2391,7 +2649,9 @@ export const startClanEventRun = async (req, res) => {
           },
 
           data: {
-            roleSnapshot: "LEADER",
+            roleSnapshot: currentUserIsRunLeader
+              ? "LEADER"
+              : (membership?.role ?? null),
 
             status: "RUNNING",
 
@@ -2406,7 +2666,8 @@ export const startClanEventRun = async (req, res) => {
     }
 
     // ============================================================
-    // EVENT ALREADY STARTED -> PARTICIPANT STARTS ONLY THEMSELVES
+    // EVENT ALREADY ACTIVE
+    // PARTICIPANT STARTS ONLY THEIR OWN RUN
     // ============================================================
     else {
       updatedParticipant = await prisma.clanEventParticipant.update({
@@ -3573,74 +3834,119 @@ export const getClanEventRunResults = async (req, res) => {
 
     const isRunLeader = event.runLeaderId === userId;
 
-    /**
-     * Get the official Club Event leader's result.
-     */
+    // ============================================================
+    // EVENT ROUTE
+    //
+    // 1. If official leader participated -> use leader route.
+    //
+    // 2. If official leader did NOT participate ->
+    //    use the route of the participant with the longest distance.
+    //
+    // Applies to both:
+    // - Club Event
+    // - Independent / Public Event
+    // ============================================================
+
     const leaderResult = event.runLeaderId
       ? (snapshot.results.find((item) => item.userId === event.runLeaderId) ??
         null)
       : null;
 
-    /**
-     * Find the leader's actual normal Activity.
-     *
-     * The normal Activity contains routeEncoded,
-     * while ClanEventParticipant only contains the event stats.
-     */
-    let leaderActivity = null;
+    const leaderParticipated = Boolean(leaderResult);
 
-    /**
-     * First try using the already linked activityId.
-     */
-    if (event.runLeaderId && leaderResult?.activityId) {
-      leaderActivity = await prisma.activity.findFirst({
-        where: {
-          id: leaderResult.activityId,
-          userId: event.runLeaderId,
-        },
+    let eventRouteResult = null;
+    let eventRouteActivity = null;
+    let eventRouteSource = null;
 
-        select: {
-          id: true,
-          routeEncoded: true,
-          startedAt: true,
-          endedAt: true,
-        },
-      });
+    const findActivityForEventResult = async (result) => {
+      if (!result) {
+        return null;
+      }
+
+      if (result.activityId) {
+        const activity = await prisma.activity.findFirst({
+          where: {
+            id: result.activityId,
+            userId: result.userId,
+          },
+
+          select: {
+            id: true,
+            userId: true,
+            routeEncoded: true,
+            startedAt: true,
+            endedAt: true,
+            distanceKm: true,
+          },
+        });
+
+        if (activity?.routeEncoded && activity.routeEncoded.trim().length > 0) {
+          return activity;
+        }
+      }
+
+      if (result.clientActivityId) {
+        const activity = await prisma.activity.findFirst({
+          where: {
+            userId: result.userId,
+            clientActivityId: result.clientActivityId,
+          },
+
+          orderBy: {
+            startedAt: "desc",
+          },
+
+          select: {
+            id: true,
+            userId: true,
+            routeEncoded: true,
+            startedAt: true,
+            endedAt: true,
+            distanceKm: true,
+          },
+        });
+
+        if (activity?.routeEncoded && activity.routeEncoded.trim().length > 0) {
+          return activity;
+        }
+      }
+
+      return null;
+    };
+
+    if (leaderParticipated) {
+      const activity = await findActivityForEventResult(leaderResult);
+
+      if (activity) {
+        eventRouteResult = leaderResult;
+        eventRouteActivity = activity;
+        eventRouteSource = "LEADER";
+      }
+    } else {
+      for (const result of snapshot.results) {
+        if (result.userId === event.runLeaderId) {
+          continue;
+        }
+
+        const activity = await findActivityForEventResult(result);
+
+        if (!activity) {
+          continue;
+        }
+
+        eventRouteResult = result;
+        eventRouteActivity = activity;
+        eventRouteSource = "LONGEST_DISTANCE";
+
+        break;
+      }
     }
 
-    /**
-     * Fallback:
-     *
-     * Sometimes the Club Event participant has not yet
-     * received activityId, but it already has clientActivityId.
-     *
-     * In that case use clientActivityId to locate the
-     * normal Activity.
-     */
-    if (
-      !leaderActivity &&
-      event.runLeaderId &&
-      leaderResult?.clientActivityId
-    ) {
-      leaderActivity = await prisma.activity.findFirst({
-        where: {
-          userId: event.runLeaderId,
-
-          clientActivityId: leaderResult.clientActivityId,
-        },
-
-        orderBy: {
-          startedAt: "desc",
-        },
-
-        select: {
-          id: true,
-          routeEncoded: true,
-          startedAt: true,
-          endedAt: true,
-        },
-      });
-    }
+    const eventRouteUser = eventRouteResult
+      ? (userDataMap.get(eventRouteResult.userId) ??
+        eventRouteResult.user ??
+        null)
+      : null;
 
     return res.status(200).json({
       success: true,
@@ -3678,15 +3984,24 @@ export const getClanEventRunResults = async (req, res) => {
       },
 
       isRunLeader,
-      /**
-       * Official Club Event leader activity.
-       */
-      leaderActivity,
+      eventRouteActivity,
 
-      /**
-       * Direct route field for Flutter.
-       */
-      leaderRouteEncoded: leaderActivity?.routeEncoded ?? null,
+      eventRouteEncoded: eventRouteActivity?.routeEncoded ?? null,
+
+      eventRouteUser,
+
+      eventRouteSource,
+
+      eventRouteDistanceKm: eventRouteResult
+        ? Number(eventRouteResult.distanceKm ?? 0)
+        : 0,
+
+      leaderActivity: eventRouteSource === "LEADER" ? eventRouteActivity : null,
+
+      leaderRouteEncoded:
+        eventRouteSource === "LEADER"
+          ? (eventRouteActivity?.routeEncoded ?? null)
+          : null,
 
       /**
        * Used for leader's combined Event Summary.
