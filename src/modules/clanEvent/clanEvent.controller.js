@@ -382,7 +382,7 @@ const parseEventStats = (body, { partial = false } = {}) => {
   return data;
 };
 
-const EVENT_AUTO_END_GRACE_MS = 4 * 60 * 1000;
+const EVENT_AUTO_END_GRACE_MS = 30 * 60 * 1000;
 const INDEPENDENT_EVENT_REMINDER_MINUTES = 25;
 
 export const sendIndependentEventStartReminders = async () => {
