@@ -1074,6 +1074,7 @@ export const finishActivity = async (req, res) => {
      *
      * Existing territory can act as part of the loop boundary.
      */
+
     const territoryResult = await prisma.$queryRaw`
         WITH
 
@@ -1809,7 +1810,7 @@ export const finishActivity = async (req, res) => {
      * CLAN TERRITORY
      * ============================================================
      */
-    
+
     if (capturedClanId) {
       /*
        * ==========================================================
@@ -7529,8 +7530,20 @@ export const getMyTodayActivities = async (req, res) => {
 export const getMyFriendsActivities = async (req, res) => {
   try {
     const userId = req.user.id;
+    const requestedLimit = Number(req.query.limit);
+    const requestedOffset = Number(req.query.offset);
 
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const limit =
+      Number.isInteger(requestedLimit) && requestedLimit > 0
+        ? Math.min(requestedLimit, 50)
+        : 12;
+
+    const offset =
+      Number.isSafeInteger(requestedOffset) && requestedOffset >= 0
+        ? requestedOffset
+        : 0;
+
+    // const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
     // =========================================================
     // GET FRIEND IDS
@@ -7570,17 +7583,16 @@ export const getMyFriendsActivities = async (req, res) => {
         },
 
         // Only activities started within the last 7 days
-        startedAt: {
-          gte: sevenDaysAgo,
-          lte: new Date(),
-        },
+        // startedAt: {
+        //   gte: sevenDaysAgo,
+        //   lte: new Date(),
+        // },
       },
 
-      orderBy: {
-        startedAt: "desc",
-      },
+      orderBy: [{ startedAt: "desc" }, { id: "desc" }],
 
-      take: 30,
+      skip: offset,
+      take: limit,
 
       include: {
         // =====================================================
@@ -7743,15 +7755,7 @@ export const getMyFriendsActivities = async (req, res) => {
     // =========================================================
     return res.status(200).json({
       success: true,
-
       count: formatted.length,
-
-      period: {
-        days: 7,
-        from: sevenDaysAgo,
-        to: new Date(),
-      },
-
       activities: formatted,
     });
   } catch (error) {

@@ -1,5 +1,5 @@
-import prisma from '../../config/prisma.js';
-import polylineLib from '@mapbox/polyline';
+import prisma from "../../config/prisma.js";
+import polylineLib from "@mapbox/polyline";
 import { createNotification } from "../notification/notification.controller.js";
 
 // ─────────────────────────────────────────────
@@ -19,9 +19,7 @@ function encodeLineString(coords) {
 
   const deduped = points.filter(
     (pt, i) =>
-      i === 0 ||
-      pt[0] !== points[i - 1][0] ||
-      pt[1] !== points[i - 1][1]
+      i === 0 || pt[0] !== points[i - 1][0] || pt[1] !== points[i - 1][1],
   );
 
   if (deduped.length < 2) return null;
@@ -37,7 +35,7 @@ function encodeRouteSegmentsFromGeoJson(geojson) {
     };
   }
 
-  if (geojson.type === 'LineString') {
+  if (geojson.type === "LineString") {
     const encoded = encodeLineString(geojson.coordinates);
 
     return {
@@ -46,7 +44,7 @@ function encodeRouteSegmentsFromGeoJson(geojson) {
     };
   }
 
-  if (geojson.type === 'MultiLineString') {
+  if (geojson.type === "MultiLineString") {
     const segments = geojson.coordinates
       .map((segment) => encodeLineString(segment))
       .filter(Boolean);
@@ -121,7 +119,6 @@ async function updateRouteEncodedFromGeometry(territoryId) {
 //     console.log('activityId:', activityId);
 //     console.log('newTerritoryId:', newTerritoryId);
 //     console.log('===================================\n');
-
 
 //     // 1. Find captured parts from enemy territories
 //     const capturedParts = await tx.$queryRaw`
@@ -321,10 +318,7 @@ async function updateRouteEncodedFromGeometry(territoryId) {
 
 // );
 
-
 // };
-
-
 
 //previous capture territory
 
@@ -568,8 +562,6 @@ async function updateRouteEncodedFromGeometry(territoryId) {
 //   return result;
 // };
 
-
-
 // new latest previous
 // export const captureTerritory = async ({ userId, activityId, newTerritoryId }) => {
 //   const result = await prisma.$transaction(
@@ -790,7 +782,6 @@ async function updateRouteEncodedFromGeometry(territoryId) {
 //   return result;
 // };
 
-
 // latest code capture
 // export const captureTerritory = async ({ userId, activityId, newTerritoryId }) => {
 //   const result = await prisma.$transaction(
@@ -1009,18 +1000,13 @@ async function updateRouteEncodedFromGeometry(territoryId) {
 //   return result;
 // };
 
-
-
-
 export const captureTerritory = async ({
   userId,
   activityId,
   newTerritoryId,
 }) => {
   if (!userId || !activityId || !newTerritoryId) {
-    throw new Error(
-      "userId, activityId and newTerritoryId are required."
-    );
+    throw new Error("userId, activityId and newTerritoryId are required.");
   }
 
   const result = await prisma.$transaction(
@@ -1060,9 +1046,7 @@ export const captureTerritory = async ({
       }
 
       if (currentRows.length > 1) {
-        throw new Error(
-          "New territory has multiple club associations."
-        );
+        throw new Error("New territory has multiple club associations.");
       }
 
       const current = currentRows[0];
@@ -1314,7 +1298,7 @@ export const captureTerritory = async ({
     {
       maxWait: 10000,
       timeout: 60000,
-    }
+    },
   );
 
   // 6. Send notifications AFTER successful commit.
@@ -1323,17 +1307,13 @@ export const captureTerritory = async ({
       await createNotification({
         userId: item.userId,
         title: "Territory Captured",
-        message:
-          "Another player captured part of your territory.",
+        message: "Another player captured part of your territory.",
         type: "TERRITORY_CAPTURED",
         territoryId: item.territoryId,
         activityId,
       });
     } catch (error) {
-      console.error(
-        "TERRITORY_CAPTURE_NOTIFICATION_ERROR:",
-        error
-      );
+      console.error("TERRITORY_CAPTURE_NOTIFICATION_ERROR:", error);
     }
   }
 
@@ -1345,21 +1325,19 @@ export const captureTerritory = async ({
   };
 };
 
-
-
 // ─────────────────────────────────────────────
 // Color palette
 // ─────────────────────────────────────────────
 
 const TERRITORY_COLORS = [
-  { fill: 'rgba(37,  99, 235, 0.38)', border: 'rgba(30,  64, 175, 1)' },
-  { fill: 'rgba(22, 163,  74, 0.38)', border: 'rgba(21, 128,  61, 1)' },
-  { fill: 'rgba(220,  38,  38, 0.38)', border: 'rgba(153,  27,  27, 1)' },
-  { fill: 'rgba(147,  51, 234, 0.38)', border: 'rgba(107,  33, 168, 1)' },
-  { fill: 'rgba(234,  88,  12, 0.38)', border: 'rgba(154,  52,  18, 1)' },
-  { fill: 'rgba(219,  39, 119, 0.38)', border: 'rgba(157,  23,  77, 1)' },
-  { fill: 'rgba(75,   85,  99, 0.38)', border: 'rgba(55,   65,  81, 1)' },
-  { fill: 'rgba(202, 138,   4, 0.38)', border: 'rgba(133,  77,  14, 1)' },
+  { fill: "rgba(37,  99, 235, 0.38)", border: "rgba(30,  64, 175, 1)" },
+  { fill: "rgba(22, 163,  74, 0.38)", border: "rgba(21, 128,  61, 1)" },
+  { fill: "rgba(220,  38,  38, 0.38)", border: "rgba(153,  27,  27, 1)" },
+  { fill: "rgba(147,  51, 234, 0.38)", border: "rgba(107,  33, 168, 1)" },
+  { fill: "rgba(234,  88,  12, 0.38)", border: "rgba(154,  52,  18, 1)" },
+  { fill: "rgba(219,  39, 119, 0.38)", border: "rgba(157,  23,  77, 1)" },
+  { fill: "rgba(75,   85,  99, 0.38)", border: "rgba(55,   65,  81, 1)" },
+  { fill: "rgba(202, 138,   4, 0.38)", border: "rgba(133,  77,  14, 1)" },
 ];
 
 // ─────────────────────────────────────────────
@@ -1505,9 +1483,6 @@ const TERRITORY_COLORS = [
 //     });
 //   }
 // };
-
-
-
 
 //------------------------------------------------
 //old one to use if anything is wrong
@@ -1798,7 +1773,6 @@ const TERRITORY_COLORS = [
 //   }
 // };
 
-
 // // old code
 // export const getAllTerritories = async (req, res) => {
 //   const startTime = Date.now();
@@ -2012,9 +1986,7 @@ const TERRITORY_COLORS = [
 //   }
 // };
 
-
-// new code 
-
+// new code
 
 export const getAllTerritories = async (req, res) => {
   const startTime = Date.now();
@@ -2024,16 +1996,16 @@ export const getAllTerritories = async (req, res) => {
     // STEP 1: VALIDATE LIMIT
     // =========================================================
 
-    const requestedLimit = Number.parseInt(
-      req.query.limit,
-      10
-    );
+    // const requestedLimit = Number.parseInt(
+    //   req.query.limit,
+    //   10
+    // );
 
-    const limit =
-      Number.isInteger(requestedLimit) &&
-      requestedLimit > 0
-        ? Math.min(requestedLimit, 300)
-        : 100;
+    // const limit =
+    //   Number.isInteger(requestedLimit) &&
+    //   requestedLimit > 0
+    //     ? Math.min(requestedLimit, 300)
+    //     : 100;
 
     // =========================================================
     // STEP 2: FETCH PERSONAL TERRITORIES
@@ -2139,17 +2111,13 @@ export const getAllTerritories = async (req, res) => {
         )
 
       ORDER BY
-        t."updatedAt" DESC,
-        t.id DESC
-
-      LIMIT ${limit};
+  t."updatedAt" DESC,
+  t.id DESC;
     `;
 
     const sqlTime = (Date.now() - startTime) / 1000;
 
-    console.log(
-      `Territory SQL finished in ${sqlTime.toFixed(3)} seconds`
-    );
+    console.log(`Territory SQL finished in ${sqlTime.toFixed(3)} seconds`);
 
     // =========================================================
     // STEP 3: ASSIGN STABLE COLORS TO USERS
@@ -2166,10 +2134,7 @@ export const getAllTerritories = async (req, res) => {
     // =========================================================
 
     const getStableUserColor = (userId) => {
-      if (
-        !Array.isArray(TERRITORY_COLORS) ||
-        TERRITORY_COLORS.length === 0
-      ) {
+      if (!Array.isArray(TERRITORY_COLORS) || TERRITORY_COLORS.length === 0) {
         return "#3B82F6";
       }
 
@@ -2178,14 +2143,10 @@ export const getAllTerritories = async (req, res) => {
       let hash = 0;
 
       for (let i = 0; i < value.length; i++) {
-        hash = (
-          Math.imul(31, hash) +
-          value.charCodeAt(i)
-        ) | 0;
+        hash = (Math.imul(31, hash) + value.charCodeAt(i)) | 0;
       }
 
-      const index =
-        (hash >>> 0) % TERRITORY_COLORS.length;
+      const index = (hash >>> 0) % TERRITORY_COLORS.length;
 
       return TERRITORY_COLORS[index];
     };
@@ -2230,8 +2191,7 @@ export const getAllTerritories = async (req, res) => {
       // Do not use these as territory outlines.
       routeEncoded: t.routeEncoded,
 
-      routeSegmentsEncoded:
-        t.routeSegmentsEncoded ?? [],
+      routeSegmentsEncoded: t.routeSegmentsEncoded ?? [],
 
       color: getStableUserColor(t.userId),
     }));
@@ -2240,11 +2200,10 @@ export const getAllTerritories = async (req, res) => {
     // STEP 5: RESPONSE
     // =========================================================
 
-    const totalTime =
-      (Date.now() - startTime) / 1000;
+    const totalTime = (Date.now() - startTime) / 1000;
 
     console.log(
-      `GET ALL TERRITORIES completed in ${totalTime.toFixed(3)} seconds`
+      `GET ALL TERRITORIES completed in ${totalTime.toFixed(3)} seconds`,
     );
 
     return res.status(200).json({
@@ -2256,34 +2215,22 @@ export const getAllTerritories = async (req, res) => {
 
       processingTime: `${totalTime.toFixed(3)}s`,
     });
-
   } catch (error) {
-    const elapsed =
-      (Date.now() - startTime) / 1000;
+    const elapsed = (Date.now() - startTime) / 1000;
 
-    console.error(
-      "GET_ALL_TERRITORIES_ERROR:",
-      error
-    );
+    console.error("GET_ALL_TERRITORIES_ERROR:", error);
 
-    console.error(
-      `Failed after ${elapsed.toFixed(3)} seconds`
-    );
+    console.error(`Failed after ${elapsed.toFixed(3)} seconds`);
 
     return res.status(500).json({
       success: false,
 
       message: "Failed to fetch territories",
 
-      error:
-        process.env.NODE_ENV === "development"
-          ? error.message
-          : undefined,
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 };
-
-
 
 // ─────────────────────────────────────────────
 // Update Territory Route
@@ -2303,22 +2250,25 @@ export const updateTerritoryRoute = async (req, res) => {
     if (!territory) {
       return res.status(404).json({
         success: false,
-        message: 'Territory not found',
+        message: "Territory not found",
       });
     }
 
     if (territory.userId !== userId) {
       return res.status(403).json({
         success: false,
-        message: 'Forbidden',
+        message: "Forbidden",
       });
     }
 
     let segments = [];
 
-    if (Array.isArray(routeSegmentsEncoded) && routeSegmentsEncoded.length > 0) {
+    if (
+      Array.isArray(routeSegmentsEncoded) &&
+      routeSegmentsEncoded.length > 0
+    ) {
       segments = routeSegmentsEncoded.filter(
-        (segment) => typeof segment === 'string' && segment.trim().length > 0
+        (segment) => typeof segment === "string" && segment.trim().length > 0,
       );
     } else if (routeEncoded) {
       segments = [routeEncoded];
@@ -2327,10 +2277,9 @@ export const updateTerritoryRoute = async (req, res) => {
     if (segments.length === 0) {
       return res.status(400).json({
         success: false,
-        message: 'routeEncoded or routeSegmentsEncoded is required',
+        message: "routeEncoded or routeSegmentsEncoded is required",
       });
     }
-    
 
     const lineGeoJsonSegments = [];
 
@@ -2354,7 +2303,7 @@ export const updateTerritoryRoute = async (req, res) => {
             lat >= -90 &&
             lat <= 90 &&
             lng >= -180 &&
-            lng <= 180
+            lng <= 180,
         );
 
       if (coordinates.length >= 2) {
@@ -2365,20 +2314,20 @@ export const updateTerritoryRoute = async (req, res) => {
     if (lineGeoJsonSegments.length === 0) {
       return res.status(400).json({
         success: false,
-        message: 'No valid route segments found',
+        message: "No valid route segments found",
       });
     }
 
     const routeGeoJson =
       lineGeoJsonSegments.length === 1
         ? {
-          type: 'LineString',
-          coordinates: lineGeoJsonSegments[0],
-        }
+            type: "LineString",
+            coordinates: lineGeoJsonSegments[0],
+          }
         : {
-          type: 'MultiLineString',
-          coordinates: lineGeoJsonSegments,
-        };
+            type: "MultiLineString",
+            coordinates: lineGeoJsonSegments,
+          };
 
     const routeGeoJsonString = JSON.stringify(routeGeoJson);
     const mainRouteEncoded =
@@ -2419,12 +2368,12 @@ export const updateTerritoryRoute = async (req, res) => {
       territory: updated[0],
     });
   } catch (error) {
-    console.error('UPDATE_TERRITORY_ROUTE ERROR:', error);
+    console.error("UPDATE_TERRITORY_ROUTE ERROR:", error);
 
     return res.status(500).json({
       success: false,
-      message: 'Something went wrong',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+      message: "Something went wrong",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 };
@@ -2438,7 +2387,7 @@ export const getTerritoryEvents = async (req, res) => {
   try {
     const events = await prisma.territoryEvent.findMany({
       where: { userId: req.user.id },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { createdAt: "desc" },
       take: 50,
     });
 
@@ -2447,11 +2396,11 @@ export const getTerritoryEvents = async (req, res) => {
       events,
     });
   } catch (error) {
-    console.error('GET_TERRITORY_EVENTS ERROR:', error);
+    console.error("GET_TERRITORY_EVENTS ERROR:", error);
 
     return res.status(500).json({
       success: false,
-      message: 'Something went wrong',
+      message: "Something went wrong",
     });
   }
 };
