@@ -1263,7 +1263,7 @@ export const createClanEvent = async (req, res) => {
       endsAt,
       maxParticipants,
       targetDistanceKm,
-      standalone = false,
+      eventType,
     } = req.body;
 
     if (!title?.trim()) {
@@ -1346,45 +1346,35 @@ export const createClanEvent = async (req, res) => {
       }
     }
 
-    const membership = await getUserClanMembership(userId);
+    // const membership = await getUserClanMembership(userId);
+
+    // let clanId = null;
+    // let runLeaderId = userId;
+
+    // =====================================================
+    // DETERMINE EVENT TYPE AND CREATION PERMISSIONS
+    // =====================================================
+
+    if (!["CLUB", "PUBLIC"].includes(eventType)) {
+      return res.status(400).json({
+        success: false,
+        message: "Please select Club Event or Public Individual Event",
+      });
+    }
 
     let clanId = null;
     let runLeaderId = userId;
 
-    // ============================================================
-    // STANDALONE / PUBLIC EVENT
-    //
-    // Created through Social > Events.
-    //
-    // IMPORTANT:
-    // Even if the creator belongs to a club,
-    // this event does NOT belong to that club.
-    // ============================================================
+    if (eventType === "CLUB") {
+      const membership = await getUserClanMembership(userId);
 
-    if (standalone === true) {
-      clanId = null;
-      runLeaderId = userId;
-    }
+      if (!membership) {
+        return res.status(403).json({
+          success: false,
+          message: "You must belong to a club to create a club event",
+        });
+      }
 
-    // ============================================================
-    // USER IS NOT IN A CLUB
-    //
-    // Normal creation also becomes standalone.
-    // ============================================================
-    else if (!membership) {
-      clanId = null;
-      runLeaderId = userId;
-    }
-
-    // ============================================================
-    // CLUB EVENT
-    //
-    // Requests coming from the Clubs tab do not send
-    // standalone=true.
-    //
-    // Only leader/captain can create a Club Event.
-    // ============================================================
-    else {
       const isCaptain = membership.clan.captainId === userId;
 
       const isLeader =
@@ -1393,20 +1383,33 @@ export const createClanEvent = async (req, res) => {
       if (!isCaptain && !isLeader) {
         return res.status(403).json({
           success: false,
-          message: "Only the club leader or captain can create a club event",
+          message: "Only the club captain or leader can create a club event",
         });
       }
 
       clanId = membership.clanId;
-
       runLeaderId = await resolveClanRunLeaderId(clanId);
 
       if (!runLeaderId) {
         return res.status(409).json({
           success: false,
-          message: "This club does not currently have a valid event leader",
+          message: "This club does not have a valid event leader",
         });
       }
+    }
+
+    const requiredParticipantCount = new Set([runLeaderId, userId]).size;
+
+    if (
+      parsedMaxParticipants !== null &&
+      parsedMaxParticipants < requiredParticipantCount
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          `Maximum participants must be at least ${requiredParticipantCount} ` +
+          "to include the event creator and official leader.",
+      });
     }
 
     const event = await prisma.clanEvent.create({
@@ -1463,24 +1466,27 @@ export const createClanEvent = async (req, res) => {
     });
 
     /**
-     * Automatically add the real clan leader as an event participant.
+     * AUTOMATIC EVENT PARTICIPANTS
      *
-     * Leader does not need to press Join Event.
+     * CLUB:
+     * - Official run leader joins automatically.
+     * - Event creator (Captain/Leader) joins automatically.
+     *
+     * PUBLIC:
+     * - Event creator joins automatically.
+     *
+     * Set removes duplicate user IDs when the creator
+     * is also the official run leader.
      */
-    await prisma.clanEventParticipant.upsert({
-      where: {
-        eventId_userId: {
-          eventId: event.id,
-          userId: runLeaderId,
-        },
-      },
+    const automaticParticipantIds = [...new Set([runLeaderId, userId])];
 
-      create: {
+    await prisma.clanEventParticipant.createMany({
+      data: automaticParticipantIds.map((participantUserId) => ({
         eventId: event.id,
-        userId: runLeaderId,
-      },
+        userId: participantUserId,
+      })),
 
-      update: {},
+      skipDuplicates: true,
     });
 
     /**
@@ -1614,17 +1620,24 @@ export const createClanEvent = async (req, res) => {
     return res.status(201).json({
       success: true,
 
-      message: "Club event created successfully",
+      message:
+        eventType === "CLUB"
+          ? "Club event created successfully"
+          : "Public individual event created successfully",
 
       invitationMessage:
-        emailResult.sent > 0
-          ? `Invitations sent to ${emailResult.sent} clan members`
-          : "Event created successfully, but no email invitations were sent",
+        eventType === "PUBLIC"
+          ? "Public event created. No club invitations are required."
+          : emailResult.sent > 0
+            ? `Invitations sent to ${emailResult.sent} club members`
+            : "Club event created, but no email invitations were sent",
 
       notificationMessage:
-        notificationResult.sent > 0
-          ? `Notifications sent to ${notificationResult.sent} club members`
-          : "No push notifications were sent",
+        eventType === "PUBLIC"
+          ? "Public event created without club notifications."
+          : notificationResult.sent > 0
+            ? `Notifications sent to ${notificationResult.sent} club members`
+            : "No club push notifications were sent",
 
       data: {
         ...event,
@@ -1658,7 +1671,7 @@ export const createClanEvent = async (req, res) => {
     return res.status(500).json({
       success: false,
 
-      message: "Failed to create club event",
+      message: "Failed to create event",
 
       error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
